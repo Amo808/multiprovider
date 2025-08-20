@@ -26,15 +26,17 @@ COPY backend/ ./backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
 # Copy configuration files
-COPY nginx.render.conf /etc/nginx/conf.d/default.conf
+COPY nginx.render.conf /etc/nginx/sites-available/default
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Remove default nginx config
-RUN rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf.bak
+# Configure nginx
+RUN rm -f /etc/nginx/sites-enabled/default && \
+    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
     mkdir -p /var/log/supervisor /var/run && \
+    ln -sf /usr/local/bin/python3 /usr/local/bin/python && \
     chown -R appuser:appuser /app
 
 # Create health check endpoint
