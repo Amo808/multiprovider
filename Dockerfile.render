@@ -24,7 +24,10 @@ RUN cd frontend && npm run build
 
 # Copy backend files and install Python dependencies
 COPY backend/ ./backend/
-RUN pip install --no-cache-dir --system -r backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt && \
+    python3 -m pip install --no-cache-dir -r backend/requirements.txt && \
+    python3 -c "import fastapi; print('FastAPI installed successfully')" && \
+    pip list | grep fastapi
 
 # Copy configuration files
 COPY nginx.render.conf /etc/nginx/sites-available/default
