@@ -22,7 +22,10 @@ RUN cd frontend && npm ci
 COPY frontend/ ./frontend/
 RUN cd frontend && npm run build
 
-# Copy backend files and install Python dependencies
+# Copy Python modules and backend files
+COPY adapters/ ./adapters/
+COPY storage/ ./storage/
+COPY data/ ./data/
 COPY backend/ ./backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt && \
     python3 -m pip install --no-cache-dir -r backend/requirements.txt && \
@@ -35,7 +38,7 @@ RUN pip install --no-cache-dir -r backend/requirements.txt && \
     echo "=== INSTALLATION CHECK COMPLETE ==="
 
 # Copy configuration files
-COPY nginx.render.conf /etc/nginx/sites-available/default
+COPY nginx.server.conf /etc/nginx/sites-available/default
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Configure nginx
@@ -44,7 +47,7 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
-    mkdir -p /var/log/supervisor /var/run && \
+    mkdir -p /var/log/supervisor /var/run /app/data /app/logs && \
     echo "Python paths:" && \
     which python3 || echo "python3 not found" && \
     which python || echo "python not found" && \
