@@ -40,26 +40,24 @@ cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"; npm run dev
 
 - **Локальный запуск**: [RUN_INSTRUCTIONS.md](RUN_INSTRUCTIONS.md) - инструкции для разработки
 - **Деплой на сервер**: [DEPLOYMENT.md](DEPLOYMENT.md) - полный гид по развертыванию на VPS  
+- **Render деплой**: [RENDER.md](RENDER.md) - автоматическое развертывание через Render (БЕСПЛАТНО)
 - **Docker развертывание**: [DOCKER.md](DOCKER.md) - контейнеризация и Docker Compose
-- **Docker Hub деплой**: [DOCKER_HUB.md](DOCKER_HUB.md) - публикация и использование готовых образов
-- **Быстрый деплой**: [QUICK_DEPLOY.md](QUICK_DEPLOY.md) - мгновенное развертывание на Render
+- **Быстрый деплой**: [QUICK_DEPLOY.md](QUICK_DEPLOY.md) - мгновенное развертывание на разных платформах
 
 ## Развертывание на сервере
 
-### 🌐 Готовые образы на Docker Hub (Самый простой способ):
+### 🚀 Render.com (Рекомендуемый способ - БЕСПЛАТНО):
 
-**Мгновенный деплой на Render:**
+**GitHub → Render (автоматический деплой):**
 1. Зайдите на [Render.com](https://render.com)
-2. Создайте Web Service → "Deploy an existing image"
-3. Образ: `amochat/ai-chat:latest`
-4. Port: `80`
+2. "New" → "Web Service" → "Connect Repository" 
+3. Подключите `https://github.com/Amo808/mulitchat`
+4. Render найдет Dockerfile и автоматически соберет
 5. Добавьте API ключи в Environment Variables
 6. Deploy! 🚀
 
-**Локальный запуск:**
-```bash
-docker run -p 80:80 -e OPENAI_API_KEY=your-key amochat/ai-chat:latest
-```
+**Прямая ссылка для деплоя:**
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Amo808/mulitchat)
 
 ### 🐳 Docker сборка (Рекомендуемый способ):
 ```bash

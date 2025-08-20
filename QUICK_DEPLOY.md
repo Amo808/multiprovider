@@ -1,87 +1,42 @@
-# 🚀 Готовые образы AI Chat на Docker Hub
+# 🚀 Быстрый деплой AI Chat
 
-## Быстрый деплой на Render
+## Render.com - БЕСПЛАТНО и просто! (Рекомендуется)
 
-### Вариант 1: Использование готового образа (рекомендуется)
+### Автоматический деплой из GitHub:
 
 1. **Зайдите на [Render.com](https://render.com)**
-2. **Создайте новый Web Service**
-3. **Выберите "Deploy an existing image from a registry"**
-4. **Укажите образ: `amochat/ai-chat:latest`**
-5. **Настройте:**
-   - **Port:** `80`
-   - **Environment Variables:**
-     ```
-     OPENAI_API_KEY=ваш_ключ_openai
-     ANTHROPIC_API_KEY=ваш_ключ_anthropic
-     DEEPSEEK_API_KEY=ваш_ключ_deepseek
-     PORT=80
-     ```
-6. **Нажмите Deploy**
+2. **New** → **Web Service** → **Connect Repository**
+3. **Подключите GitHub и выберите `Amo808/mulitchat`**
+4. **Настройки:**
+   - **Name**: `ai-chat`
+   - **Region**: `Oregon (US West)`
+   - **Branch**: `main`
+   - **Dockerfile**: будет найден автоматически
+5. **Environment Variables:**
+   ```
+   OPENAI_API_KEY=sk-ваш_ключ_openai
+   ANTHROPIC_API_KEY=ваш_ключ_anthropic
+   DEEPSEEK_API_KEY=ваш_ключ_deepseek
+   PORT=80
+   ```
+6. **Create Web Service** → Готово! 🎉
 
-### Вариант 2: Через GitHub (автоматический деплой)
+### Deploy кнопка (1 клик):
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Amo808/mulitchat)
 
-1. **Загрузите проект на GitHub**
-2. **В Render подключите ваш GitHub репозиторий**
-3. **Render найдет Dockerfile и автоматически соберет**
+## Результат деплоя
 
-## Готовые образы на Docker Hub
+После успешного деплоя на Render:
+- **Ваш сайт**: `https://ai-chat-xxxx.onrender.com`
+- **API документация**: `https://ai-chat-xxxx.onrender.com/docs`
+- **Health check**: `https://ai-chat-xxxx.onrender.com/health`
 
-Образы уже загружены и готовы к использованию:
-
-- **`amochat/ai-chat:latest`** - полное приложение (backend + frontend)
-- **`amochat/backend:latest`** - только backend API
-- **`amochat/frontend:latest`** - только frontend
-
-## Быстрый запуск локально
-
-Если у вас работает Docker:
-
-```bash
-# Полное приложение
-docker run -p 80:80 -e OPENAI_API_KEY=ваш_ключ amochat/ai-chat:latest
-
-# Только backend
-docker run -p 8000:8000 -e OPENAI_API_KEY=ваш_ключ amochat/backend:latest
-
-# Только frontend  
-docker run -p 80:80 amochat/frontend:latest
-```
-
-## Переменные окружения для Render
-
-```env
-# Обязательные
-OPENAI_API_KEY=sk-your-openai-key
-ANTHROPIC_API_KEY=your-anthropic-key
-DEEPSEEK_API_KEY=your-deepseek-key
-PORT=80
-
-# Опциональные
-GOOGLE_API_KEY=your-google-key
-COHERE_API_KEY=your-cohere-key
-PYTHONUNBUFFERED=1
-```
-
-## Проверка работы
-
-После деплоя на Render:
-- Основной сайт: `https://your-app.onrender.com`
-- API документация: `https://your-app.onrender.com/docs`
-- Health check: `https://your-app.onrender.com/health`
-
-## Если нужно собрать свой образ
-
-Когда Docker заработает:
-
-```bash
-# Соберите образ
-docker build -t your-username/ai-chat:latest .
-
-# Опубликуйте на Docker Hub
-docker login
-docker push your-username/ai-chat:latest
-```
+**Особенности Render бесплатного плана:**
+- ✅ 750 часов в месяц (хватает на 24/7)
+- ✅ HTTPS автоматически
+- ✅ Автоматические деплои при push в GitHub
+- ⚠️ Засыпает через 15 минут неактивности
+- ⚠️ Первый запрос после сна ~30 секунд
 
 ## Альтернативы Docker Hub
 

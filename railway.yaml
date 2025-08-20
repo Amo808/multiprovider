@@ -1,0 +1,28 @@
+# Railway Configuration for AI Chat
+# https://docs.railway.app/deploy/config-as-code
+
+version: 2
+
+services:
+  ai-chat:
+    name: ai-chat
+    build:
+      dockerfile: Dockerfile
+    healthcheck:
+      path: /health
+      interval: 30s
+      timeout: 10s
+    environments:
+      production:
+        variables:
+          PORT: 80
+          PYTHONUNBUFFERED: "1"
+        secrets:
+          - OPENAI_API_KEY
+          - ANTHROPIC_API_KEY
+          - DEEPSEEK_API_KEY
+          - GOOGLE_API_KEY
+          - COHERE_API_KEY
+    deploy:
+      replicas: 1
+      restartPolicy: always
