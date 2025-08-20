@@ -48,6 +48,8 @@ cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"; npm run dev
 
 ### 🚀 Render.com (Рекомендуемый способ - БЕСПЛАТНО):
 
+**⚡ БЫСТРЫЙ ДЕПЛОЙ:** [QUICK_START.md](QUICK_START.md) - 3 минуты до готового чата!
+
 **GitHub → Render (автоматический деплой):**
 1. Зайдите на [Render.com](https://render.com)
 2. "New" → "Web Service" → "Connect Repository" 
