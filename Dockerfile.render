@@ -26,8 +26,13 @@ RUN cd frontend && npm run build
 COPY backend/ ./backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt && \
     python3 -m pip install --no-cache-dir -r backend/requirements.txt && \
-    python3 -c "import fastapi; print('FastAPI installed successfully')" && \
-    pip list | grep fastapi
+    echo "=== CHECKING PYTHON INSTALLATION ===" && \
+    python3 --version && \
+    pip --version && \
+    pip show fastapi && \
+    python3 -c "import sys; print('Python path:', sys.path)" && \
+    python3 -c "import fastapi; print('FastAPI version:', fastapi.__version__)" && \
+    echo "=== INSTALLATION CHECK COMPLETE ==="
 
 # Copy configuration files
 COPY nginx.render.conf /etc/nginx/sites-available/default
