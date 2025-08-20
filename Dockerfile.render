@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
 # Set working directory
 WORKDIR /app
@@ -36,8 +37,10 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
     mkdir -p /var/log/supervisor /var/run && \
-    ln -sf /usr/local/bin/python3 /usr/local/bin/python && \
-    which python && which python3 && \
+    echo "Python paths:" && \
+    which python3 || echo "python3 not found" && \
+    which python || echo "python not found" && \
+    ls -la /usr/bin/python* && \
     chown -R appuser:appuser /app
 
 # Create health check endpoint
