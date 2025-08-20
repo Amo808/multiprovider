@@ -1,39 +1,27 @@
-# Render.yaml - конфигурация для автоматического деплоя
+# Render.yaml - конфигурация для автоматического деплоя полного приложения
 services:
-  # Backend сервис
+  # Полное приложение (Frontend + Backend + Nginx)
   - type: web
-    name: ai-chat-backend
+    name: ai-chat-app
     env: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    dockerfilePath: ./Dockerfile.render
+    plan: free
+    region: oregon
     envVars:
-      - key: HOST
-        value: "0.0.0.0"
       - key: PORT
-        value: "10000"
-      - key: DEBUG
-        value: "false"
-      - key: CORS_ORIGINS
-        value: "https://ai-chat-frontend.onrender.com"
-      - key: DEEPSEEK_API_KEY
-        sync: false  # Будет задано через веб-интерфейс
+        value: 10000
       - key: OPENAI_API_KEY
         sync: false  # Будет задано через веб-интерфейс
       - key: ANTHROPIC_API_KEY
         sync: false  # Будет задано через веб-интерфейс
+      - key: DEEPSEEK_API_KEY
+        sync: false  # Будет задано через веб-интерфейс
+      - key: PYTHONUNBUFFERED
+        value: 1
     healthCheckPath: "/health"
+    autoDeploy: true
 
-  # Frontend сервис
-  - type: web
-    name: ai-chat-frontend
-    env: docker
-    dockerfilePath: ./frontend/Dockerfile.render
-    dockerContext: ./frontend
-    envVars:
-      - key: VITE_API_BASE_URL
-        value: "https://ai-chat-backend.onrender.com"
-
-  # Redis сервис (optional)
+  # Redis сервис (optional - для кеширования)
   - type: redis
     name: ai-chat-redis
     plan: free

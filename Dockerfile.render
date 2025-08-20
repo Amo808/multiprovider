@@ -1,0 +1,69 @@
+# Complete AI Chat Application Dockerfile for Render
+FROM node:18-alpine as frontend-builder
+
+WORKDIR /app/frontend
+
+# Copy frontend package files
+COPY frontend/package*.json ./
+
+# Install ALL dependencies including dev dependencies (needed for TypeScript build)
+RUN npm ci
+
+# Copy frontend source code
+COPY frontend/ ./
+
+# Build the frontend application
+RUN npm run build
+
+# Python backend stage
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    nginx \
+    supervisor \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app user
+RUN useradd -m -u 1001 appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy backend files
+COPY backend/ ./backend/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+# Copy built frontend from builder stage
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+
+# Copy configuration files
+COPY nginx.render.conf /etc/nginx/sites-available/default
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Remove default nginx config and create our own
+RUN rm -f /etc/nginx/sites-enabled/default && \
+    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
+# Create necessary directories and set permissions
+RUN mkdir -p /var/log/supervisor /var/run && \
+    chown -R appuser:appuser /app && \
+    chmod +x /app/backend/main.py || true
+
+# Create health check endpoints
+RUN mkdir -p /app/frontend/dist && \
+    echo '<html><body>OK</body></html>' > /app/frontend/dist/health
+
+# Expose port (Render will set PORT environment variable)
+EXPOSE $PORT
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:$PORT/health || exit 1
+
+# Start supervisord
+CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

@@ -55,10 +55,10 @@ COPY --from=backend /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=backend /usr/local/bin /usr/local/bin
 
 # Copy frontend from builder stage
-COPY --from=frontend-builder /app/frontend/dist /usr/share/nginx/html
+COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # Copy nginx config
-COPY frontend/nginx.production.conf /etc/nginx/conf.d/default.conf
+COPY nginx.render.conf /etc/nginx/nginx.conf
 
 # Copy data and config files
 COPY data/ /app/data/
