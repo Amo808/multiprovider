@@ -460,13 +460,7 @@ async def send_message(request: ChatRequest):
                         
                     if response.content:
                         full_content += response.content
-                        yield f"data: {json.dumps({
-                            'content': response.content,
-                            'id': assistant_message.id,
-                            'done': False,
-                            'provider': provider_id,
-                            'model': model_id
-                        })}\n\n"
+                        yield f"data: {json.dumps({'content': response.content, 'id': assistant_message.id, 'done': False, 'provider': provider_id, 'model': model_id})}\n\n"
                     
                     if response.meta:
                         total_tokens_in = response.meta.get("tokens_in", 0)
@@ -483,17 +477,7 @@ async def send_message(request: ChatRequest):
                         history_store.save_message(assistant_message)
                         
                         # Send completion signal
-                        yield f"data: {json.dumps({
-                            'done': True,
-                            'id': assistant_message.id,
-                            'provider': provider_id,
-                            'model': model_id,
-                            'meta': {
-                                'tokens_in': total_tokens_in,
-                                'tokens_out': total_tokens_out,
-                                'total_tokens': total_tokens_in + total_tokens_out
-                            }
-                        })}\n\n"
+                        yield f"data: {json.dumps({'done': True, 'id': assistant_message.id, 'provider': provider_id, 'model': model_id, 'meta': {'tokens_in': total_tokens_in, 'tokens_out': total_tokens_out, 'total_tokens': total_tokens_in + total_tokens_out}})}\n\n"
                         break
                 
             except Exception as e:
