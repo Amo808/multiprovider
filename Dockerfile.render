@@ -36,6 +36,8 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
     mkdir -p /var/log/supervisor /var/run && \
+    ln -sf /usr/local/bin/python3 /usr/local/bin/python && \
+    which python && which python3 && \
     chown -R appuser:appuser /app
 
 # Create health check endpoint
