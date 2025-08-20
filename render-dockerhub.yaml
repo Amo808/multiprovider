@@ -1,0 +1,77 @@
+services:
+  # Backend service using Docker Hub image
+  - type: web
+    name: ai-chat-backend
+    env: docker
+    dockerCommand: python main.py
+    dockerfilePath: backend/Dockerfile.production
+    # Alternative: use pre-built image from Docker Hub
+    # dockerImage: your-username/ai-chat-backend:latest
+    plan: free
+    region: oregon
+    branch: main
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+      targetMemoryPercent: 80
+      targetCPUPercent: 80
+
+  # Frontend service using Docker Hub image
+  - type: web
+    name: ai-chat-frontend
+    env: docker
+    dockerfilePath: frontend/Dockerfile.production
+    # Alternative: use pre-built image from Docker Hub
+    # dockerImage: your-username/ai-chat-frontend:latest
+    plan: free
+    region: oregon
+    branch: main
+    healthCheckPath: /health
+    buildCommand: npm run build
+    staticPublishPath: ./dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+    routes:
+      - type: redirect
+        source: /*
+        destination: /index.html
+        
+  # Complete app service (alternative single container)
+  - type: web
+    name: ai-chat-complete
+    env: docker
+    dockerfilePath: Dockerfile
+    # Alternative: use pre-built image from Docker Hub
+    # dockerImage: your-username/ai-chat:latest
+    plan: starter
+    region: oregon
+    branch: main
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 80
+      - key: BACKEND_PORT
+        value: 8000
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false

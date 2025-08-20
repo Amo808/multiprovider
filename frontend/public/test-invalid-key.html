@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Invalid API Key - AI Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .error { color: #dc3545; }
+        .success { color: #28a745; }
+        .info { color: #17a2b8; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Invalid API Key Handler</h1>
+        <p>This page tests if authentication errors trigger the modal correctly.</p>
+
+        <div class="test-section">
+            <h3>Test Chat with Invalid API Key</h3>
+            <p>Current backend has invalid DeepSeek API key. This should trigger API_KEY_MISSING error.</p>
+            <button onclick="testInvalidKey()">Send Test Message to DeepSeek</button>
+            <div id="testLog" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>Expected Behavior</h3>
+            <ul>
+                <li>✅ Backend should detect 401 authentication error</li>
+                <li>✅ Backend should return API_KEY_MISSING error type</li>
+                <li>✅ Frontend should catch the error and NOT add it to chat</li>
+                <li>✅ Modal should open for API key input</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('testLog');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+            logDiv.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function testInvalidKey() {
+            log('🧪 Testing invalid API key handling...', 'info');
+            
+            try {
+                const response = await fetch('http://localhost:8000/chat/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: 'Hello, test authentication error',
+                        provider: 'DEEPSEEK',
+                        model: 'deepseek-chat',
+                        conversation_id: 'test-' + Date.now(),
+                        stream: true
+                    })
+                });
+
+                if (!response.ok) {
+                    log(`❌ HTTP Error: ${response.status} ${response.statusText}`, 'error');
+                    return;
+                }
+
+                log('📡 Receiving streaming response...', 'info');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                if (data.error) {
+                                    log(`🚨 Received error: ${data.error}`, 'error');
+                                    
+                                    if (data.type === 'API_KEY_MISSING') {
+                                        log('✅ SUCCESS: Received API_KEY_MISSING error type!', 'success');
+                                        log('🔑 This should trigger the modal in the main app', 'success');
+                                    } else {
+                                        log(`⚠️ Error type: ${data.type || 'undefined'}`, 'error');
+                                        log('❌ Expected API_KEY_MISSING error type', 'error');
+                                    }
+                                } else if (data.content) {
+                                    log(`📝 Content: ${data.content}`, 'info');
+                                } else if (data.done) {
+                                    log('✅ Response completed', 'success');
+                                }
+                            } catch (e) {
+                                if (line.trim()) {
+                                    log(`⚠️ Parse error: ${e.message} - Line: ${line}`, 'error');
+                                }
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                log(`❌ Network/Request Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Auto-run test after page loads
+        window.addEventListener('load', () => {
+            log('🔧 Test page loaded. Backend should have invalid DeepSeek API key.', 'info');
+            log('📋 Click button to test authentication error handling.', 'info');
+        });
+    </script>
+</body>
+</html>

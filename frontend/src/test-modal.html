@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Modal</title>
+    <style>
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 400px;
+            width: 90%;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <h1>Test Page</h1>
+        <button onclick="showModal()">Test Modal</button>
+        
+        <div id="modal" style="display: none;" class="modal">
+            <div class="modal-content">
+                <h2>API Key Required</h2>
+                <p>This is a test modal</p>
+                <button onclick="hideModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showModal() {
+            console.log('Showing modal');
+            document.getElementById('modal').style.display = 'flex';
+        }
+        
+        function hideModal() {
+            console.log('Hiding modal');
+            document.getElementById('modal').style.display = 'none';
+        }
+        
+        // Test the API
+        async function testAPI() {
+            try {
+                const response = await fetch('http://localhost:8000/chat/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: 'Hello',
+                        provider: 'deepseek',
+                        model: 'deepseek-chat',
+                        conversation_id: 'test',
+                        config: {}
+                    })
+                });
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    console.log('Chunk:', chunk);
+                    
+                    if (chunk.includes('data: ')) {
+                        const data = JSON.parse(chunk.slice(6));
+                        console.log('Data:', data);
+                        
+                        if (data.error && data.type === 'API_KEY_MISSING') {
+                            console.log('API Key missing error detected!');
+                            showModal();
+                            return;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+        
+        // Add test button
+        document.getElementById('app').innerHTML += '<br><button onclick="testAPI()">Test API</button>';
+    </script>
+</body>
+</html>

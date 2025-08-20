@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test API Key Update</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        input {
+            padding: 8px;
+            margin: 5px;
+            width: 300px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .output {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .success {
+            background-color: #e8f5e8;
+            color: #2e7d32;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test API Key Update</h1>
+    
+    <div class="test-section">
+        <h2>Update DeepSeek API Key</h2>
+        <p>This will test the API key update functionality:</p>
+        <input type="text" id="apiKey" placeholder="Enter API key (can be test value)" value="sk-test-123456">
+        <br>
+        <button onclick="updateApiKey()">Update API Key</button>
+        <div id="update-result" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Chat with Updated Key</h2>
+        <p>After updating the key, test if chat works:</p>
+        <button onclick="testChat()">Test Chat</button>
+        <div id="chat-result" class="output"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+
+        async function updateApiKey() {
+            const output = document.getElementById('update-result');
+            const apiKey = document.getElementById('apiKey').value;
+            
+            if (!apiKey.trim()) {
+                output.className = 'output error';
+                output.textContent = 'Please enter an API key';
+                return;
+            }
+
+            output.className = 'output';
+            output.textContent = 'Updating API key...';
+
+            try {
+                console.log('Updating API key for deepseek:', apiKey);
+                
+                const response = await fetch(`${API_BASE}/providers/deepseek/config`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        api_key: apiKey
+                    })
+                });
+
+                console.log('Update response status:', response.status);
+                console.log('Update response headers:', Array.from(response.headers.entries()));
+
+                const result = await response.json();
+                console.log('Update response data:', result);
+
+                if (response.ok) {
+                    output.className = 'output success';
+                    output.textContent = `Success: ${JSON.stringify(result, null, 2)}`;
+                } else {
+                    output.className = 'output error';
+                    output.textContent = `Error ${response.status}: ${JSON.stringify(result, null, 2)}`;
+                }
+            } catch (error) {
+                output.className = 'output error';
+                output.textContent = `Network error: ${error.message}`;
+                console.error('Update API key error:', error);
+            }
+        }
+
+        async function testChat() {
+            const output = document.getElementById('chat-result');
+            output.className = 'output';
+            output.textContent = 'Testing chat...';
+
+            try {
+                const response = await fetch(`${API_BASE}/chat/send`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream',
+                    },
+                    body: JSON.stringify({
+                        message: 'Hello, test message',
+                        provider: 'deepseek',
+                        model: 'deepseek-chat',
+                        conversation_id: 'test-conversation',
+                        config: {
+                            temperature: 0.7,
+                            max_tokens: 100
+                        }
+                    })
+                });
+
+                console.log('Chat response status:', response.status);
+                console.log('Chat response headers:', Array.from(response.headers.entries()));
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    output.className = 'output error';
+                    output.textContent = `Error ${response.status}: ${errorText}`;
+                    return;
+                }
+
+                // Handle SSE stream
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                
+                output.className = 'output';
+                output.textContent = 'Streaming response:\n';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        console.log('Chat received line:', line);
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') {
+                                output.textContent += '\n[STREAM COMPLETE]';
+                                return;
+                            }
+                            
+                            try {
+                                const parsed = JSON.parse(data);
+                                output.textContent += JSON.stringify(parsed, null, 2) + '\n';
+                                console.log('Chat parsed SSE data:', parsed);
+                                
+                                if (parsed.error) {
+                                    output.className = 'output error';
+                                    if (parsed.type === 'API_KEY_MISSING') {
+                                        output.textContent += '\n*** API KEY STILL MISSING! ***\n';
+                                    }
+                                } else if (parsed.content) {
+                                    output.className = 'output success';
+                                }
+                            } catch (e) {
+                                output.textContent += `[Parse error: ${e.message}]\n`;
+                                console.error('Chat parse error:', e);
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                output.className = 'output error';
+                output.textContent = `Network error: ${error.message}`;
+                console.error('Chat test error:', error);
+            }
+        }
+    </script>
+</body>
+</html>

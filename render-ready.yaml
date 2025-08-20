@@ -1,0 +1,56 @@
+services:
+  # AI Chat - Complete Application (Recommended)
+  - type: web
+    name: ai-chat-app
+    env: docker
+    dockerImage: amochat/ai-chat:latest
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 80
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+    scaling:
+      minInstances: 1
+      maxInstances: 1
+
+  # Alternative: Separate Backend Service
+  - type: web
+    name: ai-chat-backend
+    env: docker
+    dockerImage: amochat/backend:latest
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+
+  # Alternative: Separate Frontend Service  
+  - type: web
+    name: ai-chat-frontend
+    env: docker
+    dockerImage: amochat/frontend:latest
+    plan: free
+    region: oregon
+    healthCheckPath: /health

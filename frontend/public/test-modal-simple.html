@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Modal Trigger</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .output {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .success {
+            background-color: #e8f5e8;
+            color: #2e7d32;
+        }
+    </style>
+</head>
+<body>
+    <h1>Modal Trigger Test</h1>
+    
+    <div class="test-section">
+        <h2>Test 1: Direct API Call</h2>
+        <p>This will call the backend API with DeepSeek (which has placeholder API key) to trigger API_KEY_MISSING error:</p>
+        <button onclick="testDirectAPI()">Test Direct API Call</button>
+        <div id="direct-result" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 2: Check Current Config</h2>
+        <p>Check what config is returned from the backend:</p>
+        <button onclick="checkConfig()">Check Config</button>
+        <div id="config-result" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 3: Check Providers</h2>
+        <p>Check provider status:</p>
+        <button onclick="checkProviders()">Check Providers</button>
+        <div id="providers-result" class="output"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/api'; // Use the proxy
+
+        async function testDirectAPI() {
+            const output = document.getElementById('direct-result');
+            output.className = 'output';
+            output.textContent = 'Testing...';
+
+            try {
+                const response = await fetch(`${API_BASE}/chat/send`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream',
+                    },
+                    body: JSON.stringify({
+                        message: 'Hello, test message',
+                        provider: 'deepseek',
+                        model: 'deepseek-chat',
+                        conversation_id: 'test-conversation',
+                        config: {
+                            temperature: 0.7,
+                            max_tokens: 100,
+                            top_p: 1,
+                            frequency_penalty: 0,
+                            presence_penalty: 0
+                        }
+                    })
+                });
+
+                console.log('Response status:', response.status);
+                console.log('Response headers:', Array.from(response.headers.entries()));
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    output.className = 'output error';
+                    output.textContent = `Error ${response.status}: ${errorText}`;
+                    return;
+                }
+
+                // Handle SSE stream
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                
+                output.className = 'output';
+                output.textContent = 'Streaming response:\n';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep incomplete line in buffer
+
+                    for (const line of lines) {
+                        console.log('Received line:', line);
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') {
+                                output.textContent += '\n[STREAM COMPLETE]';
+                                return;
+                            }
+                            
+                            try {
+                                const parsed = JSON.parse(data);
+                                output.textContent += JSON.stringify(parsed, null, 2) + '\n';
+                                console.log('Parsed SSE data:', parsed);
+                                
+                                // Check for error with type
+                                if (parsed.error) {
+                                    output.className = 'output error';
+                                    console.log('SSE Error detected:', parsed);
+                                    if (parsed.type === 'API_KEY_MISSING') {
+                                        output.textContent += '\n*** API_KEY_MISSING ERROR DETECTED ***\n';
+                                        output.textContent += 'This should trigger the UnlockModal in the real app.\n';
+                                    }
+                                }
+                            } catch (e) {
+                                output.textContent += `[Parse error: ${e.message}]\n`;
+                                console.error('Parse error:', e);
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                output.className = 'output error';
+                output.textContent = `Network error: ${error.message}`;
+                console.error('API test error:', error);
+            }
+        }
+
+        async function checkConfig() {
+            const output = document.getElementById('config-result');
+            output.className = 'output';
+            output.textContent = 'Loading...';
+
+            try {
+                const response = await fetch(`${API_BASE}/config`);
+                const config = await response.json();
+                output.textContent = JSON.stringify(config, null, 2);
+                if (response.ok) {
+                    output.className = 'output success';
+                }
+            } catch (error) {
+                output.className = 'output error';
+                output.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function checkProviders() {
+            const output = document.getElementById('providers-result');
+            output.className = 'output';
+            output.textContent = 'Loading...';
+
+            try {
+                const response = await fetch(`${API_BASE}/providers`);
+                const data = await response.json();
+                output.textContent = JSON.stringify(data, null, 2);
+                if (response.ok) {
+                    output.className = 'output success';
+                }
+            } catch (error) {
+                output.className = 'output error';
+                output.textContent = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
