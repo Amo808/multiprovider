@@ -1,5 +1,14 @@
-[supervisord]
-nodaemon=true
+[supervi[program:backend]
+command=python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+directory=/app/backend
+user=appuser
+autostart=true
+autorestart=true
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+environment=PORT="8000",PYTHONUNBUFFERED="1"emon=true
 user=root
 logfile=/dev/stdout
 logfile_maxbytes=0
@@ -16,7 +25,7 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 stdout_logfile=/dev/stdout
 stdout_logfile_maxbytes=0
-environment=PORT="8000",PYTHONUNBUFFERED="1"
+environment=PORT="8000",PYTHONUNBUFFERED="1",PATH="/usr/local/bin:/usr/bin:/bin"
 
 [program:nginx]
 command=nginx -g 'daemon off;'
