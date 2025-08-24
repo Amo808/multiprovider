@@ -49,7 +49,7 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
-    mkdir -p /var/log/nginx /var/run && \
+    mkdir -p /var/log/nginx /var/run /app/logs && \
     chmod +x /app/start_simple.sh && \
     chown -R appuser:appuser /app
 
