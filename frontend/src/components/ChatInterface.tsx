@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Copy, RefreshCw, AlertCircle, Zap, Square } from 'lucide-react';
 import { Message, ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversations } from '../hooks/useConversations';
+import { ContextViewer } from './ContextViewer';
 
 interface ChatInterfaceProps {
   selectedModel?: ModelInfo;
@@ -364,6 +365,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
           
           <div className="flex space-x-2">
+            {/* Context Viewer */}
+            <ContextViewer
+              messages={messages}
+              currentInput={inputValue}
+              generationConfig={generationConfig}
+            />
+            
             {messages.length > 0 && (
               <button
                 type="button"
