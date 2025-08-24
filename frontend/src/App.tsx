@@ -35,7 +35,7 @@ function App() {
   // API hooks
   const { config, error: configError, updateConfig, updateGenerationConfig } = useConfig();
   const { health } = useHealth();
-  const { deleteConversation: deleteConversationMessages } = useConversations();
+  const { deleteConversation: deleteConversationMessages, loadHistory } = useConversations();
 
   // Initialize app
   useEffect(() => {
@@ -62,6 +62,14 @@ function App() {
       }
     }
   }, [config, selectedModel, selectedProvider]);
+
+  // Load history for current conversation on app initialization
+  useEffect(() => {
+    if (currentConversationId) {
+      console.log('App: Loading history for current conversation on initialization:', currentConversationId);
+      loadHistory(currentConversationId);
+    }
+  }, []); // Empty dependency array - run only once on mount
 
   // Handlers
   const handleModelChange = async (model: ModelInfo) => {
