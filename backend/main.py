@@ -24,6 +24,7 @@ from adapters import (
     ProviderStatus
 )
 from storage import HistoryStore, PromptBuilder
+from storage.history_new import ConversationStore
 
 # Load environment variables
 load_dotenv()
@@ -84,22 +85,22 @@ class ModelRequest(BaseModel):
     provider: str
 
 # Global components
-history_store = None
+conversation_store = None
 prompt_builder = None
 app_config = None
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup."""
-    global history_store, prompt_builder, app_config
+    global conversation_store, prompt_builder, app_config
     
     try:
         # Initialize provider manager
         await provider_manager.initialize()
         
-        # Initialize history store
-        history_path = Path(__file__).parent.parent / "data" / "history.jsonl"
-        history_store = HistoryStore(str(history_path))
+        # Initialize conversation store
+        storage_path = Path(__file__).parent.parent / "data"
+        conversation_store = ConversationStore(str(storage_path))
         
         # Initialize prompt builder (with default adapter)
         enabled_providers = provider_manager.get_enabled_providers()
@@ -323,7 +324,8 @@ async def test_provider_connection(provider_id: str):
 async def get_history():
     """Get chat history."""
     try:
-        messages = history_store.load_history()
+        messages = []
+        # For now, return empty list. This endpoint may be removed or updated to work with specific conversations
         return [
             {
                 "id": msg.id,
@@ -399,10 +401,10 @@ async def send_message(request: ChatRequest):
         )
         
         # Save user message
-        history_store.save_message(user_message)
+        conversation_store.save_message(request.conversation_id or "default", user_message)
         
-        # Load history for this specific conversation and build context
-        history = history_store.load_conversation_history(request.conversation_id or "default")
+        # Load history and build context
+        history = conversation_store.load_conversation_history(request.conversation_id or "default")
         
         # Add system prompt if provided
         if request.system_prompt:
@@ -461,7 +463,26 @@ async def send_message(request: ChatRequest):
                         
                     if response.content:
                         full_content += response.content
-                        yield f"data: {json.dumps({'content': response.content, 'id': assistant_message.id, 'done': False, 'provider': provider_id, 'model': model_id})}\n\n"
+                        
+                        # Include current token info in streaming chunks
+                        chunk_data = {
+                            'content': response.content, 
+                            'id': assistant_message.id, 
+                            'done': False, 
+                            'provider': provider_id, 
+                            'model': model_id
+                        }
+                        
+                        if response.meta:
+                            chunk_data['meta'] = {
+                                'tokens_in': response.meta.get("tokens_in", total_tokens_in),
+                                'tokens_out': response.meta.get("tokens_out", total_tokens_out),
+                                'provider': provider_id,
+                                'model': model_id,
+                                'estimated_cost': response.meta.get("estimated_cost")
+                            }
+                            
+                        yield f"data: {json.dumps(chunk_data)}\n\n"
                     
                     if response.meta:
                         total_tokens_in = response.meta.get("tokens_in", 0)
@@ -470,23 +491,20 @@ async def send_message(request: ChatRequest):
                     if response.done:
                         # Save complete assistant message
                         assistant_message.content = full_content
-                        assistant_message.meta.update({
-                            "tokens_in": total_tokens_in,
-                            "tokens_out": total_tokens_out,
-                            "total_tokens": total_tokens_in + total_tokens_out,
-                            "estimated_cost": response.usage.estimated_cost if response.usage else None
-                        })
-                        history_store.save_message(assistant_message)
                         
-                        # Prepare usage data for response
-                        usage_data = {}
-                        if response.usage:
-                            usage_data = {
-                                "prompt_tokens": response.usage.prompt_tokens,
-                                "completion_tokens": response.usage.completion_tokens,
-                                "total_tokens": response.usage.total_tokens,
-                                "estimated_cost": response.usage.estimated_cost
-                            }
+                        # Get token info from response meta if available
+                        response_meta = response.meta or {}
+                        final_tokens_in = response_meta.get("tokens_in", total_tokens_in)
+                        final_tokens_out = response_meta.get("tokens_out", total_tokens_out)
+                        estimated_cost = response_meta.get("estimated_cost", None)
+                        
+                        assistant_message.meta.update({
+                            "tokens_in": final_tokens_in,
+                            "tokens_out": final_tokens_out,
+                            "total_tokens": final_tokens_in + final_tokens_out,
+                            "estimated_cost": estimated_cost
+                        })
+                        conversation_store.save_message(request.conversation_id or "default", assistant_message)
                         
                         # Send completion signal with usage
                         final_response = {
@@ -495,14 +513,12 @@ async def send_message(request: ChatRequest):
                             'provider': provider_id, 
                             'model': model_id, 
                             'meta': {
-                                'tokens_in': total_tokens_in, 
-                                'tokens_out': total_tokens_out, 
-                                'total_tokens': total_tokens_in + total_tokens_out,
-                                'estimated_cost': response.usage.estimated_cost if response.usage else None
+                                'tokens_in': final_tokens_in, 
+                                'tokens_out': final_tokens_out, 
+                                'total_tokens': final_tokens_in + final_tokens_out,
+                                'estimated_cost': estimated_cost
                             }
                         }
-                        if usage_data:
-                            final_response['usage'] = usage_data
                             
                         yield f"data: {json.dumps(final_response)}\n\n"
                         break
@@ -532,7 +548,8 @@ async def send_message(request: ChatRequest):
 async def clear_history():
     """Clear chat history."""
     try:
-        history_store.clear_history()
+        # For now, clear default conversation. This may need conversation_id parameter
+        conversation_store.clear_conversation("default")
         return {"message": "History cleared successfully"}
     except Exception as e:
         logger.error(f"Failed to clear history: {e}")
@@ -705,49 +722,79 @@ async def get_config():
         logger.error(f"Failed to get config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/conversations")
+async def get_conversations():
+    """Get list of all conversations."""
+    try:
+        conversations = conversation_store.get_conversations()
+        return {"conversations": conversations}
+    except Exception as e:
+        logger.error(f"Failed to get conversations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve conversations")
+
+@app.post("/conversations")
+async def create_conversation(conversation_data: dict):
+    """Create a new conversation."""
+    try:
+        conversation_id = conversation_data.get("id")
+        title = conversation_data.get("title")
+        
+        if not conversation_id:
+            raise HTTPException(status_code=400, detail="conversation_id is required")
+        
+        conversation_store.create_conversation(conversation_id, title)
+        return {"message": "Conversation created successfully", "id": conversation_id}
+    except Exception as e:
+        logger.error(f"Failed to create conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/history/{conversation_id}")
 async def get_conversation_history(conversation_id: str):
     """Get chat history for a specific conversation."""
     try:
-        logger.info(f"Getting history for conversation: {conversation_id}")
-        
-        # Load conversation-specific history
-        messages = history_store.load_conversation_history(conversation_id)
-        
-        # Format messages for frontend
-        return [
-            {
-                "id": msg.id,
-                "role": msg.role,
-                "content": msg.content,
-                "timestamp": msg.timestamp.isoformat(),
-                "provider": getattr(msg.meta, "provider", None) if msg.meta else None,
-                "model": getattr(msg.meta, "model", None) if msg.meta else None,
-                "meta": msg.meta
-            }
-            for msg in messages
-        ]
-        
+        messages = conversation_store.load_conversation_history(conversation_id)
+        return {
+            "conversation_id": conversation_id,
+            "messages": [
+                {
+                    "id": msg.id,
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp),
+                    "provider": msg.meta.get("provider") if msg.meta else None,
+                    "model": msg.meta.get("model") if msg.meta else None,
+                    "meta": msg.meta
+                }
+                for msg in messages
+            ]
+        }
     except Exception as e:
-        logger.error(f"Failed to get conversation history for {conversation_id}: {e}")
+        logger.error(f"Failed to get conversation history {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve conversation history")
 
 @app.delete("/history/{conversation_id}")
 async def clear_conversation_history(conversation_id: str):
     """Clear chat history for a specific conversation."""
     try:
-        logger.info(f"Clearing history for conversation: {conversation_id}")
-        
-        # Clear conversation-specific history
-        history_store.clear_conversation_history(conversation_id)
-        
-        return {"message": f"History cleared for conversation {conversation_id}"}
-        
+        conversation_store.clear_conversation(conversation_id)
+        return {"message": f"Conversation {conversation_id} cleared successfully"}
     except Exception as e:
-        logger.error(f"Failed to clear conversation history for {conversation_id}: {e}")
+        logger.error(f"Failed to clear conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to clear conversation history")
 
+@app.put("/conversations/{conversation_id}/title")
+async def update_conversation_title(conversation_id: str, title_data: dict):
+    """Update conversation title."""
+    try:
+        title = title_data.get("title")
+        if not title:
+            raise HTTPException(status_code=400, detail="title is required")
+        
+        conversation_store.update_conversation_title(conversation_id, title)
+        return {"message": "Conversation title updated successfully"}
+    except Exception as e:
+        logger.error(f"Failed to update conversation title {conversation_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

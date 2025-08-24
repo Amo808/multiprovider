@@ -1,68 +1,79 @@
-# Complete AI Chat Application Dockerfile for Render
-FROM python:3.11-slim
+# Multi-stage Dockerfile for complete AI Chat application
+FROM python:3.11-slim as backend
 
-# Install system dependencies including Node.js
+# Backend stage
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8000
+
+WORKDIR /app/backend
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    nginx \
-    supervisor \
-    wget \
+    build-essential \
     curl \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+    && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /app
+# Copy requirements and install dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy and build frontend first
-COPY frontend/package*.json ./frontend/
-RUN cd frontend && npm ci
+# Copy backend code
+COPY backend/ .
+RUN mkdir -p /app/backend/data /app/backend/logs /app/backend/storage
 
-COPY frontend/ ./frontend/
-RUN cd frontend && npm run build
+# Create non-root user
+RUN adduser --disabled-password --gecos '' appuser
+USER appuser
 
-# Copy Python modules and backend files
-COPY adapters/ ./adapters/
-COPY storage/ ./storage/
-COPY data/ ./data/
-COPY backend/ ./backend/
-RUN pip install --no-cache-dir -r backend/requirements.txt && \
-    python3 -m pip install --no-cache-dir -r backend/requirements.txt && \
-    echo "=== CHECKING PYTHON INSTALLATION ===" && \
-    python3 --version && \
-    pip --version && \
-    pip show fastapi && \
-    python3 -c "import sys; print('Python path:', sys.path)" && \
-    python3 -c "import fastapi; print('FastAPI version:', fastapi.__version__)" && \
-    echo "=== INSTALLATION CHECK COMPLETE ==="
+# Frontend build stage
+FROM node:18-alpine as frontend-builder
 
-# Copy configuration files
-COPY nginx.server.conf /etc/nginx/sites-available/default
+WORKDIR /app/frontend
+
+# Copy package files and install dependencies
+COPY frontend/package*.json ./
+RUN npm ci
+
+# Copy frontend source and build
+COPY frontend/ .
+RUN npm run build
+
+# Final stage - combine both
+FROM nginx:alpine
+
+# Install supervisor to manage multiple processes
+RUN apk add --no-cache supervisor python3 py3-pip curl
+
+# Copy supervisor config
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Configure nginx
-RUN rm -f /etc/nginx/sites-enabled/default && \
-    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+# Copy backend from first stage
+COPY --from=backend /app/backend /app/backend
+COPY --from=backend /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=backend /usr/local/bin /usr/local/bin
 
-# Create app user and set permissions
-RUN useradd -m -u 1001 appuser && \
-    mkdir -p /var/log/supervisor /var/run /app/data /app/logs && \
-    echo "Python paths:" && \
-    which python3 || echo "python3 not found" && \
-    which python || echo "python not found" && \
-    ls -la /usr/bin/python* && \
-    chown -R appuser:appuser /app
+# Copy frontend from builder stage
+COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
-# Create health check endpoint
-RUN echo '<html><body>OK</body></html>' > /app/frontend/dist/health
+# Copy nginx config
+COPY nginx.render.conf /etc/nginx/nginx.conf
 
-# Expose port 
-EXPOSE 10000
+# Copy data and config files
+COPY data/ /app/data/
+
+# Set permissions
+RUN adduser -D -s /bin/sh appuser && \
+    chown -R appuser:appuser /app && \
+    mkdir -p /var/log/supervisor
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:10000/health || exit 1
+    CMD curl -f http://localhost:80/health && curl -f http://localhost:8000/health || exit 1
 
-# Start supervisord
-CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Expose ports
+EXPOSE 80 8000
+
+# Start supervisor
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

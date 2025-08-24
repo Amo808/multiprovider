@@ -25,9 +25,7 @@ function App() {
   const [showSidebar, setShowSidebar] = useState(false);
   const [showHistory, setShowHistory] = useState(true); // Show history by default for Lobe Chat-like experience
   const [currentConversationId, setCurrentConversationId] = useState<string>('default');
-  const [conversations, setConversations] = useState<Array<{id: string, title: string, updatedAt: string}>>([
-    { id: 'default', title: 'New Conversation', updatedAt: new Date().toISOString() }
-  ]);
+  const [conversations, setConversations] = useState<Array<{id: string, title: string, updatedAt: string}>>([]);
   const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>('auto');
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string>('');
@@ -35,7 +33,7 @@ function App() {
   // API hooks
   const { config, error: configError, updateConfig, updateGenerationConfig } = useConfig();
   const { health } = useHealth();
-  const { deleteConversation: deleteConversationMessages, loadHistory } = useConversations();
+  const { deleteConversation: deleteConversationMessages } = useConversations();
 
   // Initialize app
   useEffect(() => {
@@ -48,6 +46,56 @@ function App() {
       root.classList.toggle('dark', theme === 'dark');
     }
   }, [theme]);
+
+  // Load conversations from backend on app start
+  useEffect(() => {
+    const loadConversations = async () => {
+      try {
+        const response = await fetch('/api/conversations');
+        const data = await response.json();
+        const { conversations: backendConversations } = data;
+        
+        if (backendConversations && backendConversations.length > 0) {
+          // Transform backend data to frontend format
+          const transformedConversations = backendConversations.map((conv: any) => ({
+            id: conv.id,
+            title: conv.title || 'Untitled Conversation',
+            updatedAt: conv.updated_at || new Date().toISOString()
+          }));
+          setConversations(transformedConversations);
+          
+          // Set current conversation to the most recent one if default is empty
+          const defaultConv = transformedConversations.find((c: any) => c.id === 'default');
+          if (defaultConv) {
+            setCurrentConversationId('default');
+          } else if (transformedConversations.length > 0) {
+            setCurrentConversationId(transformedConversations[0].id);
+          }
+        } else {
+          // No conversations found, create a default one
+          const defaultConversation = {
+            id: 'default',
+            title: 'New Conversation', 
+            updatedAt: new Date().toISOString()
+          };
+          setConversations([defaultConversation]);
+          setCurrentConversationId('default');
+        }
+      } catch (error) {
+        console.warn('Failed to load conversations, using default:', error);
+        // Fallback to default conversation
+        const defaultConversation = {
+          id: 'default',
+          title: 'New Conversation', 
+          updatedAt: new Date().toISOString()
+        };
+        setConversations([defaultConversation]);
+        setCurrentConversationId('default');
+      }
+    };
+
+    loadConversations();
+  }, []); // Run once on app start
 
   // Set default model when config loads
   useEffect(() => {
@@ -62,14 +110,6 @@ function App() {
       }
     }
   }, [config, selectedModel, selectedProvider]);
-
-  // Load history for current conversation on app initialization
-  useEffect(() => {
-    if (currentConversationId) {
-      console.log('App: Loading history for current conversation on initialization:', currentConversationId);
-      loadHistory(currentConversationId);
-    }
-  }, []); // Empty dependency array - run only once on mount
 
   // Handlers
   const handleModelChange = async (model: ModelInfo) => {
@@ -159,29 +199,68 @@ function App() {
   };
 
   // Conversation handlers
-  const handleNewConversation = () => {
+  const handleNewConversation = async () => {
     const newId = `conv_${Date.now()}`;
     const newConversation = {
       id: newId,
       title: 'New Conversation',
       updatedAt: new Date().toISOString()
     };
-    setConversations(prev => [newConversation, ...prev]);
-    setCurrentConversationId(newId);
+    
+    try {
+      // Create conversation in backend
+      await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: newId,
+          title: 'New Conversation'
+        })
+      });
+      
+      // Update local state
+      setConversations(prev => [newConversation, ...prev]);
+      setCurrentConversationId(newId);
+    } catch (error) {
+      console.error('Failed to create conversation:', error);
+      // Still update local state for offline functionality
+      setConversations(prev => [newConversation, ...prev]);
+      setCurrentConversationId(newId);
+    }
   };
 
   const handleSelectConversation = (conversationId: string) => {
     setCurrentConversationId(conversationId);
   };
 
-  const handleRenameConversation = (conversationId: string, newTitle: string) => {
-    setConversations(prev => 
-      prev.map(conv => 
-        conv.id === conversationId 
-          ? { ...conv, title: newTitle, updatedAt: new Date().toISOString() }
-          : conv
-      )
-    );
+  const handleRenameConversation = async (conversationId: string, newTitle: string) => {
+    try {
+      // Update in backend
+      await fetch(`/api/conversations/${conversationId}/title`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle })
+      });
+      
+      // Update local state
+      setConversations(prev => 
+        prev.map(conv => 
+          conv.id === conversationId 
+            ? { ...conv, title: newTitle, updatedAt: new Date().toISOString() }
+            : conv
+        )
+      );
+    } catch (error) {
+      console.error('Failed to update conversation title:', error);
+      // Still update local state for offline functionality  
+      setConversations(prev => 
+        prev.map(conv => 
+          conv.id === conversationId 
+            ? { ...conv, title: newTitle, updatedAt: new Date().toISOString() }
+            : conv
+        )
+      );
+    }
   };
 
   const handleDeleteConversation = (conversationId: string) => {
@@ -202,11 +281,24 @@ function App() {
   };
 
   // Update conversation title when first message is sent
-  const handleUpdateConversationTitle = (conversationId: string, message: string) => {
+  const handleUpdateConversationTitle = async (conversationId: string, message: string) => {
     const conversation = conversations.find(conv => conv.id === conversationId);
     if (conversation && conversation.title === 'New Conversation') {
       // Generate title from first message (first 50 characters)
       const newTitle = message.length > 50 ? message.substring(0, 50) + '...' : message;
+      
+      try {
+        // Update in backend
+        await fetch(`/api/conversations/${conversationId}/title`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: newTitle })
+        });
+      } catch (error) {
+        console.error('Failed to update conversation title in backend:', error);
+      }
+      
+      // Update local state
       setConversations(prev => 
         prev.map(conv => 
           conv.id === conversationId 
@@ -215,7 +307,7 @@ function App() {
         )
       );
     } else if (conversation) {
-      // Just update the timestamp
+      // Just update the timestamp locally 
       setConversations(prev => 
         prev.map(conv => 
           conv.id === conversationId 

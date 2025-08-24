@@ -1,0 +1,79 @@
+{
+  "default": {
+    "id": "default",
+    "title": "Conversation default",
+    "created_at": "2025-08-24T22:03:06.218963",
+    "updated_at": "2025-08-24T22:37:20.466914",
+    "message_count": 2
+  },
+  "conv_1756047821474": {
+    "id": "conv_1756047821474",
+    "title": "Conversation conv_175",
+    "created_at": "2025-08-24T22:03:44.523932",
+    "updated_at": "2025-08-24T22:03:48.897731",
+    "message_count": 2
+  },
+  "conv_1756047834677": {
+    "id": "conv_1756047834677",
+    "title": "Conversation conv_175",
+    "created_at": "2025-08-24T22:03:59.761517",
+    "updated_at": "2025-08-24T22:04:14.253450",
+    "message_count": 2
+  },
+  "conv_1756047942361": {
+    "id": "conv_1756047942361",
+    "title": "Conversation conv_175",
+    "created_at": "2025-08-24T22:05:44.556212",
+    "updated_at": "2025-08-24T22:05:50.595544",
+    "message_count": 2
+  },
+  "conv_1756048031812": {
+    "id": "conv_1756048031812",
+    "title": "Conversation conv_175",
+    "created_at": "2025-08-24T22:07:14.906307",
+    "updated_at": "2025-08-24T22:07:47.298600",
+    "message_count": 6
+  },
+  "conv_1756048074385": {
+    "id": "conv_1756048074385",
+    "title": "Conversation conv_175",
+    "created_at": "2025-08-24T22:07:57.789443",
+    "updated_at": "2025-08-24T22:25:37.385910",
+    "message_count": 4
+  },
+  "conv_1756048255596": {
+    "id": "conv_1756048255596",
+    "title": "хай",
+    "created_at": "2025-08-24T22:10:55.598492",
+    "updated_at": "2025-08-24T22:11:04.909194",
+    "message_count": 2
+  },
+  "conv_1756048448567": {
+    "id": "conv_1756048448567",
+    "title": "Conversation conv_175",
+    "created_at": "2025-08-24T22:14:11.674885",
+    "updated_at": "2025-08-24T22:14:16.172217",
+    "message_count": 2
+  },
+  "conv_1756048796996": {
+    "id": "conv_1756048796996",
+    "title": "New Conversation",
+    "created_at": "2025-08-24T22:19:56.999324",
+    "updated_at": "2025-08-24T22:19:56.999333",
+    "message_count": 0
+  },
+  "conv_1756049053337": {
+    "id": "conv_1756049053337",
+    "title": "привет",
+    "created_at": "2025-08-24T22:24:13.340246",
+    "updated_at": "2025-08-24T22:24:45.929221",
+    "message_count": 6
+  },
+  "conv_1756049155451": {
+    "id": "conv_1756049155451",
+    "title": "привет",
+    "created_at": "2025-08-24T22:25:55.454113",
+    "updated_at": "2025-08-24T22:27:04.806751",
+    "message_count": 4
+  }
+}

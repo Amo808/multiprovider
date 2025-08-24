@@ -25,7 +25,8 @@ export class ApiClient {
   // Chat Methods
   async sendMessage(
     request: SendMessageRequest,
-    onChunk?: (chunk: ChatResponse) => void
+    onChunk?: (chunk: ChatResponse) => void,
+    abortController?: AbortController
   ): Promise<void> {
     console.log('API Client: Sending message request:', request);
     
@@ -37,7 +38,8 @@ export class ApiClient {
       body: JSON.stringify({
         ...request,
         stream: true
-      })
+      }),
+      signal: abortController?.signal
     });
 
     console.log('API Client: Response status:', response.status, response.statusText);
@@ -54,64 +56,40 @@ export class ApiClient {
     }
 
     const decoder = new TextDecoder();
-    let buffer = '';
     
     while (true) {
       const { done, value } = await reader.read();
       
-      if (done) {
-        // Process any remaining data in buffer
-        if (buffer.trim()) {
-          if (buffer.startsWith('data: ')) {
-            try {
-              const data: ChatResponse = JSON.parse(buffer.slice(6));
-              console.log('API Client: Parsed final data:', data);
-              if (onChunk && !data.error) {
-                onChunk(data);
-              }
-            } catch (e) {
-              console.error('API Client: Final parse error:', e);
-            }
-          }
-        }
-        break;
-      }
+      if (done) break;
       
-      const chunk = decoder.decode(value, { stream: true });
+      const chunk = decoder.decode(value);
       console.log('API Client: Received chunk:', chunk);
-      buffer += chunk;
-      
-      // Process complete lines
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+      const lines = chunk.split('\n');
       
       for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (trimmedLine.startsWith('data: ')) {
+        if (line.startsWith('data: ')) {
           try {
-            const jsonData = trimmedLine.slice(6).trim();
-            if (jsonData) {
-              const data: ChatResponse = JSON.parse(jsonData);
-              console.log('API Client: Parsed data:', data);
-              
-              if (data.error) {
-                console.error('API Client: Error in data:', data.error, 'type:', data.type);
-                const errorMsg = `${data.error}${data.type ? ` (${data.type})` : ''}`;
-                throw new Error(errorMsg);
-              }
-              
-              if (onChunk) {
-                onChunk(data);
-              }
-              
-              if (data.done) {
-                return;
-              }
+            const data: ChatResponse = JSON.parse(line.slice(6));
+            console.log('API Client: Parsed data:', data);
+            
+            if (data.error) {
+              console.error('API Client: Error in data:', data.error, 'type:', data.type);
+              // Create error with the original error message and include type info
+              const errorMsg = `${data.error}${data.type ? ` (${data.type})` : ''}`;
+              throw new Error(errorMsg);
+            }
+            
+            if (onChunk) {
+              onChunk(data);
+            }
+            
+            if (data.done) {
+              return;
             }
           } catch (e) {
-            if (e instanceof Error && !e.message.includes('Unexpected end of JSON input')) {
-              console.error('API Client: Parse error for line:', trimmedLine, 'Error:', e);
-              // Don't throw here, just log and continue
+            if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
+              console.error('API Client: Parse error:', e);
+              throw e;
             }
           }
         }

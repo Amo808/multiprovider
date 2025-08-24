@@ -56,7 +56,8 @@ pids/
 *.seed
 *.pid.lock
 
-# Cache and temp files
+# Storage and cache
+storage/
 .cache/
 .tmp/
 temp/

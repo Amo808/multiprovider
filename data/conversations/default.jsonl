@@ -1,0 +1,2 @@
+{"id": "d4d97421-d5ab-46cd-8017-d9d93fd55729", "role": "user", "content": "ало ало", "timestamp": "2025-08-24T22:37:17.400102", "meta": {"provider": "deepseek", "model": "deepseek-chat", "conversation_id": "default"}}
+{"id": "2848ad90-368f-433f-99a6-a541762ce54d", "role": "assistant", "content": "Привет! 😊 Чем могу помочь?", "timestamp": "2025-08-24T22:37:17.408805", "meta": {"provider": "deepseek", "model": "deepseek-chat", "conversation_id": "default", "tokens_in": 6, "tokens_out": 16, "total_tokens": 22, "estimated_cost": null}}

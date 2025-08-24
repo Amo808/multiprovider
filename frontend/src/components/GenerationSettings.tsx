@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sliders, RotateCcw, Save } from 'lucide-react';
-import { GenerationConfig, ModelInfo } from '../types';
+import { GenerationConfig } from '../types';
 
 interface GenerationSettingsProps {
   config: GenerationConfig;
@@ -9,7 +9,6 @@ interface GenerationSettingsProps {
   onReset?: () => void;
   isOpen: boolean;
   onToggle: () => void;
-  currentModel?: ModelInfo;  // Add current model info
 }
 
 interface SliderProps {
@@ -60,8 +59,7 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
   onSave,
   onReset,
   isOpen,
-  onToggle,
-  currentModel
+  onToggle
 }) => {
   const [localConfig, setLocalConfig] = useState<GenerationConfig>(config);
   const [hasChanges, setHasChanges] = useState(false);
@@ -70,16 +68,6 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
     setLocalConfig(config);
     setHasChanges(false);
   }, [config]);
-
-  // Get dynamic max tokens based on current model
-  const getMaxTokens = () => {
-    return currentModel?.max_output_tokens || 16384;
-  };
-
-  // Get recommended max tokens
-  const getRecommendedMaxTokens = () => {
-    return currentModel?.recommended_max_tokens || 8192;
-  };
 
   const handleChange = (key: keyof GenerationConfig, value: any) => {
     const newConfig = { ...localConfig, [key]: value };
@@ -170,10 +158,10 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
               label="Max Tokens"
               value={localConfig.max_tokens}
               min={1}
-              max={getMaxTokens()}
+              max={8192}
               step={1}
               onChange={(value) => handleChange('max_tokens', value)}
-              description={`Maximum tokens: ${getMaxTokens().toLocaleString()}. Recommended: ${getRecommendedMaxTokens().toLocaleString()} for ${currentModel?.display_name || 'current model'}.`}
+              description="Maximum number of tokens to generate in the response."
             />
 
             {/* Top P */}

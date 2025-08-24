@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Copy, RefreshCw, AlertCircle, Zap } from 'lucide-react';
+import { Send, Bot, User, Copy, RefreshCw, AlertCircle, Zap, Square } from 'lucide-react';
 import { Message, ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversations } from '../hooks/useConversations';
 
@@ -51,7 +51,12 @@ const MessageBubble: React.FC<{
       <div className={`flex-1 min-w-0 ${isUser ? 'text-right' : ''}`}>
         <div className="flex items-center space-x-2 mb-1">
           <span className="text-sm font-medium text-gray-900 dark:text-white">
-            {isUser ? 'You' : selectedModel?.display_name || 'Assistant'}
+            {isUser ? 'You' : (
+              message.meta?.model ? 
+                // Try to find the display name from the current model or use the model ID
+                (selectedModel?.id === message.meta.model ? selectedModel.display_name : message.meta.model) :
+                (selectedModel?.display_name || 'Assistant')
+            )}
           </span>
           {message.meta?.provider && !isUser && (
             <span className="px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full">
@@ -87,12 +92,24 @@ const MessageBubble: React.FC<{
                 ? 'text-red-800 dark:text-red-200'
                 : 'text-gray-900 dark:text-white prose-gray dark:prose-invert'
           }`}>
-            <p className="whitespace-pre-wrap m-0">
-              {displayContent}
-              {isStreaming && (
-                <span className="animate-pulse">▊</span>
-              )}
-            </p>
+            {!isUser && !displayContent && !isError ? (
+              // Show "Thinking..." animation for empty assistant messages
+              <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
+                <div className="flex space-x-1">
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+                <span className="text-sm">Thinking...</span>
+              </div>
+            ) : (
+              <p className="whitespace-pre-wrap m-0">
+                {displayContent}
+                {isStreaming && (
+                  <span className="animate-pulse">▊</span>
+                )}
+              </p>
+            )}
           </div>
 
           {/* Copy Button */}
@@ -112,55 +129,40 @@ const MessageBubble: React.FC<{
         </div>
 
         {/* Message Meta */}
-        {message.meta && !isUser && (
-          <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 space-x-3">
-            {message.meta.tokens_in && (
-              <span>In: {message.meta.tokens_in} tokens</span>
-            )}
-            {message.meta.tokens_out && (
-              <span>Out: {message.meta.tokens_out} tokens</span>
-            )}
-            {message.meta.model && (
-              <span>Model: {message.meta.model}</span>
-            )}
+        {message.meta && !isUser && (message.meta.tokens_in || message.meta.tokens_out) && (
+          <div className="mt-1 flex items-center space-x-2 text-xs">
+            <div className="text-gray-400 dark:text-gray-500">
+              {new Date(message.timestamp).toLocaleTimeString()}
+            </div>
+            <div className="flex items-center space-x-1">
+              {message.meta.tokens_in && (
+                <span className="text-blue-600 dark:text-blue-400" title={`Input tokens: ${message.meta.tokens_in}`}>
+                  ↑{message.meta.tokens_in}
+                </span>
+              )}
+              {message.meta.tokens_out && (
+                <span className="text-green-600 dark:text-green-400" title={`Output tokens: ${message.meta.tokens_out}`}>
+                  ↓{message.meta.tokens_out}
+                </span>
+              )}
+              {message.meta.estimated_cost && (
+                <span className="text-yellow-600 dark:text-yellow-400" title={`Estimated cost: $${message.meta.estimated_cost}`}>
+                  ${message.meta.estimated_cost.toFixed(4)}
+                </span>
+              )}
+            </div>
           </div>
         )}
 
-        <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-          {new Date(message.timestamp).toLocaleTimeString()}
-        </div>
+        {!message.meta || isUser || (!message.meta.tokens_in && !message.meta.tokens_out) ? (
+          <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            {new Date(message.timestamp).toLocaleTimeString()}
+          </div>
+        ) : null}
       </div>
     </div>
   );
 };
-
-const LoadingMessage: React.FC<{ provider?: ModelProvider }> = ({ provider }) => (
-  <div className="flex items-start space-x-3 max-w-4xl mx-auto px-4 py-6">
-    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-600 text-white flex items-center justify-center">
-      <Bot size={16} />
-    </div>
-    <div className="flex-1 min-w-0">
-      <div className="flex items-center space-x-2 mb-1">
-        <span className="text-sm font-medium text-gray-900 dark:text-white">Assistant</span>
-        {provider && (
-          <span className="px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full">
-            {provider.toUpperCase()}
-          </span>
-        )}
-      </div>
-      <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 mr-8">
-        <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
-          <div className="flex space-x-1">
-            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-          </div>
-          <span className="text-sm">Thinking...</span>
-        </div>
-      </div>
-    </div>
-  </div>
-);
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   selectedModel,
@@ -175,24 +177,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const loadedConversationsRef = useRef<Set<string>>(new Set());
   
-  const { getConversation, sendMessage, clearConversation, loadHistory } = useConversations();
+  const { getConversation, sendMessage, clearConversation, stopStreaming } = useConversations();
   const conversationState = getConversation(conversationId);
   const { messages, isStreaming, error, currentResponse } = conversationState;
-
-  // Load history when conversationId changes (only once per conversation)
-  useEffect(() => {
-    console.log('ChatInterface: conversationId changed to:', conversationId);
-    if (conversationId && !loadedConversationsRef.current.has(conversationId)) {
-      // Only load history if conversation doesn't have messages and we haven't loaded it yet
-      if (messages.length === 0 && !isStreaming) {
-        console.log('ChatInterface: Loading history for conversation:', conversationId);
-        loadedConversationsRef.current.add(conversationId);
-        loadHistory(conversationId);
-      }
-    }
-  }, [conversationId, messages.length, isStreaming, loadHistory]);
 
   // Custom message handler with API key error handling
   const handleSendMessage = async (request: SendMessageRequest) => {
@@ -340,9 +328,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 currentResponse={currentResponse}
               />
             ))}
-            {isStreaming && (
-              <LoadingMessage provider={selectedProvider} />
-            )}
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -391,14 +376,26 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </button>
             )}
             
-            <button
-              type="submit"
-              disabled={!canSend}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
-            >
-              <Send size={20} />
-              {isStreaming && <span className="text-sm">Sending...</span>}
-            </button>
+            
+            {isStreaming ? (
+              <button
+                type="button"
+                onClick={() => stopStreaming(conversationId)}
+                className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors flex items-center space-x-2"
+                title="Stop generation"
+              >
+                <Square size={20} />
+                <span className="text-sm">Stop</span>
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!canSend}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+              >
+                <Send size={20} />
+              </button>
+            )}
           </div>
         </form>
 

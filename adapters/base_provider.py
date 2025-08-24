@@ -83,8 +83,6 @@ class ChatResponse:
     done: bool = False
     error: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
-    usage: Optional['Usage'] = None  # Token usage info
-    model: Optional[str] = None  # Model used
 
 @dataclass
 class Usage:
@@ -193,22 +191,6 @@ class BaseAdapter(ABC):
             None
         )
         return model_info.context_length if model_info else 4096
-    
-    def get_max_output_tokens(self, model: str) -> int:
-        """Get maximum output tokens for model"""
-        model_info = next(
-            (m for m in self.supported_models if m.id == model),
-            None
-        )
-        return model_info.max_output_tokens if model_info else 8192
-    
-    def get_recommended_max_tokens(self, model: str) -> int:
-        """Get recommended max tokens for model"""
-        model_info = next(
-            (m for m in self.supported_models if m.id == model),
-            None
-        )
-        return model_info.recommended_max_tokens if model_info else 4096
 
 class ProviderRegistry:
     """Registry for managing AI providers"""
