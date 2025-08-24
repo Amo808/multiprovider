@@ -26,7 +26,15 @@ function App() {
   const [showHistory, setShowHistory] = useState(true); // Show history by default for Lobe Chat-like experience
   const [currentConversationId, setCurrentConversationId] = useState<string>('default');
   const [conversations, setConversations] = useState<Array<{id: string, title: string, updatedAt: string}>>([]);
-  const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>('auto');
+  const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>(() => {
+    // Load theme from localStorage or default to 'auto'
+    try {
+      const savedTheme = localStorage.getItem('theme');
+      return (savedTheme as 'light' | 'dark' | 'auto') || 'auto';
+    } catch {
+      return 'auto';
+    }
+  });
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string>('');
 
@@ -39,11 +47,25 @@ function App() {
   useEffect(() => {
     // Apply theme
     const root = document.documentElement;
+    console.log(`Applying theme: ${theme}`);
+    
     if (theme === 'auto') {
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      console.log(`Auto theme - system prefers dark: ${prefersDark}`);
       root.classList.toggle('dark', prefersDark);
     } else {
-      root.classList.toggle('dark', theme === 'dark');
+      const isDark = theme === 'dark';
+      console.log(`Manual theme - applying dark: ${isDark}`);
+      root.classList.toggle('dark', isDark);
+    }
+    
+    console.log(`Root element classes: ${root.className}`);
+    
+    // Save theme to localStorage
+    try {
+      localStorage.setItem('theme', theme);
+    } catch (error) {
+      console.warn('Failed to save theme to localStorage:', error);
     }
   }, [theme]);
 
@@ -195,6 +217,7 @@ function App() {
     const themes: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'auto'];
     const currentIndex = themes.indexOf(theme);
     const nextTheme = themes[(currentIndex + 1) % themes.length];
+    console.log(`Theme changing from ${theme} to ${nextTheme}`);
     setTheme(nextTheme);
   };
 

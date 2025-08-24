@@ -158,7 +158,7 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
               label="Max Tokens"
               value={localConfig.max_tokens}
               min={1}
-              max={8192}
+              max={32768}
               step={1}
               onChange={(value) => handleChange('max_tokens', value)}
               description="Maximum number of tokens to generate in the response."

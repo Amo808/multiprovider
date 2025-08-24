@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class PromptBuilder:
     """Builds prompts with context clipping based on token limits."""
 
-    def __init__(self, adapter: ProviderAdapter, max_tokens: int = 8192):
+    def __init__(self, adapter: ProviderAdapter, max_tokens: int = 32768):
         self.adapter = adapter
         self.max_tokens = max_tokens
 

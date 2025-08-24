@@ -46,14 +46,14 @@ class ModelInfo:
     type: ModelType = ModelType.CHAT
     enabled: bool = True
     pricing: Optional[Dict[str, float]] = None
-    max_output_tokens: int = 8192  # Max output tokens per model
+    max_output_tokens: int = 32768  # Max output tokens per model
     recommended_max_tokens: int = 4096  # Recommended max for quality
 
 @dataclass
 class GenerationParams:
     """Parameters for text generation"""
     temperature: float = 0.7
-    max_tokens: int = 8192
+    max_tokens: int = 32768
     top_p: float = 1.0
     top_k: Optional[int] = None
     frequency_penalty: float = 0.0
