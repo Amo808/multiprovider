@@ -3,7 +3,6 @@ FROM python:3.11-slim
 
 # Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \
-    nginx \
     wget \
     curl \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
@@ -32,22 +31,18 @@ RUN pip install --no-cache-dir -r backend/requirements.txt && \
     python3 -c "import fastapi; print('FastAPI version:', fastapi.__version__)" && \
     echo "=== INSTALLATION CHECK COMPLETE ==="
 
-# Copy configuration files and startup script
-COPY nginx.render.conf /etc/nginx/sites-available/default
-COPY start_simple.sh /app/start_simple.sh
+# Copy configuration files and render_server
+COPY render_server.py /app/render_server.py
 
 # Configure nginx
-RUN rm -f /etc/nginx/sites-enabled/default && \
-    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+# Not needed - render_server.py handles everything
 
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
-    mkdir -p /var/log/nginx /var/run && \
-    chmod +x /app/start_simple.sh && \
+    chmod +x /app/render_server.py && \
     chown -R appuser:appuser /app
 
-# Create health check endpoint
-RUN echo '<html><body>OK</body></html>' > /app/frontend/dist/health
+# Create health check endpoint (done by render_server.py)
 
 # Expose port 
 EXPOSE 10000
@@ -56,5 +51,5 @@ EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:10000/health || exit 1
 
-# Start with simple bash script (most reliable)
-CMD ["/bin/bash", "/app/start_simple.sh"]
+# Start with render_server.py - the perfect solution!
+CMD ["python3", "/app/render_server.py"]
