@@ -29,13 +29,17 @@ from storage.history_new import ConversationStore
 # Load environment variables
 load_dotenv()
 
+# Ensure logs directory exists
+logs_dir = Path(__file__).parent.parent / 'logs'
+logs_dir.mkdir(exist_ok=True)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(Path(__file__).parent.parent / 'logs' / 'app.log')
+        logging.FileHandler(logs_dir / 'app.log')
     ]
 )
 logger = logging.getLogger(__name__)

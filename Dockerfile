@@ -4,11 +4,13 @@ FROM python:3.11-slim
 # Install system dependencies including Node.js and nginx
 RUN apt-get update && apt-get install -y \
     nginx \
+    supervisor \
     wget \
     curl \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
 # Set working directory
 WORKDIR /app
@@ -41,7 +43,8 @@ RUN pip install --no-cache-dir -r backend/requirements.txt && \
 COPY render_server.py /app/render_server.py
 COPY test_imports.py /app/test_imports.py
 COPY start_simple.sh /app/start_simple.sh
-COPY nginx.render.conf /etc/nginx/sites-available/default
+COPY nginx.server.conf /etc/nginx/sites-available/default
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Configure nginx
 RUN rm -f /etc/nginx/sites-enabled/default && \
@@ -49,7 +52,11 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
-    mkdir -p /var/log/nginx /var/run /app/logs && \
+    mkdir -p /var/log/supervisor /var/run /app/data /app/logs && \
+    echo "Python paths:" && \
+    which python3 || echo "python3 not found" && \
+    which python || echo "python not found" && \
+    ls -la /usr/bin/python* && \
     chmod +x /app/start_simple.sh && \
     chown -R appuser:appuser /app
 
@@ -63,5 +70,5 @@ EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:10000/health || exit 1
 
-# Start with simple bash script (most reliable)
-CMD ["/bin/bash", "/app/start_simple.sh"]
+# Start supervisord
+CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
