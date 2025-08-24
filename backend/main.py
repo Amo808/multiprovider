@@ -428,7 +428,7 @@ async def send_message(request: ChatRequest, http_request: Request):
         generation_config = request.config or app_config.get("generation", {})
         params = GenerationParams(
             temperature=generation_config.get("temperature", 0.7),
-            max_tokens=generation_config.get("max_tokens", 32768),  # Increased fallback to 32K
+            max_tokens=generation_config.get("max_tokens", 8192),  # Default for DeepSeek
             top_p=generation_config.get("top_p", 1.0),
             frequency_penalty=generation_config.get("frequency_penalty", 0.0),
             presence_penalty=generation_config.get("presence_penalty", 0.0),
@@ -714,7 +714,7 @@ async def get_config():
             "providers": provider_configs,
             "generation": app_config.get("generation", {
                 "temperature": 0.7,
-                "max_tokens": 32768,  # Increased to 32K tokens
+                "max_tokens": 8192,  # Default for DeepSeek
                 "top_p": 0.9,
                 "frequency_penalty": 0.0,
                 "presence_penalty": 0.0,
@@ -815,6 +815,54 @@ async def update_conversation_title(conversation_id: str, title_data: dict):
         return {"message": "Conversation title updated successfully"}
     except Exception as e:
         logger.error(f"Failed to update conversation title {conversation_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/config/generation")
+async def update_generation_config(generation_config: dict):
+    """Update generation configuration."""
+    try:
+        logger.info(f"[CONFIG] Updating generation config: {generation_config}")
+        
+        # Load current config
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                app_config = json.load(f)
+        else:
+            app_config = {}
+        
+        # Update generation section
+        if "generation" not in app_config:
+            app_config["generation"] = {}
+        
+        # Validate max_tokens based on active provider
+        active_provider = app_config.get("activeProvider", "deepseek")
+        max_tokens = generation_config.get("max_tokens")
+        
+        if max_tokens:
+            # Apply provider-specific limits
+            if active_provider == "deepseek":
+                max_tokens = min(max_tokens, 8192)  # DeepSeek limit
+            elif active_provider == "openai":
+                max_tokens = min(max_tokens, 32768)  # OpenAI limit
+            elif active_provider == "anthropic":
+                max_tokens = min(max_tokens, 32768)  # Anthropic limit
+            
+            generation_config["max_tokens"] = max_tokens
+            logger.info(f"[CONFIG] Adjusted max_tokens to {max_tokens} for provider {active_provider}")
+        
+        # Update config
+        app_config["generation"].update(generation_config)
+        
+        # Save updated config
+        with open(config_path, 'w') as f:
+            json.dump(app_config, f, indent=2)
+        
+        logger.info(f"[CONFIG] Generation config updated successfully")
+        return app_config["generation"]
+        
+    except Exception as e:
+        logger.error(f"Failed to update generation config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

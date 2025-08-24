@@ -14,6 +14,7 @@ import {
   ModelProvider,
   GenerationConfig
 } from './components';
+import { useConversations as useApiConversations } from './hooks/useApi';
 import { apiClient } from './services/api';
 
 function App() {
@@ -42,6 +43,7 @@ function App() {
   const { config, error: configError, updateConfig, updateGenerationConfig } = useConfig();
   const { health } = useHealth();
   const { deleteConversation: deleteConversationMessages } = useConversations();
+  const { deleteConversation: deleteConversationFromServer } = useApiConversations();
 
   // Initialize app
   useEffect(() => {
@@ -286,20 +288,26 @@ function App() {
     }
   };
 
-  const handleDeleteConversation = (conversationId: string) => {
+  const handleDeleteConversation = async (conversationId: string) => {
     if (conversations.length <= 1) return; // Keep at least one conversation
     
-    setConversations(prev => prev.filter(conv => conv.id !== conversationId));
-    
-    // Delete conversation messages as well
-    deleteConversationMessages(conversationId);
-    
-    // If we're deleting the current conversation, switch to the first remaining one
-    if (currentConversationId === conversationId) {
-      const remaining = conversations.filter(conv => conv.id !== conversationId);
-      if (remaining.length > 0) {
-        setCurrentConversationId(remaining[0].id);
+    try {
+      // Delete conversation on server
+      await deleteConversationFromServer(conversationId);
+      
+      // Delete conversation messages from local cache as well
+      deleteConversationMessages(conversationId);
+      
+      // If we're deleting the current conversation, switch to the first remaining one
+      if (currentConversationId === conversationId) {
+        const remaining = conversations.filter(conv => conv.id !== conversationId);
+        if (remaining.length > 0) {
+          setCurrentConversationId(remaining[0].id);
+        }
       }
+    } catch (error) {
+      console.error('Failed to delete conversation:', error);
+      // Optionally show error to user
     }
   };
 
@@ -431,6 +439,7 @@ function App() {
             {/* Generation Settings */}
             <GenerationSettings
               config={config.generation}
+              currentProvider={selectedProvider}
               onConfigChange={handleGenerationConfigChange}
               onSave={handleSaveGenerationSettings}
               isOpen={showGenerationSettings}

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Sliders, RotateCcw, Save } from 'lucide-react';
-import { GenerationConfig } from '../types';
+import { GenerationConfig, ModelProvider } from '../types';
 
 interface GenerationSettingsProps {
   config: GenerationConfig;
+  currentProvider?: ModelProvider;
   onConfigChange: (config: Partial<GenerationConfig>) => void;
   onSave?: () => void;
   onReset?: () => void;
@@ -55,6 +56,7 @@ const Slider: React.FC<SliderProps> = ({ label, value, min, max, step, onChange,
 
 export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
   config,
+  currentProvider,
   onConfigChange,
   onSave,
   onReset,
@@ -63,6 +65,19 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
 }) => {
   const [localConfig, setLocalConfig] = useState<GenerationConfig>(config);
   const [hasChanges, setHasChanges] = useState(false);
+
+  // Get max tokens based on provider
+  const getMaxTokens = () => {
+    switch (currentProvider) {
+      case 'deepseek':
+        return 8192;
+      case 'openai':
+      case 'anthropic':
+        return 32768;
+      default:
+        return 8192; // Conservative default
+    }
+  };
 
   useEffect(() => {
     setLocalConfig(config);
@@ -158,10 +173,10 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
               label="Max Tokens"
               value={localConfig.max_tokens}
               min={1}
-              max={32768}
+              max={getMaxTokens()}
               step={1}
               onChange={(value) => handleChange('max_tokens', value)}
-              description="Maximum number of tokens to generate in the response."
+              description={`Maximum number of tokens to generate (${currentProvider || 'current provider'} limit: ${getMaxTokens()}).`}
             />
 
             {/* Top P */}
