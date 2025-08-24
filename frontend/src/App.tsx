@@ -352,9 +352,9 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+    <div className="h-screen bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
+      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex-shrink-0">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           {/* Logo and Title */}
           <div className="flex items-center space-x-3">
@@ -447,7 +447,7 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex">
+      <main className="flex-1 flex min-h-0 overflow-hidden">
         {/* Conversation History Sidebar - Desktop */}
         {showHistory && (
           <div className="hidden lg:block">
@@ -510,7 +510,7 @@ function App() {
         )}
 
         {/* Chat Interface */}
-        <div className="flex-1">
+        <div className="flex-1 flex flex-col min-h-0">
           <ChatInterface
             selectedModel={selectedModel}
             selectedProvider={selectedProvider}

@@ -17,6 +17,7 @@ const API_BASE_URL = '/api';
 
 export class ApiClient {
   private baseUrl: string;
+  private activeRequests: Map<string, AbortController> = new Map();
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -26,75 +27,116 @@ export class ApiClient {
   async sendMessage(
     request: SendMessageRequest,
     onChunk?: (chunk: ChatResponse) => void,
-    abortController?: AbortController
+    requestId?: string
   ): Promise<void> {
-    console.log('API Client: Sending message request:', request);
+    const reqId = requestId || `${request.conversation_id}-${Date.now()}`;
+    console.log('API Client: Sending message request:', request, 'requestId:', reqId);
     
-    const response = await fetch(`${this.baseUrl}/chat/send`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        ...request,
-        stream: true
-      }),
-      signal: abortController?.signal
-    });
-
-    console.log('API Client: Response status:', response.status, response.statusText);
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: response.statusText }));
-      console.error('API Client: Request failed:', errorData);
-      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('No response body');
-    }
-
-    const decoder = new TextDecoder();
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    this.activeRequests.set(reqId, abortController);
     
-    while (true) {
-      const { done, value } = await reader.read();
+    try {
+      const response = await fetch(`${this.baseUrl}/chat/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...request,
+          stream: true
+        }),
+        signal: abortController.signal
+      });
+
+      console.log('API Client: Response status:', response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        console.error('API Client: Request failed:', errorData);
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      const decoder = new TextDecoder();
       
-      if (done) break;
-      
-      const chunk = decoder.decode(value);
-      console.log('API Client: Received chunk:', chunk);
-      const lines = chunk.split('\n');
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data: ChatResponse = JSON.parse(line.slice(6));
-            console.log('API Client: Parsed data:', data);
-            
-            if (data.error) {
-              console.error('API Client: Error in data:', data.error, 'type:', data.type);
-              // Create error with the original error message and include type info
-              const errorMsg = `${data.error}${data.type ? ` (${data.type})` : ''}`;
-              throw new Error(errorMsg);
-            }
-            
-            if (onChunk) {
-              onChunk(data);
-            }
-            
-            if (data.done) {
-              return;
-            }
-          } catch (e) {
-            if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
-              console.error('API Client: Parse error:', e);
-              throw e;
+      while (true) {
+        // Check if request was aborted
+        if (abortController.signal.aborted) {
+          console.log('API Client: Request aborted');
+          throw new Error('Request aborted');
+        }
+        
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        console.log('API Client: Received chunk:', chunk);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data: ChatResponse = JSON.parse(line.slice(6));
+              console.log('API Client: Parsed data:', data);
+              
+              if (data.error) {
+                console.error('API Client: Error in data:', data.error, 'type:', data.type);
+                // Create error with the original error message and include type info
+                const errorMsg = `${data.error}${data.type ? ` (${data.type})` : ''}`;
+                throw new Error(errorMsg);
+              }
+              
+              if (onChunk) {
+                onChunk(data);
+              }
+              
+              if (data.done) {
+                return;
+              }
+            } catch (e) {
+              if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
+                console.error('API Client: Parse error:', e);
+                throw e;
+              }
             }
           }
         }
       }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('API Client: Request was aborted');
+        throw new Error('Request cancelled');
+      }
+      throw error;
+    } finally {
+      // Clean up the request
+      this.activeRequests.delete(reqId);
     }
+  }
+
+  // Method to abort a specific request
+  abortRequest(requestId: string): void {
+    const controller = this.activeRequests.get(requestId);
+    if (controller) {
+      console.log('API Client: Aborting request:', requestId);
+      controller.abort();
+      this.activeRequests.delete(requestId);
+    }
+  }
+
+  // Method to abort all active requests  
+  abortAllRequests(): void {
+    console.log('API Client: Aborting all active requests');
+    this.activeRequests.forEach((controller, requestId) => {
+      controller.abort();
+    });
+    this.activeRequests.clear();
   }
 
   // Provider Management

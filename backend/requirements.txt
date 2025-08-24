@@ -5,3 +5,4 @@ aiohttp>=3.9.1
 pydantic>=2.5.0
 python-multipart>=0.0.6
 tiktoken>=0.5.2
+psycopg2-binary>=2.9.7

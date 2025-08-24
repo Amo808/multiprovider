@@ -49,6 +49,9 @@ export const useConversations = () => {
       return {};
     }
   });
+  
+  // Track active requests for cancellation
+  const [activeRequests, setActiveRequests] = useState<Map<string, string>>(new Map());
 
   // Save conversations to localStorage whenever they change
   useEffect(() => {
@@ -150,6 +153,12 @@ export const useConversations = () => {
     onComplete?: (response: string) => void
   ) => {
     try {
+      // Create unique request ID
+      const requestId = `${conversationId}-${Date.now()}`;
+      
+      // Track this request
+      setActiveRequests(prev => new Map(prev.set(requestId, conversationId)));
+      
       // Ensure conversation is initialized (this will auto-load history if needed)
       getConversation(conversationId);
       
@@ -229,6 +238,13 @@ export const useConversations = () => {
             }
           }));
         }
+      }, requestId);
+
+      // Clean up request tracking
+      setActiveRequests(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(requestId);
+        return newMap;
       });
 
       setConversations(prev => ({
@@ -309,6 +325,27 @@ export const useConversations = () => {
   }, []);
 
   const stopStreaming = useCallback((conversationId: string) => {
+    // Find and abort active requests for this conversation
+    const requestsToAbort: string[] = [];
+    activeRequests.forEach((convId, requestId) => {
+      if (convId === conversationId) {
+        requestsToAbort.push(requestId);
+      }
+    });
+    
+    // Abort the actual requests
+    requestsToAbort.forEach(requestId => {
+      apiClient.abortRequest(requestId);
+    });
+    
+    // Clean up tracking
+    setActiveRequests(prev => {
+      const newMap = new Map(prev);
+      requestsToAbort.forEach(requestId => newMap.delete(requestId));
+      return newMap;
+    });
+    
+    // Update conversation state
     setConversations(prev => ({
       ...prev,
       [conversationId]: {
@@ -317,7 +354,7 @@ export const useConversations = () => {
         currentResponse: ''
       }
     }));
-  }, []);
+  }, [activeRequests]);
 
   return {
     getConversation,

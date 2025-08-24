@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -24,7 +24,7 @@ from adapters import (
     ProviderStatus
 )
 from storage import HistoryStore, PromptBuilder
-from storage.history_new import ConversationStore
+from storage.database_store import DatabaseConversationStore
 
 # Load environment variables
 load_dotenv()
@@ -98,12 +98,15 @@ async def startup_event():
         # Initialize provider manager
         await provider_manager.initialize()
         
-        # Initialize conversation store
+        # Initialize conversation store (database-backed)
         storage_path = Path(__file__).parent.parent / "data"
-        logger.info(f"[STARTUP] Initializing ConversationStore with path: {storage_path}")
+        logger.info(f"[STARTUP] Initializing DatabaseConversationStore with path: {storage_path}")
         logger.info(f"[STARTUP] Storage path exists: {storage_path.exists()}")
         logger.info(f"[STARTUP] Current working directory: {Path.cwd()}")
-        conversation_store = ConversationStore(str(storage_path))
+        
+        # Use database store for reliable persistence
+        db_path = str(storage_path / "conversations.db")
+        conversation_store = DatabaseConversationStore(db_path=db_path)
         
         # Initialize prompt builder (with default adapter)
         enabled_providers = provider_manager.get_enabled_providers()
@@ -346,7 +349,7 @@ async def get_history():
 
 
 @app.post("/chat/send")
-async def send_message(request: ChatRequest):
+async def send_message(request: ChatRequest, http_request: Request):
     """Send a chat message and get streaming response."""
     
     def generate_error_stream(error_message: str, error_type: str = "error"):
@@ -446,15 +449,25 @@ async def send_message(request: ChatRequest):
         )
         
         async def generate_response():
-            """Generate streaming response."""
+            """Generate streaming response with cancellation support."""
             full_content = ""
             total_tokens_in = 0
             total_tokens_out = 0
             
             try:
+                # Check if client disconnected
+                if await http_request.is_disconnected():
+                    logger.info(f"[CHAT] Client disconnected for conversation {conversation_id}")
+                    return
+                
                 async for response in provider_manager.chat_completion(
                     history, provider_id, model_id, params
                 ):
+                    # Check for client disconnection during streaming
+                    if await http_request.is_disconnected():
+                        logger.info(f"[CHAT] Client disconnected during streaming for conversation {conversation_id}")
+                        return
+                    
                     if response.error:
                         # Check if this is an authentication error (401)
                         if ("401" in response.error and "authentication" in response.error.lower()) or \
@@ -529,6 +542,10 @@ async def send_message(request: ChatRequest):
                         yield f"data: {json.dumps(final_response)}\n\n"
                         break
                 
+            except asyncio.CancelledError:
+                logger.info(f"[CHAT] Request cancelled for conversation {conversation_id}")
+                yield f"data: {json.dumps({'error': 'Request cancelled', 'cancelled': True, 'done': True})}\n\n"
+                return
             except Exception as e:
                 logger.error(f"Streaming error: {e}")
                 yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
