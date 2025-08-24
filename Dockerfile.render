@@ -4,7 +4,6 @@ FROM python:3.11-slim
 # Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \
     nginx \
-    supervisor \
     wget \
     curl \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
@@ -33,9 +32,9 @@ RUN pip install --no-cache-dir -r backend/requirements.txt && \
     python3 -c "import fastapi; print('FastAPI version:', fastapi.__version__)" && \
     echo "=== INSTALLATION CHECK COMPLETE ==="
 
-# Copy configuration files
+# Copy configuration files and startup script
 COPY nginx.render.conf /etc/nginx/sites-available/default
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY start_render.py /app/start_render.py
 
 # Configure nginx
 RUN rm -f /etc/nginx/sites-enabled/default && \
@@ -43,7 +42,8 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
-    mkdir -p /var/log/supervisor /var/run && \
+    mkdir -p /var/log/nginx /var/run && \
+    chmod +x /app/start_render.py && \
     chown -R appuser:appuser /app
 
 # Create health check endpoint
@@ -56,5 +56,5 @@ EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:10000/health || exit 1
 
-# Start supervisord
-CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Start with custom script instead of supervisord
+CMD ["python3", "/app/start_render.py"]
