@@ -401,8 +401,8 @@ async def send_message(request: ChatRequest):
         # Save user message
         history_store.save_message(user_message)
         
-        # Load history and build context
-        history = history_store.load_history()
+        # Load history for this specific conversation and build context
+        history = history_store.load_conversation_history(request.conversation_id or "default")
         
         # Add system prompt if provided
         if request.system_prompt:
@@ -710,13 +710,24 @@ async def get_config():
 async def get_conversation_history(conversation_id: str):
     """Get chat history for a specific conversation."""
     try:
-        # For now, return empty history for new conversations
-        # In a real implementation, you'd filter by conversation_id
         logger.info(f"Getting history for conversation: {conversation_id}")
         
-        # Since the current history store doesn't support conversation filtering,
-        # we'll return an empty list for now and let the frontend manage state
-        return []
+        # Load conversation-specific history
+        messages = history_store.load_conversation_history(conversation_id)
+        
+        # Format messages for frontend
+        return [
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "provider": getattr(msg.meta, "provider", None) if msg.meta else None,
+                "model": getattr(msg.meta, "model", None) if msg.meta else None,
+                "meta": msg.meta
+            }
+            for msg in messages
+        ]
         
     except Exception as e:
         logger.error(f"Failed to get conversation history for {conversation_id}: {e}")
@@ -728,8 +739,9 @@ async def clear_conversation_history(conversation_id: str):
     try:
         logger.info(f"Clearing history for conversation: {conversation_id}")
         
-        # For now, just return success
-        # In a real implementation, you'd clear only this conversation's history
+        # Clear conversation-specific history
+        history_store.clear_conversation_history(conversation_id)
+        
         return {"message": f"History cleared for conversation {conversation_id}"}
         
     except Exception as e:
