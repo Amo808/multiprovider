@@ -54,7 +54,7 @@ export const useConversations = () => {
         ...prev,
         [conversationId]: {
           ...prev[conversationId],
-          messages: [...prev[conversationId].messages, userMessage]
+          messages: [...(prev[conversationId]?.messages || []), userMessage]
         }
       }));
 
@@ -70,7 +70,7 @@ export const useConversations = () => {
         ...prev,
         [conversationId]: {
           ...prev[conversationId],
-          messages: [...prev[conversationId].messages, assistantMessage]
+          messages: [...(prev[conversationId]?.messages || []), assistantMessage]
         }
       }));
 
@@ -84,7 +84,7 @@ export const useConversations = () => {
             [conversationId]: {
               ...prev[conversationId],
               currentResponse: fullResponse,
-              messages: prev[conversationId].messages.map(msg => 
+              messages: (prev[conversationId]?.messages || []).map(msg => 
                 msg.id === assistantMessage.id 
                   ? { ...msg, content: fullResponse, meta: chunk.meta }
                   : msg
@@ -128,16 +128,32 @@ export const useConversations = () => {
     try {
       console.log('useConversations: Loading history for conversation:', conversationId);
       
+      // Check if conversation is currently active (streaming or has recent messages)
+      const currentConversation = conversations[conversationId];
+      if (currentConversation && (currentConversation.isStreaming || currentConversation.messages.length > 0)) {
+        console.log('useConversations: Conversation is active or has messages, skipping history load');
+        return;
+      }
+      
       const history = await apiClient.getHistory(conversationId);
       
-      setConversations(prev => ({
-        ...prev,
-        [conversationId]: {
-          ...getConversation(conversationId),
-          messages: history,
-          error: null
+      // Double-check before setting - make sure conversation still doesn't have messages
+      setConversations(prev => {
+        const existingConv = prev[conversationId];
+        if (existingConv && existingConv.messages.length > 0) {
+          console.log('useConversations: Conversation now has messages, skipping history update');
+          return prev; // Don't update if messages were added in the meantime
         }
-      }));
+        
+        return {
+          ...prev,
+          [conversationId]: {
+            ...getConversation(conversationId),
+            messages: history,
+            error: null
+          }
+        };
+      });
       
       console.log('useConversations: Loaded', history.length, 'messages for conversation:', conversationId);
     } catch (err) {
@@ -150,7 +166,7 @@ export const useConversations = () => {
         }
       }));
     }
-  }, [getConversation]);
+  }, [getConversation, conversations]);
 
   const clearConversation = useCallback(async (conversationId: string) => {
     try {

@@ -175,22 +175,24 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const loadedConversationsRef = useRef<Set<string>>(new Set());
   
   const { getConversation, sendMessage, clearConversation, loadHistory } = useConversations();
   const conversationState = getConversation(conversationId);
   const { messages, isStreaming, error, currentResponse } = conversationState;
 
-  // Load history when conversationId changes or when conversation is empty
+  // Load history when conversationId changes (only once per conversation)
   useEffect(() => {
     console.log('ChatInterface: conversationId changed to:', conversationId);
-    if (conversationId) {
-      // Always load history if conversation doesn't have messages
-      if (messages.length === 0) {
-        console.log('ChatInterface: Loading history for empty conversation:', conversationId);
+    if (conversationId && !loadedConversationsRef.current.has(conversationId)) {
+      // Only load history if conversation doesn't have messages and we haven't loaded it yet
+      if (messages.length === 0 && !isStreaming) {
+        console.log('ChatInterface: Loading history for conversation:', conversationId);
+        loadedConversationsRef.current.add(conversationId);
         loadHistory(conversationId);
       }
     }
-  }, [conversationId, loadHistory]); // Removed messages.length and loadedConversationsRef dependencies
+  }, [conversationId, messages.length, isStreaming, loadHistory]);
 
   // Custom message handler with API key error handling
   const handleSendMessage = async (request: SendMessageRequest) => {
