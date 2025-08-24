@@ -133,7 +133,7 @@ export class ApiClient {
   // Method to abort all active requests  
   abortAllRequests(): void {
     console.log('API Client: Aborting all active requests');
-    this.activeRequests.forEach((controller, requestId) => {
+    this.activeRequests.forEach((controller) => {
       controller.abort();
     });
     this.activeRequests.clear();
