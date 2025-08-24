@@ -160,7 +160,8 @@ class ProductionHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
 def start_backend():
     """Start the backend server in a separate process"""
-    backend_dir = Path(__file__).parent / "backend"
+    root_dir = Path(__file__).parent
+    backend_dir = root_dir / "backend"
     backend_main = backend_dir / "main.py"
     
     if not backend_main.exists():
@@ -168,13 +169,19 @@ def start_backend():
         return None
     
     try:
-        # Start backend process
+        # Set environment for proper module imports
+        env = os.environ.copy()
+        env['PYTHONPATH'] = str(root_dir)
+        
+        # Start backend process from root directory for proper imports
         process = subprocess.Popen([
             sys.executable, 
             str(backend_main)
-        ], cwd=str(backend_dir))
+        ], cwd=str(root_dir), env=env)
         
         print(f"🔧 Backend started with PID: {process.pid}")
+        print(f"📁 Working directory: {root_dir}")
+        print(f"🐍 PYTHONPATH: {env.get('PYTHONPATH')}")
         
         # Wait for backend to start
         print("⏳ Waiting for backend to initialize...")

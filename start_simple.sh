@@ -34,7 +34,7 @@ done
 echo "🌐 Starting nginx server..."
 echo "🎉 All services ready!"
 
-# Handle shutdown gracefully  
+# Handle shutdown gracefully
 trap 'echo "⏹️ Shutting down..."; kill $BACKEND_PID 2>/dev/null || true; nginx -s quit 2>/dev/null || true; exit 0' SIGTERM SIGINT
 
 # Start nginx in foreground (keeps container running)
