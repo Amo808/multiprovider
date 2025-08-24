@@ -124,16 +124,62 @@ export const useConversations = () => {
     }
   }, [getConversation]);
 
-  const clearConversation = useCallback((conversationId: string) => {
-    setConversations(prev => ({
-      ...prev,
-      [conversationId]: {
-        messages: [],
-        isStreaming: false,
-        error: null,
-        currentResponse: ''
-      }
-    }));
+  const loadHistory = useCallback(async (conversationId: string) => {
+    try {
+      console.log('useConversations: Loading history for conversation:', conversationId);
+      const history = await apiClient.getHistory(conversationId);
+      
+      setConversations(prev => ({
+        ...prev,
+        [conversationId]: {
+          ...getConversation(conversationId),
+          messages: history,
+          error: null
+        }
+      }));
+      
+      console.log('useConversations: Loaded', history.length, 'messages for conversation:', conversationId);
+    } catch (err) {
+      console.error('useConversations: Failed to load history:', err);
+      setConversations(prev => ({
+        ...prev,
+        [conversationId]: {
+          ...getConversation(conversationId),
+          error: err instanceof Error ? err.message : 'Failed to load history'
+        }
+      }));
+    }
+  }, [getConversation]);
+
+  const clearConversation = useCallback(async (conversationId: string) => {
+    try {
+      // Clear on server first
+      await apiClient.clearHistory(conversationId);
+      
+      // Then clear in local state
+      setConversations(prev => ({
+        ...prev,
+        [conversationId]: {
+          messages: [],
+          isStreaming: false,
+          error: null,
+          currentResponse: ''
+        }
+      }));
+    } catch (err) {
+      console.error('Failed to clear conversation:', err);
+      // Clear locally even if server fails
+      setConversations(prev => ({
+        ...prev,
+        [conversationId]: {
+          messages: [],
+          isStreaming: false,
+          error: null,
+          currentResponse: ''
+        }
+      }));
+      throw err;
+    }
   }, []);
 
   const deleteConversation = useCallback((conversationId: string) => {
@@ -148,6 +194,7 @@ export const useConversations = () => {
     getConversation,
     sendMessage,
     clearConversation,
-    deleteConversation
+    deleteConversation,
+    loadHistory
   };
 };
