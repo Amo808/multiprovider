@@ -662,6 +662,14 @@ async def update_config(config_data: dict):
 async def get_config():
     """Get current application configuration."""
     try:
+        # Load fresh config from file
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                current_app_config = json.load(f)
+        else:
+            current_app_config = {}
+            
         # Get enabled providers from provider manager
         enabled_providers = provider_manager.get_enabled_providers()
         
@@ -709,18 +717,21 @@ async def get_config():
         
         # Build complete config
         full_config = {
-            "activeProvider": app_config.get("activeProvider", "deepseek"),
-            "activeModel": app_config.get("activeModel", "deepseek-chat"),
+            "activeProvider": current_app_config.get("activeProvider", "deepseek"),
+            "activeModel": current_app_config.get("activeModel", "deepseek-chat"),
             "providers": provider_configs,
-            "generation": app_config.get("generation", {
-                "temperature": 0.7,
-                "max_tokens": 8192,  # Default for DeepSeek
-                "top_p": 0.9,
-                "frequency_penalty": 0.0,
-                "presence_penalty": 0.0,
-                "stream": True
-            }),
-            "ui": app_config.get("ui", {
+            "generation": {
+                **{  # Default values first
+                    "temperature": 0.7,
+                    "max_tokens": 8192,  # Default for DeepSeek  
+                    "top_p": 0.9,
+                    "frequency_penalty": 0.0,
+                    "presence_penalty": 0.0,
+                    "stream": True,
+                },
+                **current_app_config.get("generation", {})  # Override with saved values
+            },
+            "ui": current_app_config.get("ui", {
                 "theme": "light",
                 "fontSize": 14,
                 "language": "en",
@@ -728,7 +739,7 @@ async def get_config():
                 "enableLatex": True,
                 "compactMode": False
             }),
-            "system": app_config.get("system", {
+            "system": current_app_config.get("system", {
                 "system_prompt": "You are a helpful AI assistant.",
                 "max_context_tokens": 32768,  # Increased to 32K tokens
                 "auto_save": True,

@@ -66,7 +66,7 @@ class DeepSeekAdapter(BaseAdapter):
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
             connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            timeout = aiohttp.ClientTimeout(total=60, connect=10)
+            timeout = aiohttp.ClientTimeout(total=120, connect=10)  # Increased timeout for long responses
             self.session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,
@@ -203,9 +203,9 @@ class DeepSeekAdapter(BaseAdapter):
                             continue
 
         except asyncio.TimeoutError:
-            self.logger.error("Request to DeepSeek API timed out")
+            self.logger.error("Request to DeepSeek API timed out after 120 seconds")
             yield ChatResponse(
-                error="Request timed out",
+                error="Request timed out - response was too long. Try reducing max_tokens or asking for a shorter response.",
                 meta={"provider": ModelProvider.DEEPSEEK, "model": model}
             )
         except Exception as e:

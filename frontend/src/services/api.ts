@@ -36,6 +36,12 @@ export class ApiClient {
     const abortController = new AbortController();
     this.activeRequests.set(reqId, abortController);
     
+    // Set up timeout (2 minutes for long responses)
+    const timeoutId = setTimeout(() => {
+      console.log('API Client: Request timeout, aborting...');
+      abortController.abort();
+    }, 120000); // 120 seconds
+    
     try {
       const response = await fetch(`${this.baseUrl}/chat/send`, {
         method: 'POST',
@@ -115,7 +121,8 @@ export class ApiClient {
       }
       throw error;
     } finally {
-      // Clean up the request
+      // Clean up the request and timeout
+      clearTimeout(timeoutId);
       this.activeRequests.delete(reqId);
     }
   }

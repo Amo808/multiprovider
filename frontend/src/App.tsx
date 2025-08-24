@@ -166,13 +166,17 @@ function App() {
   };
 
   const handleGenerationConfigChange = (newConfig: Partial<GenerationConfig>) => {
-    // This will be handled by the GenerationSettings component
+    // Update local config state immediately
     console.log('Generation config changed:', newConfig);
   };
 
-  const handleSaveGenerationSettings = async () => {
-    if (config) {
-      await updateGenerationConfig(config.generation);
+  const handleSaveGenerationSettings = async (settingsToSave: GenerationConfig) => {
+    try {
+      console.log('Saving generation settings:', settingsToSave);
+      await updateGenerationConfig(settingsToSave);
+      console.log('Generation settings saved successfully');
+    } catch (error) {
+      console.error('Failed to save generation settings:', error);
     }
   };
 

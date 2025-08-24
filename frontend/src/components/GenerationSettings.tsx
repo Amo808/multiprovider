@@ -6,7 +6,7 @@ interface GenerationSettingsProps {
   config: GenerationConfig;
   currentProvider?: ModelProvider;
   onConfigChange: (config: Partial<GenerationConfig>) => void;
-  onSave?: () => void;
+  onSave?: (config: GenerationConfig) => Promise<void>;
   onReset?: () => void;
   isOpen: boolean;
   onToggle: () => void;
@@ -65,6 +65,7 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
 }) => {
   const [localConfig, setLocalConfig] = useState<GenerationConfig>(config);
   const [hasChanges, setHasChanges] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // Get max tokens based on provider
   const getMaxTokens = () => {
@@ -80,9 +81,16 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
   };
 
   useEffect(() => {
-    setLocalConfig(config);
-    setHasChanges(false);
-  }, [config]);
+    // Only reset local config if:
+    // 1. There are no pending changes AND not currently saving, OR
+    // 2. The config has been significantly updated (different values)
+    if (!hasChanges && !saving) {
+      console.log('GenerationSettings: Updating localConfig from config prop');
+      setLocalConfig(config);
+    } else {
+      console.log('GenerationSettings: Skipping config update - hasChanges:', hasChanges, 'saving:', saving);
+    }
+  }, [config, hasChanges, saving]);
 
   const handleChange = (key: keyof GenerationConfig, value: any) => {
     const newConfig = { ...localConfig, [key]: value };
@@ -91,10 +99,21 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
     onConfigChange({ [key]: value });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (onSave) {
-      onSave();
-      setHasChanges(false);
+      try {
+        setSaving(true);
+        await onSave(localConfig);
+        setHasChanges(false);
+        // Update the local config to match what was saved
+        // This ensures the form shows the saved values
+        setLocalConfig(localConfig);
+      } catch (error) {
+        console.error('Failed to save generation settings:', error);
+        // Don't reset hasChanges on error so user can try again
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
@@ -284,9 +303,13 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
                 {onSave && (
                   <button
                     onClick={handleSave}
-                    className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+                    disabled={saving}
+                    className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-1"
                   >
-                    Save
+                    {saving && (
+                      <div className="animate-spin rounded-full h-3 w-3 border border-white border-t-transparent" />
+                    )}
+                    <span>{saving ? 'Saving...' : 'Save'}</span>
                   </button>
                 )}
               </div>
