@@ -127,6 +127,14 @@ export const useConversations = () => {
   const loadHistory = useCallback(async (conversationId: string) => {
     try {
       console.log('useConversations: Loading history for conversation:', conversationId);
+      
+      // Don't load history if conversation already has messages (to prevent overriding new messages)
+      const currentConversation = conversations[conversationId];
+      if (currentConversation && currentConversation.messages.length > 0) {
+        console.log('useConversations: Conversation already has messages, skipping history load');
+        return;
+      }
+      
       const history = await apiClient.getHistory(conversationId);
       
       setConversations(prev => ({
@@ -149,7 +157,7 @@ export const useConversations = () => {
         }
       }));
     }
-  }, [getConversation]);
+  }, [getConversation, conversations]);
 
   const clearConversation = useCallback(async (conversationId: string) => {
     try {

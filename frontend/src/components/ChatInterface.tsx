@@ -175,18 +175,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const loadedConversationsRef = useRef<Set<string>>(new Set());
   
   const { getConversation, sendMessage, clearConversation, loadHistory } = useConversations();
   const conversationState = getConversation(conversationId);
   const { messages, isStreaming, error, currentResponse } = conversationState;
 
-  // Load history when conversationId changes
+  // Load history when conversationId changes (but only once per conversation)
   useEffect(() => {
     console.log('ChatInterface: conversationId changed to:', conversationId);
     if (conversationId && conversationId !== 'default') {
-      // Only load history if conversation doesn't have messages yet
-      if (messages.length === 0) {
+      // Only load history if conversation doesn't have messages yet and hasn't been loaded before
+      if (messages.length === 0 && !loadedConversationsRef.current.has(conversationId)) {
         console.log('ChatInterface: Loading history for empty conversation');
+        loadedConversationsRef.current.add(conversationId);
         loadHistory(conversationId);
       }
     }
