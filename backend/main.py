@@ -24,6 +24,7 @@ from adapters import (
     ProviderStatus
 )
 from storage import HistoryStore, PromptBuilder
+from storage.history_new import ConversationStore
 
 # Load environment variables
 load_dotenv()
@@ -97,9 +98,9 @@ async def startup_event():
         # Initialize provider manager
         await provider_manager.initialize()
         
-        # Initialize history store
-        history_path = Path(__file__).parent.parent / "data" / "history.jsonl"
-        history_store = HistoryStore(str(history_path))
+        # Initialize conversation store
+        storage_path = Path(__file__).parent.parent / "data"
+        conversation_store = ConversationStore(str(storage_path))
         
         # Initialize prompt builder (with default adapter)
         enabled_providers = provider_manager.get_enabled_providers()
@@ -323,8 +324,7 @@ async def test_provider_connection(provider_id: str):
 async def get_history():
     """Get chat history."""
     try:
-        messages = []
-        # For now, return empty list. This endpoint may be removed or updated to work with specific conversations
+        messages = conversation_store.load_conversation_history("default")
         return [
             {
                 "id": msg.id,
@@ -400,10 +400,10 @@ async def send_message(request: ChatRequest):
         )
         
         # Save user message
-        conversation_store.save_message(request.conversation_id or "default", user_message)
+        conversation_store.save_message("default", user_message)
         
         # Load history and build context
-        history = conversation_store.load_conversation_history(request.conversation_id or "default")
+        history = conversation_store.load_conversation_history("default")
         
         # Add system prompt if provided
         if request.system_prompt:
@@ -503,7 +503,7 @@ async def send_message(request: ChatRequest):
                             "total_tokens": final_tokens_in + final_tokens_out,
                             "estimated_cost": estimated_cost
                         })
-                        conversation_store.save_message(request.conversation_id or "default", assistant_message)
+                        conversation_store.save_message("default", assistant_message)
                         
                         # Send completion signal with usage
                         final_response = {
@@ -547,12 +547,8 @@ async def send_message(request: ChatRequest):
 async def clear_history():
     """Clear chat history."""
     try:
-        # For now, clear default conversation. This may need conversation_id parameter
-        conversation_store.clear_conversation("default")
+        conversation_store.clear_conversation_history("default")
         return {"message": "History cleared successfully"}
-    except Exception as e:
-        logger.error(f"Failed to clear history: {e}")
-        raise HTTPException(status_code=500, detail="Failed to clear history")
     except Exception as e:
         logger.error(f"Failed to clear history: {e}")
         raise HTTPException(status_code=500, detail="Failed to clear history")
@@ -775,7 +771,7 @@ async def get_conversation_history(conversation_id: str):
 async def clear_conversation_history(conversation_id: str):
     """Clear chat history for a specific conversation."""
     try:
-        conversation_store.clear_conversation(conversation_id)
+        conversation_store.clear_conversation_history(conversation_id)
         return {"message": f"Conversation {conversation_id} cleared successfully"}
     except Exception as e:
         logger.error(f"Failed to clear conversation {conversation_id}: {e}")
