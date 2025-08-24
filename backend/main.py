@@ -108,7 +108,7 @@ async def startup_event():
             default_adapter = provider_manager.registry.get(enabled_providers[0].id)
             prompt_builder = PromptBuilder(
                 adapter=default_adapter,
-                max_tokens=8192
+                max_tokens=32768  # Increased to 32K tokens
             )
         
         # Load app configuration
@@ -123,12 +123,12 @@ async def startup_event():
                 "activeModel": "deepseek-chat",
                 "generation": {
                     "temperature": 0.7,
-                    "max_tokens": 8192,
+                    "max_tokens": 32768,  # Increased to 32K tokens
                     "top_p": 1.0,
                     "stream": True
                 },
                 "system": {
-                    "max_context_tokens": 8192,
+                    "max_context_tokens": 32768,  # Increased to 32K tokens
                     "auto_save": True
                 }
             }
@@ -420,7 +420,7 @@ async def send_message(request: ChatRequest):
         generation_config = request.config or app_config.get("generation", {})
         params = GenerationParams(
             temperature=generation_config.get("temperature", 0.7),
-            max_tokens=generation_config.get("max_tokens", 8192),
+            max_tokens=generation_config.get("max_tokens", 32768),  # Increased fallback to 32K
             top_p=generation_config.get("top_p", 1.0),
             frequency_penalty=generation_config.get("frequency_penalty", 0.0),
             presence_penalty=generation_config.get("presence_penalty", 0.0),
@@ -691,7 +691,7 @@ async def get_config():
             "providers": provider_configs,
             "generation": app_config.get("generation", {
                 "temperature": 0.7,
-                "max_tokens": 8192,
+                "max_tokens": 32768,  # Increased to 32K tokens
                 "top_p": 0.9,
                 "frequency_penalty": 0.0,
                 "presence_penalty": 0.0,
@@ -707,7 +707,7 @@ async def get_config():
             }),
             "system": app_config.get("system", {
                 "system_prompt": "You are a helpful AI assistant.",
-                "max_context_tokens": 8192,
+                "max_context_tokens": 32768,  # Increased to 32K tokens
                 "auto_save": True,
                 "conversations_limit": 100
             })
