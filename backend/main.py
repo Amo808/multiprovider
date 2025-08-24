@@ -100,6 +100,9 @@ async def startup_event():
         
         # Initialize conversation store
         storage_path = Path(__file__).parent.parent / "data"
+        logger.info(f"[STARTUP] Initializing ConversationStore with path: {storage_path}")
+        logger.info(f"[STARTUP] Storage path exists: {storage_path.exists()}")
+        logger.info(f"[STARTUP] Current working directory: {Path.cwd()}")
         conversation_store = ConversationStore(str(storage_path))
         
         # Initialize prompt builder (with default adapter)
@@ -401,10 +404,12 @@ async def send_message(request: ChatRequest):
         
         # Save user message
         conversation_id = request.conversation_id or "default"
+        logger.info(f"[CHAT] Processing message for conversation_id: {conversation_id}")
         conversation_store.save_message(conversation_id, user_message)
         
         # Load history and build context
         history = conversation_store.load_conversation_history(conversation_id)
+        logger.info(f"[CHAT] Loaded {len(history)} messages from history for {conversation_id}")
         
         # Add system prompt if provided
         if request.system_prompt:
@@ -504,6 +509,7 @@ async def send_message(request: ChatRequest):
                             "total_tokens": final_tokens_in + final_tokens_out,
                             "estimated_cost": estimated_cost
                         })
+                        logger.info(f"[CHAT] Saving assistant message to conversation_id: {conversation_id}")
                         conversation_store.save_message(conversation_id, assistant_message)
                         
                         # Send completion signal with usage
@@ -548,7 +554,7 @@ async def send_message(request: ChatRequest):
 async def clear_history():
     """Clear chat history."""
     try:
-        conversation_store.clear_conversation_history("default")
+        conversation_store.clear_conversation("default")
         return {"message": "History cleared successfully"}
     except Exception as e:
         logger.error(f"Failed to clear history: {e}")
@@ -748,7 +754,9 @@ async def create_conversation(conversation_data: dict):
 async def get_conversation_history(conversation_id: str):
     """Get chat history for a specific conversation."""
     try:
+        logger.info(f"[HISTORY] Request for conversation_id: {conversation_id}")
         messages = conversation_store.load_conversation_history(conversation_id)
+        logger.info(f"[HISTORY] Returning {len(messages)} messages for conversation_id: {conversation_id}")
         return {
             "conversation_id": conversation_id,
             "messages": [
@@ -772,7 +780,7 @@ async def get_conversation_history(conversation_id: str):
 async def clear_conversation_history(conversation_id: str):
     """Clear chat history for a specific conversation."""
     try:
-        conversation_store.clear_conversation_history(conversation_id)
+        conversation_store.clear_conversation(conversation_id)
         return {"message": f"Conversation {conversation_id} cleared successfully"}
     except Exception as e:
         logger.error(f"Failed to clear conversation {conversation_id}: {e}")

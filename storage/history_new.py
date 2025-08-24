@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 import sys
+import threading
 sys.path.append(str(Path(__file__).parent.parent))
 from adapters.base_provider import Message
 
@@ -20,8 +21,15 @@ class ConversationStore:
         self.messages_dir = self.storage_dir / "conversations"
         self.messages_dir.mkdir(exist_ok=True)
         
+        # Thread safety
+        self._lock = threading.RLock()
+        
         # Load conversations index
         self._conversations = self._load_conversations()
+        
+        logger.info(f"ConversationStore initialized with storage_dir: {self.storage_dir}")
+        logger.info(f"Conversations file: {self.conversations_file}")
+        logger.info(f"Messages directory: {self.messages_dir}")
 
     def _load_conversations(self) -> Dict[str, dict]:
         """Load conversations index."""
@@ -44,19 +52,23 @@ class ConversationStore:
 
     def _get_conversation_file(self, conversation_id: str) -> Path:
         """Get file path for conversation messages."""
-        return self.messages_dir / f"{conversation_id}.jsonl"
+        file_path = self.messages_dir / f"{conversation_id}.jsonl"
+        logger.debug(f"[ConversationStore] Conversation file path for {conversation_id}: {file_path}")
+        return file_path
 
     def create_conversation(self, conversation_id: str, title: str = None) -> None:
         """Create a new conversation."""
-        if conversation_id not in self._conversations:
-            self._conversations[conversation_id] = {
-                "id": conversation_id,
-                "title": title or f"Conversation {conversation_id[:8]}",
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-                "message_count": 0
-            }
-            self._save_conversations()
+        with self._lock:
+            if conversation_id not in self._conversations:
+                logger.info(f"[ConversationStore] Creating conversation: {conversation_id}")
+                self._conversations[conversation_id] = {
+                    "id": conversation_id,
+                    "title": title or f"Conversation {conversation_id[:8]}",
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
+                    "message_count": 0
+                }
+                self._save_conversations()
 
     def update_conversation_title(self, conversation_id: str, title: str) -> None:
         """Update conversation title."""
@@ -74,88 +86,105 @@ class ConversationStore:
 
     def save_message(self, conversation_id: str, message: Message) -> None:
         """Save a message to specific conversation."""
-        try:
-            # Ensure conversation exists
-            if conversation_id not in self._conversations:
-                self.create_conversation(conversation_id)
-
-            # Update message meta with conversation_id
-            if not message.meta:
-                message.meta = {}
-            message.meta["conversation_id"] = conversation_id
-
-            # Save message
-            message_data = {
-                "id": message.id,
-                "role": message.role,
-                "content": message.content,
-                "timestamp": message.timestamp.isoformat() if hasattr(message.timestamp, 'isoformat') else str(message.timestamp),
-                "meta": message.meta or {}
-            }
-            
-            conversation_file = self._get_conversation_file(conversation_id)
-            with open(conversation_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(message_data, ensure_ascii=False) + "\n")
-
-            # Update conversation metadata
-            self._conversations[conversation_id]["message_count"] = self.get_message_count(conversation_id)
-            self._conversations[conversation_id]["updated_at"] = datetime.now().isoformat()
-            self._save_conversations()
+        with self._lock:
+            try:
+                logger.info(f"[ConversationStore] Saving message to conversation_id: {conversation_id}, role: {message.role}")
                 
-        except Exception as e:
-            logger.error(f"Failed to save message to conversation {conversation_id}: {e}")
-            raise
+                # Ensure conversation exists
+                if conversation_id not in self._conversations:
+                    logger.info(f"[ConversationStore] Creating new conversation: {conversation_id}")
+                    self.create_conversation(conversation_id)
+
+                # Update message meta with conversation_id
+                if not message.meta:
+                    message.meta = {}
+                message.meta["conversation_id"] = conversation_id
+
+                # Save message
+                message_data = {
+                    "id": message.id,
+                    "role": message.role,
+                    "content": message.content,
+                    "timestamp": message.timestamp.isoformat() if hasattr(message.timestamp, 'isoformat') else str(message.timestamp),
+                    "meta": message.meta or {}
+                }
+                
+                conversation_file = self._get_conversation_file(conversation_id)
+                logger.info(f"[ConversationStore] Writing to file: {conversation_file}")
+                
+                # Ensure parent directory exists
+                conversation_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(conversation_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(message_data, ensure_ascii=False) + "\n")
+
+                # Update conversation metadata
+                self._conversations[conversation_id]["message_count"] = self.get_message_count(conversation_id)
+                self._conversations[conversation_id]["updated_at"] = datetime.now().isoformat()
+                self._save_conversations()
+                
+                logger.info(f"[ConversationStore] Message saved successfully to {conversation_id}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to save message to conversation {conversation_id}: {e}")
+                raise
 
     def load_conversation_history(self, conversation_id: str, limit: Optional[int] = None) -> List[Message]:
         """Load chat history for specific conversation."""
-        messages = []
-        
-        try:
-            conversation_file = self._get_conversation_file(conversation_id)
-            if not conversation_file.exists():
-                return messages
-
-            with open(conversation_file, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                
-            # Apply limit if specified
-            if limit and len(lines) > limit:
-                lines = lines[-limit:]
-                
-            for line in lines:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                    
-                try:
-                    data = json.loads(line)
-                    
-                    # Handle timestamp parsing
-                    timestamp = data.get("timestamp")
-                    if isinstance(timestamp, str):
-                        try:
-                            timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        except ValueError:
-                            timestamp = datetime.now()
-                    elif not timestamp:
-                        timestamp = datetime.now()
-                    
-                    message = Message(
-                        id=data["id"],
-                        role=data["role"],
-                        content=data["content"],
-                        timestamp=timestamp,
-                        meta=data.get("meta", {})
-                    )
-                    messages.append(message)
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Skipping invalid history line in {conversation_id}: {e}")
-                    continue
-                    
-        except Exception as e:
-            logger.error(f"Failed to load conversation history {conversation_id}: {e}")
+        with self._lock:
+            logger.info(f"[ConversationStore] Loading history for conversation_id: {conversation_id}, limit: {limit}")
+            messages = []
             
-        return messages
+            try:
+                conversation_file = self._get_conversation_file(conversation_id)
+                logger.info(f"[ConversationStore] Reading from file: {conversation_file}")
+                if not conversation_file.exists():
+                    logger.info(f"[ConversationStore] File does not exist: {conversation_file}")
+                    return messages
+
+                with open(conversation_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    
+                logger.info(f"[ConversationStore] Found {len(lines)} lines in conversation {conversation_id}")
+                    
+                # Apply limit if specified
+                if limit and len(lines) > limit:
+                    lines = lines[-limit:]
+                    
+                for line in lines:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                        
+                    try:
+                        data = json.loads(line)
+                        
+                        # Handle timestamp parsing
+                        timestamp = data.get("timestamp")
+                        if isinstance(timestamp, str):
+                            try:
+                                timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                            except ValueError:
+                                timestamp = datetime.now()
+                        elif not timestamp:
+                            timestamp = datetime.now()
+                        
+                        message = Message(
+                            id=data["id"],
+                            role=data["role"],
+                            content=data["content"],
+                            timestamp=timestamp,
+                            meta=data.get("meta", {})
+                        )
+                        messages.append(message)
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"Skipping invalid history line in {conversation_id}: {e}")
+                        continue
+                        
+            except Exception as e:
+                logger.error(f"Failed to load conversation history {conversation_id}: {e}")
+                
+            return messages
 
     def clear_conversation(self, conversation_id: str) -> None:
         """Clear specific conversation history."""

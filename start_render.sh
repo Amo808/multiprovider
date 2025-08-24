@@ -1,4 +1,4 @@
-#!/bin/bash
+ч#!/bin/bash
 set -e
 
 echo "🚀 Starting AI Chat on Render.com"
