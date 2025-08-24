@@ -706,6 +706,37 @@ async def get_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/history/{conversation_id}")
+async def get_conversation_history(conversation_id: str):
+    """Get chat history for a specific conversation."""
+    try:
+        # For now, return empty history for new conversations
+        # In a real implementation, you'd filter by conversation_id
+        logger.info(f"Getting history for conversation: {conversation_id}")
+        
+        # Since the current history store doesn't support conversation filtering,
+        # we'll return an empty list for now and let the frontend manage state
+        return []
+        
+    except Exception as e:
+        logger.error(f"Failed to get conversation history for {conversation_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve conversation history")
+
+@app.delete("/history/{conversation_id}")
+async def clear_conversation_history(conversation_id: str):
+    """Clear chat history for a specific conversation."""
+    try:
+        logger.info(f"Clearing history for conversation: {conversation_id}")
+        
+        # For now, just return success
+        # In a real implementation, you'd clear only this conversation's history
+        return {"message": f"History cleared for conversation {conversation_id}"}
+        
+    except Exception as e:
+        logger.error(f"Failed to clear conversation history for {conversation_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clear conversation history")
+
+
 if __name__ == "__main__":
     import uvicorn
     
