@@ -46,12 +46,14 @@ class ModelInfo:
     type: ModelType = ModelType.CHAT
     enabled: bool = True
     pricing: Optional[Dict[str, float]] = None
+    max_output_tokens: int = 8192  # Max output tokens per model
+    recommended_max_tokens: int = 4096  # Recommended max for quality
 
 @dataclass
 class GenerationParams:
     """Parameters for text generation"""
     temperature: float = 0.7
-    max_tokens: int = 1000
+    max_tokens: int = 8192
     top_p: float = 1.0
     top_k: Optional[int] = None
     frequency_penalty: float = 0.0
@@ -81,6 +83,8 @@ class ChatResponse:
     done: bool = False
     error: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
+    usage: Optional['Usage'] = None  # Token usage info
+    model: Optional[str] = None  # Model used
 
 @dataclass
 class Usage:
@@ -189,6 +193,22 @@ class BaseAdapter(ABC):
             None
         )
         return model_info.context_length if model_info else 4096
+    
+    def get_max_output_tokens(self, model: str) -> int:
+        """Get maximum output tokens for model"""
+        model_info = next(
+            (m for m in self.supported_models if m.id == model),
+            None
+        )
+        return model_info.max_output_tokens if model_info else 8192
+    
+    def get_recommended_max_tokens(self, model: str) -> int:
+        """Get recommended max tokens for model"""
+        model_info = next(
+            (m for m in self.supported_models if m.id == model),
+            None
+        )
+        return model_info.recommended_max_tokens if model_info else 4096
 
 class ProviderRegistry:
     """Registry for managing AI providers"""

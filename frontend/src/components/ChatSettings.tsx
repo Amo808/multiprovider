@@ -75,7 +75,7 @@ export const ChatSettings: React.FC<ChatSettingsProps> = ({
               <input
                 type="range"
                 min="256"
-                max="4096"
+                max="16384"
                 step="256"
                 value={config.max_tokens}
                 onChange={(e) => updateConfig('max_tokens', parseInt(e.target.value))}
@@ -83,7 +83,7 @@ export const ChatSettings: React.FC<ChatSettingsProps> = ({
               />
               <div className="flex justify-between text-xs text-gray-400 mt-1">
                 <span>256</span>
-                <span>4096</span>
+                <span>16K</span>
               </div>
             </div>
 

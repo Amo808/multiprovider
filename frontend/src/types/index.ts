@@ -20,6 +20,7 @@ export interface Message {
     tokens_out?: number;
     model?: string;
     provider?: ModelProvider;
+    estimated_cost?: number;  // Add estimated cost
   };
 }
 
@@ -29,6 +30,8 @@ export interface ChatResponse {
   done?: boolean;
   error?: string;
   type?: string; // Error type (e.g., "API_KEY_MISSING")
+  usage?: TokenUsage;  // Token usage information
+  model?: string;  // Model used for the response
   meta?: {
     tokens_in?: number;
     tokens_out?: number;
@@ -53,6 +56,8 @@ export interface ModelInfo {
     input_tokens: number;
     output_tokens: number;
   };
+  max_output_tokens?: number;  // Maximum output tokens for this model
+  recommended_max_tokens?: number;  // Recommended max for quality
 }
 
 export interface ProviderConfig {
@@ -175,4 +180,12 @@ export interface HealthResponse {
   version: string;
   providers: Record<ModelProvider, boolean>;
   uptime: number;
+}
+
+// Token Usage Types
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost?: number;
 }

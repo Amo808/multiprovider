@@ -43,26 +43,31 @@ class DeepSeekAdapter(BaseAdapter):
                 supports_functions=True,  # Now supports function calling
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.27, "output_tokens": 1.10}  # Current pricing (cache miss)
+                pricing={"input_tokens": 0.27, "output_tokens": 1.10},  # Current pricing (cache miss)
+                max_output_tokens=8192,  # DeepSeek V3.1 max output
+                recommended_max_tokens=4096  # Recommended for quality
             ),
             ModelInfo(
                 id="deepseek-reasoner",
                 name="deepseek-reasoner", 
-                display_name="DeepSeek V3.1 Reasoner (Thinking Mode)",
+                display_name="DeepSeek V3.1 Reasoner (Thinking Mode - Slower)",
                 provider=ModelProvider.DEEPSEEK,
                 context_length=128000,  # 128K context
                 supports_streaming=True,
                 supports_functions=False,  # No function calling in thinking mode
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.55, "output_tokens": 2.19}  # Current pricing (cache miss)
+                pricing={"input_tokens": 0.55, "output_tokens": 2.19},  # Current pricing (cache miss)
+                max_output_tokens=8192,  # DeepSeek V3.1 max output  
+                recommended_max_tokens=4096  # Recommended for reasoning tasks
             )
         ]
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
             connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            timeout = aiohttp.ClientTimeout(total=60, connect=10)
+            # Increased timeout for reasoning models - they can take 5-10 minutes
+            timeout = aiohttp.ClientTimeout(total=600, connect=30, sock_read=600)  # 10 minutes total
             self.session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,
@@ -111,7 +116,10 @@ class DeepSeekAdapter(BaseAdapter):
         if params.stop_sequences:
             payload["stop"] = params.stop_sequences
 
-        self.logger.info(f"Sending request to DeepSeek API: {model}, temp={params.temperature}")
+        if "reasoner" in model:
+            self.logger.info(f"Sending request to DeepSeek API: {model} (thinking mode - may take 1-3 minutes), temp={params.temperature}")
+        else:
+            self.logger.info(f"Sending request to DeepSeek API: {model}, temp={params.temperature}")
 
         accumulated_content = ""
         output_tokens = 0
@@ -184,6 +192,39 @@ class DeepSeekAdapter(BaseAdapter):
                             
                             # Check if finished
                             if choice.get("finish_reason"):
+                                # Calculate final costs and usage
+                                final_output_tokens = self.estimate_tokens(accumulated_content)
+                                model_info = next((m for m in self.supported_models if m.id == model), None)
+                                estimated_cost = None
+                                
+                                if model_info and model_info.pricing:
+                                    input_cost = input_tokens * model_info.pricing["input_tokens"] / 1000000
+                                    output_cost = final_output_tokens * model_info.pricing["output_tokens"] / 1000000
+                                    estimated_cost = input_cost + output_cost
+                                
+                                # Create Usage object
+                                from .base_provider import Usage
+                                usage = Usage(
+                                    prompt_tokens=input_tokens,
+                                    completion_tokens=final_output_tokens,
+                                    total_tokens=input_tokens + final_output_tokens,
+                                    estimated_cost=estimated_cost
+                                )
+                                
+                                yield ChatResponse(
+                                    content="",
+                                    id=json_data.get("id"),
+                                    done=True,
+                                    usage=usage,
+                                    model=model,
+                                    meta={
+                                        "tokens_in": input_tokens,
+                                        "tokens_out": final_output_tokens,
+                                        "provider": ModelProvider.DEEPSEEK,
+                                        "model": model,
+                                        "finish_reason": choice.get("finish_reason")
+                                    }
+                                )
                                 break
                                 
                         except json.JSONDecodeError as e:
@@ -191,9 +232,18 @@ class DeepSeekAdapter(BaseAdapter):
                             continue
 
         except asyncio.TimeoutError:
-            self.logger.error("Request to DeepSeek API timed out")
+            timeout_msg = f"Request to DeepSeek API timed out after 10 minutes"
+            if "reasoner" in model:
+                timeout_msg += " (Reasoning models can take very long for complex queries - please try a simpler prompt)"
+            self.logger.error(timeout_msg)
             yield ChatResponse(
-                error="Request timed out",
+                error=timeout_msg,
+                meta={"provider": ModelProvider.DEEPSEEK, "model": model}
+            )
+        except aiohttp.ServerTimeoutError:
+            self.logger.error("DeepSeek server timeout - the model is still processing")
+            yield ChatResponse(
+                error="Server timeout - the reasoning model is taking longer than expected. Please try a simpler query or try again.",
                 meta={"provider": ModelProvider.DEEPSEEK, "model": model}
             )
         except Exception as e:

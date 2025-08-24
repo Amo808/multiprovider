@@ -73,6 +73,7 @@ class ChatResponse(BaseModel):
     provider: str
     model: str
     meta: Optional[Dict[str, Any]] = None
+    usage: Optional[Dict[str, Any]] = None  # Token usage information
 
 class ProviderConfigUpdate(BaseModel):
     enabled: Optional[bool] = None
@@ -121,7 +122,7 @@ async def startup_event():
                 "activeModel": "deepseek-chat",
                 "generation": {
                     "temperature": 0.7,
-                    "max_tokens": 1000,
+                    "max_tokens": 8192,
                     "top_p": 1.0,
                     "stream": True
                 },
@@ -417,7 +418,7 @@ async def send_message(request: ChatRequest):
         generation_config = request.config or app_config.get("generation", {})
         params = GenerationParams(
             temperature=generation_config.get("temperature", 0.7),
-            max_tokens=generation_config.get("max_tokens", 1000),
+            max_tokens=generation_config.get("max_tokens", 8192),
             top_p=generation_config.get("top_p", 1.0),
             frequency_penalty=generation_config.get("frequency_penalty", 0.0),
             presence_penalty=generation_config.get("presence_penalty", 0.0),
@@ -472,12 +473,38 @@ async def send_message(request: ChatRequest):
                         assistant_message.meta.update({
                             "tokens_in": total_tokens_in,
                             "tokens_out": total_tokens_out,
-                            "total_tokens": total_tokens_in + total_tokens_out
+                            "total_tokens": total_tokens_in + total_tokens_out,
+                            "estimated_cost": response.usage.estimated_cost if response.usage else None
                         })
                         history_store.save_message(assistant_message)
                         
-                        # Send completion signal
-                        yield f"data: {json.dumps({'done': True, 'id': assistant_message.id, 'provider': provider_id, 'model': model_id, 'meta': {'tokens_in': total_tokens_in, 'tokens_out': total_tokens_out, 'total_tokens': total_tokens_in + total_tokens_out}})}\n\n"
+                        # Prepare usage data for response
+                        usage_data = {}
+                        if response.usage:
+                            usage_data = {
+                                "prompt_tokens": response.usage.prompt_tokens,
+                                "completion_tokens": response.usage.completion_tokens,
+                                "total_tokens": response.usage.total_tokens,
+                                "estimated_cost": response.usage.estimated_cost
+                            }
+                        
+                        # Send completion signal with usage
+                        final_response = {
+                            'done': True, 
+                            'id': assistant_message.id, 
+                            'provider': provider_id, 
+                            'model': model_id, 
+                            'meta': {
+                                'tokens_in': total_tokens_in, 
+                                'tokens_out': total_tokens_out, 
+                                'total_tokens': total_tokens_in + total_tokens_out,
+                                'estimated_cost': response.usage.estimated_cost if response.usage else None
+                            }
+                        }
+                        if usage_data:
+                            final_response['usage'] = usage_data
+                            
+                        yield f"data: {json.dumps(final_response)}\n\n"
                         break
                 
             except Exception as e:
@@ -651,7 +678,7 @@ async def get_config():
             "providers": provider_configs,
             "generation": app_config.get("generation", {
                 "temperature": 0.7,
-                "max_tokens": 2048,
+                "max_tokens": 8192,
                 "top_p": 0.9,
                 "frequency_penalty": 0.0,
                 "presence_penalty": 0.0,

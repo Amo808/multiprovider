@@ -44,7 +44,9 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 15.00, "output_tokens": 75.00}  # Current pricing
+                pricing={"input_tokens": 15.00, "output_tokens": 75.00},  # Current pricing
+                max_output_tokens=8192,  # Claude 4.1 max output
+                recommended_max_tokens=4096  # Recommended for quality
             ),
             ModelInfo(
                 id="claude-opus-4-20250514",
@@ -56,7 +58,9 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 15.00, "output_tokens": 75.00}  # Current pricing
+                pricing={"input_tokens": 15.00, "output_tokens": 75.00},  # Current pricing
+                max_output_tokens=8192,  # Claude 4 max output
+                recommended_max_tokens=4096  # Recommended for quality
             ),
             ModelInfo(
                 id="claude-sonnet-4-20250514",
@@ -68,7 +72,9 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 3.00, "output_tokens": 15.00}  # Current pricing
+                pricing={"input_tokens": 3.00, "output_tokens": 15.00},  # Current pricing
+                max_output_tokens=8192,  # Claude Sonnet 4 max output
+                recommended_max_tokens=4096  # Recommended for quality
             ),
             ModelInfo(
                 id="claude-3-7-sonnet-20250219",
@@ -80,7 +86,9 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 3.00, "output_tokens": 15.00}  # Current pricing
+                pricing={"input_tokens": 3.00, "output_tokens": 15.00},  # Current pricing
+                max_output_tokens=8192,  # Claude 3.7 max output
+                recommended_max_tokens=4096  # Recommended for quality
             ),
             ModelInfo(
                 id="claude-3-5-haiku-20241022",
@@ -92,7 +100,9 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.80, "output_tokens": 4.00}  # Current pricing
+                pricing={"input_tokens": 0.80, "output_tokens": 4.00},  # Current pricing
+                max_output_tokens=8192,  # Claude Haiku 3.5 max output
+                recommended_max_tokens=4096  # Recommended for quality
             ),
             # Legacy model for compatibility
             ModelInfo(
@@ -105,14 +115,17 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.25, "output_tokens": 1.25}  # Legacy pricing
+                pricing={"input_tokens": 0.25, "output_tokens": 1.25},  # Legacy pricing
+                max_output_tokens=4096,  # Legacy model limit
+                recommended_max_tokens=2048  # Conservative for legacy model
             )
         ]
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
             connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            timeout = aiohttp.ClientTimeout(total=60, connect=10)
+            # Increased timeout for long responses - Claude can take time for complex queries
+            timeout = aiohttp.ClientTimeout(total=600, connect=30, sock_read=600)  # 10 minutes total
             self.session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,
@@ -193,15 +206,34 @@ class AnthropicAdapter(BaseAdapter):
                         if content_block.get("type") == "text":
                             content += content_block.get("text", "")
                     
-                    usage = data.get("usage", {})
+                    usage_data = data.get("usage", {})
+                    
+                    # Calculate cost
+                    model_info = next((m for m in self.supported_models if m.id == model), None)
+                    estimated_cost = None
+                    if model_info and model_info.pricing and usage_data:
+                        input_cost = usage_data.get("input_tokens", 0) * model_info.pricing["input_tokens"] / 1000000
+                        output_cost = usage_data.get("output_tokens", 0) * model_info.pricing["output_tokens"] / 1000000
+                        estimated_cost = input_cost + output_cost
+                    
+                    # Create Usage object
+                    from .base_provider import Usage
+                    usage = Usage(
+                        prompt_tokens=usage_data.get("input_tokens", input_tokens),
+                        completion_tokens=usage_data.get("output_tokens", self.estimate_tokens(content)),
+                        total_tokens=usage_data.get("input_tokens", 0) + usage_data.get("output_tokens", 0),
+                        estimated_cost=estimated_cost
+                    ) if usage_data else None
                     
                     yield ChatResponse(
                         content=content,
                         id=data.get("id"),
                         done=True,
+                        usage=usage,
+                        model=model,
                         meta={
-                            "tokens_in": usage.get("input_tokens", input_tokens),
-                            "tokens_out": usage.get("output_tokens", self.estimate_tokens(content)),
+                            "tokens_in": usage_data.get("input_tokens", input_tokens),
+                            "tokens_out": usage_data.get("output_tokens", self.estimate_tokens(content)),
                             "provider": ModelProvider.ANTHROPIC,
                             "model": model
                         }
@@ -241,6 +273,39 @@ class AnthropicAdapter(BaseAdapter):
                                     )
                             
                             elif event_type == "message_stop":
+                                # Calculate final costs and usage
+                                final_output_tokens = self.estimate_tokens(accumulated_content)
+                                model_info = next((m for m in self.supported_models if m.id == model), None)
+                                estimated_cost = None
+                                
+                                if model_info and model_info.pricing:
+                                    input_cost = input_tokens * model_info.pricing["input_tokens"] / 1000000
+                                    output_cost = final_output_tokens * model_info.pricing["output_tokens"] / 1000000
+                                    estimated_cost = input_cost + output_cost
+                                
+                                # Create Usage object
+                                from .base_provider import Usage
+                                usage = Usage(
+                                    prompt_tokens=input_tokens,
+                                    completion_tokens=final_output_tokens,
+                                    total_tokens=input_tokens + final_output_tokens,
+                                    estimated_cost=estimated_cost
+                                )
+                                
+                                yield ChatResponse(
+                                    content="",
+                                    id=json_data.get("id"),
+                                    done=True,
+                                    usage=usage,
+                                    model=model,
+                                    meta={
+                                        "tokens_in": input_tokens,
+                                        "tokens_out": final_output_tokens,
+                                        "provider": ModelProvider.ANTHROPIC,
+                                        "model": model,
+                                        "finish_reason": "stop"
+                                    }
+                                )
                                 break
                                 
                         except json.JSONDecodeError as e:
@@ -248,9 +313,9 @@ class AnthropicAdapter(BaseAdapter):
                             continue
 
         except asyncio.TimeoutError:
-            self.logger.error("Request to Anthropic API timed out")
+            self.logger.error("Request to Anthropic API timed out after 10 minutes")
             yield ChatResponse(
-                error="Request timed out",
+                error="Request timed out after 10 minutes - Claude may need more time for complex queries. Please try a simpler prompt.",
                 meta={"provider": ModelProvider.ANTHROPIC, "model": model}
             )
         except Exception as e:

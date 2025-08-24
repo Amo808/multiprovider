@@ -44,7 +44,9 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 2.50, "output_tokens": 10.00}  # Current pricing
+                pricing={"input_tokens": 2.50, "output_tokens": 10.00},  # Current pricing
+                max_output_tokens=16384,  # GPT-4o max output
+                recommended_max_tokens=8192  # Recommended for quality
             ),
             ModelInfo(
                 id="gpt-4o-mini",
@@ -56,7 +58,9 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.15, "output_tokens": 0.60}  # Current pricing
+                pricing={"input_tokens": 0.15, "output_tokens": 0.60},  # Current pricing
+                max_output_tokens=16384,  # GPT-4o mini max output
+                recommended_max_tokens=8192  # Recommended for quality
             ),
             # Newer GPT-5 models (when available)
             ModelInfo(
@@ -69,7 +73,9 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 1.25, "output_tokens": 10.00}  # New pricing
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00},  # New pricing
+                max_output_tokens=32768,  # Estimated GPT-5 max output
+                recommended_max_tokens=16384  # Recommended for quality
             ),
             ModelInfo(
                 id="gpt-5-mini",
@@ -81,7 +87,9 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.25, "output_tokens": 2.00}  # New pricing
+                pricing={"input_tokens": 0.25, "output_tokens": 2.00},  # New pricing
+                max_output_tokens=16384,  # GPT-5 Mini max output
+                recommended_max_tokens=8192  # Recommended for quality
             ),
             ModelInfo(
                 id="gpt-5-nano",
@@ -93,7 +101,9 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.05, "output_tokens": 0.40}  # New pricing
+                pricing={"input_tokens": 0.05, "output_tokens": 0.40},  # New pricing
+                max_output_tokens=8192,  # GPT-5 Nano max output
+                recommended_max_tokens=4096  # Recommended for quality
             ),
             # Reasoning models
             ModelInfo(
@@ -106,7 +116,9 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 4.00, "output_tokens": 16.00}  # Reasoning model pricing
+                pricing={"input_tokens": 4.00, "output_tokens": 16.00},  # Reasoning model pricing
+                max_output_tokens=65536,  # o4 reasoning models have higher limits
+                recommended_max_tokens=32768  # Recommended for reasoning tasks
             ),
             # Legacy models for compatibility
             ModelInfo(
@@ -119,14 +131,17 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.50, "output_tokens": 1.50}  # Legacy pricing
+                pricing={"input_tokens": 0.50, "output_tokens": 1.50},  # Legacy pricing
+                max_output_tokens=4096,  # Legacy model limit
+                recommended_max_tokens=2048  # Conservative for legacy model
             )
         ]
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
             connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            timeout = aiohttp.ClientTimeout(total=60, connect=10)
+            # Increased timeout for reasoning models - they can take 5-10 minutes
+            timeout = aiohttp.ClientTimeout(total=600, connect=30, sock_read=600)  # 10 minutes total
             self.session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,
@@ -196,15 +211,33 @@ class OpenAIAdapter(BaseAdapter):
                     # Handle non-streaming response
                     data = await response.json()
                     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    usage = data.get("usage", {})
+                    usage_data = data.get("usage", {})
+                    
+                    # Calculate cost
+                    model_info = next((m for m in self.supported_models if m.id == model), None)
+                    estimated_cost = None
+                    if model_info and model_info.pricing and usage_data:
+                        input_cost = usage_data.get("prompt_tokens", 0) * model_info.pricing["input_tokens"] / 1000000
+                        output_cost = usage_data.get("completion_tokens", 0) * model_info.pricing["output_tokens"] / 1000000
+                        estimated_cost = input_cost + output_cost
+                    
+                    # Create Usage object
+                    usage = Usage(
+                        prompt_tokens=usage_data.get("prompt_tokens", input_tokens),
+                        completion_tokens=usage_data.get("completion_tokens", self.estimate_tokens(content)),
+                        total_tokens=usage_data.get("total_tokens", 0),
+                        estimated_cost=estimated_cost
+                    ) if usage_data else None
                     
                     yield ChatResponse(
                         content=content,
                         id=data.get("id"),
                         done=True,
+                        usage=usage,
+                        model=model,
                         meta={
-                            "tokens_in": usage.get("prompt_tokens", input_tokens),
-                            "tokens_out": usage.get("completion_tokens", self.estimate_tokens(content)),
+                            "tokens_in": usage_data.get("prompt_tokens", input_tokens),
+                            "tokens_out": usage_data.get("completion_tokens", self.estimate_tokens(content)),
                             "provider": ModelProvider.OPENAI,
                             "model": model
                         }
@@ -248,6 +281,38 @@ class OpenAIAdapter(BaseAdapter):
                             
                             # Check if finished
                             if choice.get("finish_reason"):
+                                # Calculate final costs and usage
+                                final_output_tokens = self.estimate_tokens(accumulated_content)
+                                model_info = next((m for m in self.supported_models if m.id == model), None)
+                                estimated_cost = None
+                                
+                                if model_info and model_info.pricing:
+                                    input_cost = input_tokens * model_info.pricing["input_tokens"] / 1000000
+                                    output_cost = final_output_tokens * model_info.pricing["output_tokens"] / 1000000
+                                    estimated_cost = input_cost + output_cost
+                                
+                                # Create Usage object
+                                usage = Usage(
+                                    prompt_tokens=input_tokens,
+                                    completion_tokens=final_output_tokens,
+                                    total_tokens=input_tokens + final_output_tokens,
+                                    estimated_cost=estimated_cost
+                                )
+                                
+                                yield ChatResponse(
+                                    content="",
+                                    id=json_data.get("id"),
+                                    done=True,
+                                    usage=usage,
+                                    model=model,
+                                    meta={
+                                        "tokens_in": input_tokens,
+                                        "tokens_out": final_output_tokens,
+                                        "provider": ModelProvider.OPENAI,
+                                        "model": model,
+                                        "finish_reason": choice.get("finish_reason")
+                                    }
+                                )
                                 break
                                 
                         except json.JSONDecodeError as e:

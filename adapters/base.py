@@ -32,7 +32,7 @@ class Message:
 class GenerationParams:
     """Parameters for text generation."""
     temperature: float = 0.7
-    max_tokens: int = 2048
+    max_tokens: int = 8192
     top_p: float = 0.9
     stream: bool = True
 
