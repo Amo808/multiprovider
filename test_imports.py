@@ -41,6 +41,27 @@ def main():
     print("🧪 Testing all imports for MultichatApp...")
     print("=" * 50)
     
+    # Test file structure first
+    print("📁 Checking file structure...")
+    required_dirs = ["/app/adapters", "/app/storage", "/app/data", "/app/backend"]
+    required_files = ["/app/backend/main.py", "/app/adapters/__init__.py", "/app/storage/__init__.py"]
+    
+    for dir_path in required_dirs:
+        if Path(dir_path).exists():
+            print(f"✅ Directory exists: {dir_path}")
+        else:
+            print(f"❌ Missing directory: {dir_path}")
+    
+    for file_path in required_files:
+        if Path(file_path).exists():
+            print(f"✅ File exists: {file_path}")
+        else:
+            print(f"❌ Missing file: {file_path}")
+    
+    print("\n🐍 Testing Python path...")
+    print(f"Current working directory: {Path.cwd()}")
+    print(f"Python path includes: {sys.path}")
+    
     # Test standard library imports
     success = True
     success &= test_import("json", "JSON support")

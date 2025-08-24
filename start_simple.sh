@@ -6,8 +6,8 @@ echo "=================================="
 
 # Start backend in background
 echo "🔧 Starting backend server..."
-cd /app/backend
-python3 main.py &
+cd /app
+python3 backend/main.py &
 BACKEND_PID=$!
 echo "✅ Backend started with PID: $BACKEND_PID"
 
