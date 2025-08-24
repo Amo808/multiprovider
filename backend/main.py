@@ -865,6 +865,18 @@ async def update_generation_config(generation_config: dict):
         logger.error(f"Failed to update generation config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """Delete a conversation and all its messages."""
+    try:
+        # Delete conversation from database
+        conversation_store.delete_conversation(conversation_id)
+        logger.info(f"[DELETE] Deleted conversation: {conversation_id}")
+        return {"success": True, "message": f"Conversation {conversation_id} deleted successfully"}
+    except Exception as e:
+        logger.error(f"Failed to delete conversation {conversation_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     

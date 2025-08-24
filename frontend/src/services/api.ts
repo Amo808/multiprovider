@@ -285,7 +285,16 @@ export class ApiClient {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     
-    return response.json();
+    const data = await response.json();
+    // Ensure we always return an array
+    if (data && Array.isArray(data.conversations)) {
+      return data.conversations;
+    } else if (Array.isArray(data)) {
+      return data;
+    } else {
+      console.warn('API returned non-array conversations data:', data);
+      return [];
+    }
   }
 
   async deleteConversation(conversationId: string): Promise<{ success: boolean }> {

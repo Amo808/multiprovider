@@ -135,6 +135,13 @@ function App() {
     }
   }, [config, selectedModel, selectedProvider]);
 
+  // Debug logging for state changes
+  useEffect(() => {
+    console.log('State update - currentConversationId:', currentConversationId);
+    console.log('State update - conversations:', conversations);
+    console.log('State update - conversation exists:', conversations.some(conv => conv.id === currentConversationId));
+  }, [currentConversationId, conversations]);
+
   // Handlers
   const handleModelChange = async (model: ModelInfo) => {
     setSelectedModel(model);
@@ -292,19 +299,62 @@ function App() {
     if (conversations.length <= 1) return; // Keep at least one conversation
     
     try {
-      // Delete conversation on server
+      console.log('Deleting conversation:', conversationId);
+      console.log('Current conversations:', conversations);
+      console.log('Current conversation ID:', currentConversationId);
+      
+      // Delete conversation on server first
       await deleteConversationFromServer(conversationId);
+      
+      // Calculate remaining conversations after deletion
+      const remaining = conversations.filter(conv => conv.id !== conversationId);
+      console.log('Remaining conversations after deletion:', remaining);
+      
+      // If we're deleting the current conversation, switch to another one first
+      if (currentConversationId === conversationId) {
+        if (remaining.length > 0) {
+          console.log('Switching to conversation:', remaining[0].id);
+          setCurrentConversationId(remaining[0].id);
+          // Update conversations state after switching conversation
+          setConversations(remaining);
+        } else {
+          // If no conversations left, create a new one
+          console.log('No conversations left, creating new one');
+          const newId = `conv_${Date.now()}`;
+          const newConversation = {
+            id: newId,
+            title: 'New Conversation',
+            updatedAt: new Date().toISOString()
+          };
+          
+          try {
+            // Create conversation in backend
+            await fetch('/api/conversations', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: newId,
+                title: 'New Conversation'
+              })
+            });
+          } catch (error) {
+            console.error('Failed to create new conversation:', error);
+          }
+          
+          // Switch to new conversation and update state atomically
+          setCurrentConversationId(newId);
+          setConversations([newConversation]);
+        }
+      } else {
+        // Just update conversations state if not deleting current conversation
+        setConversations(remaining);
+      }
       
       // Delete conversation messages from local cache as well
       deleteConversationMessages(conversationId);
       
-      // If we're deleting the current conversation, switch to the first remaining one
-      if (currentConversationId === conversationId) {
-        const remaining = conversations.filter(conv => conv.id !== conversationId);
-        if (remaining.length > 0) {
-          setCurrentConversationId(remaining[0].id);
-        }
-      }
+      console.log('Conversation deletion completed');
+      
     } catch (error) {
       console.error('Failed to delete conversation:', error);
       // Optionally show error to user
@@ -543,14 +593,23 @@ function App() {
 
         {/* Chat Interface */}
         <div className="flex-1 flex flex-col min-h-0">
-          <ChatInterface
-            selectedModel={selectedModel}
-            selectedProvider={selectedProvider}
-            generationConfig={config.generation}
-            onApiKeyMissing={handleApiKeyMissing}
-            conversationId={currentConversationId}
-            onMessageSent={handleUpdateConversationTitle}
-          />
+          {currentConversationId && conversations.some(conv => conv.id === currentConversationId) ? (
+            <ChatInterface
+              selectedModel={selectedModel}
+              selectedProvider={selectedProvider}
+              generationConfig={config.generation}
+              onApiKeyMissing={handleApiKeyMissing}
+              conversationId={currentConversationId}
+              onMessageSent={handleUpdateConversationTitle}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                <p className="text-gray-600 dark:text-gray-400">Loading conversation...</p>
+              </div>
+            </div>
+          )}
         </div>
       </main>
 

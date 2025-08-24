@@ -422,7 +422,8 @@ export const useConversations = () => {
       setLoading(true);
       setError(null);
       const conversationsList = await apiClient.getConversations();
-      setConversations(conversationsList);
+      // Ensure we always set an array
+      setConversations(Array.isArray(conversationsList) ? conversationsList : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch conversations');
     } finally {
@@ -433,7 +434,14 @@ export const useConversations = () => {
   const deleteConversation = useCallback(async (conversationId: string) => {
     try {
       await apiClient.deleteConversation(conversationId);
-      setConversations(prev => prev.filter(c => c.id !== conversationId));
+      setConversations(prev => {
+        // Ensure prev is an array
+        if (!Array.isArray(prev)) {
+          console.warn('Conversations state is not an array:', prev);
+          return [];
+        }
+        return prev.filter(c => c.id !== conversationId);
+      });
     } catch (err) {
       throw err;
     }
