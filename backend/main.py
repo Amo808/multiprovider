@@ -24,14 +24,9 @@ from adapters import (
     ProviderStatus
 )
 from storage import HistoryStore, PromptBuilder
-from storage.history_new import ConversationStore
 
 # Load environment variables
 load_dotenv()
-
-# Ensure logs directory exists
-logs_dir = Path(__file__).parent.parent / 'logs'
-logs_dir.mkdir(exist_ok=True)
 
 # Configure logging
 logging.basicConfig(
@@ -39,7 +34,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(logs_dir / 'app.log')
+        logging.FileHandler(Path(__file__).parent.parent / 'logs' / 'app.log')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -102,9 +97,9 @@ async def startup_event():
         # Initialize provider manager
         await provider_manager.initialize()
         
-        # Initialize conversation store
-        storage_path = Path(__file__).parent.parent / "data"
-        conversation_store = ConversationStore(str(storage_path))
+        # Initialize history store
+        history_path = Path(__file__).parent.parent / "data" / "history.jsonl"
+        history_store = HistoryStore(str(history_path))
         
         # Initialize prompt builder (with default adapter)
         enabled_providers = provider_manager.get_enabled_providers()

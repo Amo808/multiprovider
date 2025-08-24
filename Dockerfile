@@ -1,7 +1,7 @@
 # Complete AI Chat Application Dockerfile for Render
 FROM python:3.11-slim
 
-# Install system dependencies including Node.js and nginx
+# Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \
     nginx \
     supervisor \
@@ -22,13 +22,11 @@ RUN cd frontend && npm ci
 COPY frontend/ ./frontend/
 RUN cd frontend && npm run build
 
-# Copy backend files and all required modules
-COPY backend/ ./backend/
+# Copy Python modules and backend files
 COPY adapters/ ./adapters/
 COPY storage/ ./storage/
 COPY data/ ./data/
-
-# Install Python dependencies
+COPY backend/ ./backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt && \
     python3 -m pip install --no-cache-dir -r backend/requirements.txt && \
     echo "=== CHECKING PYTHON INSTALLATION ===" && \
@@ -39,10 +37,7 @@ RUN pip install --no-cache-dir -r backend/requirements.txt && \
     python3 -c "import fastapi; print('FastAPI version:', fastapi.__version__)" && \
     echo "=== INSTALLATION CHECK COMPLETE ==="
 
-# Copy configuration files and render_server
-COPY render_server.py /app/render_server.py
-COPY test_imports.py /app/test_imports.py
-COPY start_simple.sh /app/start_simple.sh
+# Copy configuration files
 COPY nginx.server.conf /etc/nginx/sites-available/default
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
@@ -57,7 +52,6 @@ RUN useradd -m -u 1001 appuser && \
     which python3 || echo "python3 not found" && \
     which python || echo "python not found" && \
     ls -la /usr/bin/python* && \
-    chmod +x /app/start_simple.sh && \
     chown -R appuser:appuser /app
 
 # Create health check endpoint
