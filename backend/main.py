@@ -400,10 +400,11 @@ async def send_message(request: ChatRequest):
         )
         
         # Save user message
-        conversation_store.save_message("default", user_message)
+        conversation_id = request.conversation_id or "default"
+        conversation_store.save_message(conversation_id, user_message)
         
         # Load history and build context
-        history = conversation_store.load_conversation_history("default")
+        history = conversation_store.load_conversation_history(conversation_id)
         
         # Add system prompt if provided
         if request.system_prompt:
@@ -503,7 +504,7 @@ async def send_message(request: ChatRequest):
                             "total_tokens": final_tokens_in + final_tokens_out,
                             "estimated_cost": estimated_cost
                         })
-                        conversation_store.save_message("default", assistant_message)
+                        conversation_store.save_message(conversation_id, assistant_message)
                         
                         # Send completion signal with usage
                         final_response = {
