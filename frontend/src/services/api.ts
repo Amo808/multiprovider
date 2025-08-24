@@ -54,40 +54,64 @@ export class ApiClient {
     }
 
     const decoder = new TextDecoder();
+    let buffer = '';
     
     while (true) {
       const { done, value } = await reader.read();
       
-      if (done) break;
+      if (done) {
+        // Process any remaining data in buffer
+        if (buffer.trim()) {
+          if (buffer.startsWith('data: ')) {
+            try {
+              const data: ChatResponse = JSON.parse(buffer.slice(6));
+              console.log('API Client: Parsed final data:', data);
+              if (onChunk && !data.error) {
+                onChunk(data);
+              }
+            } catch (e) {
+              console.error('API Client: Final parse error:', e);
+            }
+          }
+        }
+        break;
+      }
       
-      const chunk = decoder.decode(value);
+      const chunk = decoder.decode(value, { stream: true });
       console.log('API Client: Received chunk:', chunk);
-      const lines = chunk.split('\n');
+      buffer += chunk;
+      
+      // Process complete lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
       
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
+        const trimmedLine = line.trim();
+        if (trimmedLine.startsWith('data: ')) {
           try {
-            const data: ChatResponse = JSON.parse(line.slice(6));
-            console.log('API Client: Parsed data:', data);
-            
-            if (data.error) {
-              console.error('API Client: Error in data:', data.error, 'type:', data.type);
-              // Create error with the original error message and include type info
-              const errorMsg = `${data.error}${data.type ? ` (${data.type})` : ''}`;
-              throw new Error(errorMsg);
-            }
-            
-            if (onChunk) {
-              onChunk(data);
-            }
-            
-            if (data.done) {
-              return;
+            const jsonData = trimmedLine.slice(6).trim();
+            if (jsonData) {
+              const data: ChatResponse = JSON.parse(jsonData);
+              console.log('API Client: Parsed data:', data);
+              
+              if (data.error) {
+                console.error('API Client: Error in data:', data.error, 'type:', data.type);
+                const errorMsg = `${data.error}${data.type ? ` (${data.type})` : ''}`;
+                throw new Error(errorMsg);
+              }
+              
+              if (onChunk) {
+                onChunk(data);
+              }
+              
+              if (data.done) {
+                return;
+              }
             }
           } catch (e) {
-            if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
-              console.error('API Client: Parse error:', e);
-              throw e;
+            if (e instanceof Error && !e.message.includes('Unexpected end of JSON input')) {
+              console.error('API Client: Parse error for line:', trimmedLine, 'Error:', e);
+              // Don't throw here, just log and continue
             }
           }
         }

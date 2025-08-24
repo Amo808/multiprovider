@@ -33,9 +33,10 @@ class OpenAIAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
+            # Latest GPT-4.1 models
             ModelInfo(
                 id="gpt-4o",
-                name="gpt-4o",
+                name="gpt-4o", 
                 display_name="GPT-4o",
                 provider=ModelProvider.OPENAI,
                 context_length=128000,
@@ -43,43 +44,82 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 2.50, "output_tokens": 10.00}  # per 1M tokens
+                pricing={"input_tokens": 2.50, "output_tokens": 10.00}  # Current pricing
             ),
             ModelInfo(
                 id="gpt-4o-mini",
                 name="gpt-4o-mini",
-                display_name="GPT-4o Mini",
+                display_name="GPT-4o Mini", 
                 provider=ModelProvider.OPENAI,
                 context_length=128000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.15, "output_tokens": 0.60}  # per 1M tokens
+                pricing={"input_tokens": 0.15, "output_tokens": 0.60}  # Current pricing
+            ),
+            # Newer GPT-5 models (when available)
+            ModelInfo(
+                id="gpt-5",
+                name="gpt-5",
+                display_name="GPT-5",
+                provider=ModelProvider.OPENAI, 
+                context_length=200000,  # Estimated
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00}  # New pricing
             ),
             ModelInfo(
-                id="gpt-4-turbo",
-                name="gpt-4-turbo",
-                display_name="GPT-4 Turbo",
+                id="gpt-5-mini",
+                name="gpt-5-mini",
+                display_name="GPT-5 Mini",
                 provider=ModelProvider.OPENAI,
-                context_length=128000,
+                context_length=200000,  # Estimated
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 10.00, "output_tokens": 30.00}  # per 1M tokens
+                pricing={"input_tokens": 0.25, "output_tokens": 2.00}  # New pricing
             ),
+            ModelInfo(
+                id="gpt-5-nano",
+                name="gpt-5-nano",
+                display_name="GPT-5 Nano",
+                provider=ModelProvider.OPENAI,
+                context_length=128000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 0.05, "output_tokens": 0.40}  # New pricing
+            ),
+            # Reasoning models
+            ModelInfo(
+                id="o4-mini",
+                name="o4-mini", 
+                display_name="o4-mini",
+                provider=ModelProvider.OPENAI,
+                context_length=128000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 4.00, "output_tokens": 16.00}  # Reasoning model pricing
+            ),
+            # Legacy models for compatibility
             ModelInfo(
                 id="gpt-3.5-turbo",
                 name="gpt-3.5-turbo",
-                display_name="GPT-3.5 Turbo",
+                display_name="GPT-3.5 Turbo (Legacy)",
                 provider=ModelProvider.OPENAI,
                 context_length=16384,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.50, "output_tokens": 1.50}  # per 1M tokens
+                pricing={"input_tokens": 0.50, "output_tokens": 1.50}  # Legacy pricing
             )
         ]
 

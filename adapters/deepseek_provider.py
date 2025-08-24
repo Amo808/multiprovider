@@ -36,38 +36,26 @@ class DeepSeekAdapter(BaseAdapter):
             ModelInfo(
                 id="deepseek-chat",
                 name="deepseek-chat",
-                display_name="DeepSeek Chat",
+                display_name="DeepSeek V3.1 Chat (Non-thinking Mode)",
                 provider=ModelProvider.DEEPSEEK,
-                context_length=32768,
+                context_length=128000,  # 128K context
                 supports_streaming=True,
-                supports_functions=False,
+                supports_functions=True,  # Now supports function calling
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.14, "output_tokens": 0.28}  # per 1M tokens
-            ),
-            ModelInfo(
-                id="deepseek-coder",
-                name="deepseek-coder",
-                display_name="DeepSeek Coder",
-                provider=ModelProvider.DEEPSEEK,
-                context_length=16384,
-                supports_streaming=True,
-                supports_functions=False,
-                supports_vision=False,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 0.14, "output_tokens": 0.28}  # per 1M tokens
+                pricing={"input_tokens": 0.27, "output_tokens": 1.10}  # Current pricing (cache miss)
             ),
             ModelInfo(
                 id="deepseek-reasoner",
-                name="deepseek-reasoner",
-                display_name="DeepSeek Reasoner",
+                name="deepseek-reasoner", 
+                display_name="DeepSeek V3.1 Reasoner (Thinking Mode)",
                 provider=ModelProvider.DEEPSEEK,
-                context_length=32768,
+                context_length=128000,  # 128K context
                 supports_streaming=True,
-                supports_functions=False,
+                supports_functions=False,  # No function calling in thinking mode
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.55, "output_tokens": 2.19}  # per 1M tokens
+                pricing={"input_tokens": 0.55, "output_tokens": 2.19}  # Current pricing (cache miss)
             )
         ]
 
@@ -104,14 +92,6 @@ class DeepSeekAdapter(BaseAdapter):
                 "role": msg.role,
                 "content": msg.content
             })
-        
-        # Ensure we have at least one message
-        if not api_messages:
-            yield ChatResponse(
-                error="No messages to process",
-                meta={"provider": ModelProvider.DEEPSEEK, "model": model}
-            )
-            return
 
         # Calculate input tokens
         input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])
