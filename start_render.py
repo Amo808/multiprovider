@@ -17,10 +17,38 @@ def start_backend():
     backend_dir = Path("/app/backend")
     
     print("🔧 Starting backend server...")
+    print("🔍 Diagnosing Python installation...")
+    
+    # Check Python paths
+    python_paths = [
+        "/usr/bin/python3",
+        "/usr/local/bin/python3", 
+        "python3",
+        "python"
+    ]
+    
+    working_python = None
+    for python_path in python_paths:
+        try:
+            result = subprocess.run([python_path, "--version"], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                print(f"✅ Found working Python: {python_path} - {result.stdout.strip()}")
+                working_python = python_path
+                break
+            else:
+                print(f"❌ Failed {python_path}: return code {result.returncode}")
+        except Exception as e:
+            print(f"❌ Failed {python_path}: {e}")
+    
+    if not working_python:
+        print("❌ No working Python found!")
+        return None
+    
     try:
-        # Use python3 directly from the system
+        print(f"🚀 Using Python: {working_python}")
         process = subprocess.Popen([
-            "/usr/bin/python3", 
+            working_python, 
             "main.py"
         ], cwd=str(backend_dir))
         

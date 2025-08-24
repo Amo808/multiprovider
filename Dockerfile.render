@@ -35,6 +35,7 @@ RUN pip install --no-cache-dir -r backend/requirements.txt && \
 # Copy configuration files and startup script
 COPY nginx.render.conf /etc/nginx/sites-available/default
 COPY start_render.py /app/start_render.py
+COPY start_render.sh /app/start_render.sh
 
 # Configure nginx
 RUN rm -f /etc/nginx/sites-enabled/default && \
@@ -43,7 +44,7 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 # Create app user and set permissions
 RUN useradd -m -u 1001 appuser && \
     mkdir -p /var/log/nginx /var/run && \
-    chmod +x /app/start_render.py && \
+    chmod +x /app/start_render.py /app/start_render.sh && \
     chown -R appuser:appuser /app
 
 # Create health check endpoint
@@ -56,5 +57,5 @@ EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:10000/health || exit 1
 
-# Start with custom script instead of supervisord
-CMD ["python3", "/app/start_render.py"]
+# Start with bash script (more reliable than Python for process management)
+CMD ["/bin/bash", "/app/start_render.sh"]

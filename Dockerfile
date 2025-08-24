@@ -1,79 +1,60 @@
-# Multi-stage Dockerfile for complete AI Chat application
-FROM python:3.11-slim as backend
+# Complete AI Chat Application Dockerfile for Render
+FROM python:3.11-slim
 
-# Backend stage
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PORT=8000
-
-WORKDIR /app/backend
-
-# Install system dependencies
+# Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \
-    build-essential \
+    nginx \
+    wget \
     curl \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install dependencies
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Set working directory
+WORKDIR /app
 
-# Copy backend code
-COPY backend/ .
-RUN mkdir -p /app/backend/data /app/backend/logs /app/backend/storage
+# Copy and build frontend first
+COPY frontend/package*.json ./frontend/
+RUN cd frontend && npm ci
 
-# Create non-root user
-RUN adduser --disabled-password --gecos '' appuser
-USER appuser
+COPY frontend/ ./frontend/
+RUN cd frontend && npm run build
 
-# Frontend build stage
-FROM node:18-alpine as frontend-builder
+# Copy backend files and install Python dependencies
+COPY backend/ ./backend/
+RUN pip install --no-cache-dir -r backend/requirements.txt && \
+    python3 -m pip install --no-cache-dir -r backend/requirements.txt && \
+    echo "=== CHECKING PYTHON INSTALLATION ===" && \
+    python3 --version && \
+    pip --version && \
+    pip show fastapi && \
+    python3 -c "import sys; print('Python path:', sys.path)" && \
+    python3 -c "import fastapi; print('FastAPI version:', fastapi.__version__)" && \
+    echo "=== INSTALLATION CHECK COMPLETE ==="
 
-WORKDIR /app/frontend
+# Copy configuration files and startup script
+COPY nginx.render.conf /etc/nginx/sites-available/default
+COPY start_simple.sh /app/start_simple.sh
 
-# Copy package files and install dependencies
-COPY frontend/package*.json ./
-RUN npm ci
+# Configure nginx
+RUN rm -f /etc/nginx/sites-enabled/default && \
+    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
-# Copy frontend source and build
-COPY frontend/ .
-RUN npm run build
+# Create app user and set permissions
+RUN useradd -m -u 1001 appuser && \
+    mkdir -p /var/log/nginx /var/run && \
+    chmod +x /app/start_simple.sh && \
+    chown -R appuser:appuser /app
 
-# Final stage - combine both
-FROM nginx:alpine
+# Create health check endpoint
+RUN echo '<html><body>OK</body></html>' > /app/frontend/dist/health
 
-# Install supervisor to manage multiple processes
-RUN apk add --no-cache supervisor python3 py3-pip curl
-
-# Copy supervisor config
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-
-# Copy backend from first stage
-COPY --from=backend /app/backend /app/backend
-COPY --from=backend /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=backend /usr/local/bin /usr/local/bin
-
-# Copy frontend from builder stage
-COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
-
-# Copy nginx config
-COPY nginx.render.conf /etc/nginx/nginx.conf
-
-# Copy data and config files
-COPY data/ /app/data/
-
-# Set permissions
-RUN adduser -D -s /bin/sh appuser && \
-    chown -R appuser:appuser /app && \
-    mkdir -p /var/log/supervisor
+# Expose port 
+EXPOSE 10000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:80/health && curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:10000/health || exit 1
 
-# Expose ports
-EXPOSE 80 8000
-
-# Start supervisor
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Start with simple bash script (most reliable)
+CMD ["/bin/bash", "/app/start_simple.sh"]
