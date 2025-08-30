@@ -74,7 +74,8 @@ class AnthropicAdapter(BaseAdapter):
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
             connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            timeout = aiohttp.ClientTimeout(total=60, connect=10)
+            # No timeout - allow unlimited response time
+            timeout = aiohttp.ClientTimeout(total=None, connect=30)  # Only connection timeout
             self.session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,

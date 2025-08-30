@@ -66,7 +66,8 @@ class DeepSeekAdapter(BaseAdapter):
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
             connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-            timeout = aiohttp.ClientTimeout(total=120, connect=10)  # Increased timeout for long responses
+            # No timeout - allow unlimited response time
+            timeout = aiohttp.ClientTimeout(total=None, connect=30)  # Only connection timeout
             self.session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,
@@ -195,19 +196,19 @@ class DeepSeekAdapter(BaseAdapter):
                                 )
                             
                             # Check if finished
-                            if choice.get("finish_reason"):
+                            finish_reason = choice.get("finish_reason")
+                            if finish_reason:
+                                self.logger.info(f"DeepSeek response finished with reason: {finish_reason}")
+                                if finish_reason == "length":
+                                    self.logger.warning(f"Response was truncated due to max_tokens limit. Consider increasing max_tokens for longer responses.")
+                                    # Include finish_reason in final meta for UI indication
+                                    accumulated_content += "\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*"
                                 break
                                 
                         except json.JSONDecodeError as e:
                             self.logger.error(f"Failed to parse JSON: {line} - {e}")
                             continue
 
-        except asyncio.TimeoutError:
-            self.logger.error("Request to DeepSeek API timed out after 120 seconds")
-            yield ChatResponse(
-                error="Request timed out - response was too long. Try reducing max_tokens or asking for a shorter response.",
-                meta={"provider": ModelProvider.DEEPSEEK, "model": model}
-            )
         except Exception as e:
             self.logger.error(f"Error in DeepSeek API call: {e}")
             yield ChatResponse(
@@ -226,7 +227,8 @@ class DeepSeekAdapter(BaseAdapter):
                 "tokens_out": final_output_tokens,
                 "total_tokens": input_tokens + final_output_tokens,
                 "provider": ModelProvider.DEEPSEEK,
-                "model": model
+                "model": model,
+                "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model)
             }
         )
 
@@ -271,6 +273,25 @@ class DeepSeekAdapter(BaseAdapter):
         except Exception:
             # Fallback to character-based estimation
             return super().estimate_tokens(text)
+
+    def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
+        """Calculate estimated cost based on model pricing"""
+        # DeepSeek V3.1 pricing (per million tokens)
+        if model == "deepseek-chat":
+            input_cost_per_million = 0.27  # $0.27 per 1M input tokens
+            output_cost_per_million = 1.10  # $1.10 per 1M output tokens
+        elif model == "deepseek-reasoner":
+            input_cost_per_million = 0.55  # $0.55 per 1M input tokens
+            output_cost_per_million = 2.19  # $2.19 per 1M output tokens
+        else:
+            # Default to chat model pricing
+            input_cost_per_million = 0.27
+            output_cost_per_million = 1.10
+            
+        input_cost = (input_tokens / 1_000_000) * input_cost_per_million
+        output_cost = (output_tokens / 1_000_000) * output_cost_per_million
+        
+        return round(input_cost + output_cost, 6)
 
     async def close(self):
         """Clean up session"""
