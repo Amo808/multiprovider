@@ -121,6 +121,36 @@ class OpenAIAdapter(BaseAdapter):
                 recommended_max_tokens=16384,
                 description="Preview version of o1 reasoning model"
             ),
+            ModelInfo(
+                id="o1-mini",
+                name="o1-mini",
+                display_name="o1-mini",
+                provider=ModelProvider.OPENAI,
+                context_length=128000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 3.00, "output_tokens": 12.00},  # o1-mini pricing
+                max_output_tokens=65536,
+                recommended_max_tokens=32768,
+                description="Lightweight version of o1 reasoning model"
+            ),
+            ModelInfo(
+                id="o3-mini",
+                name="o3-mini",
+                display_name="o3-mini",
+                provider=ModelProvider.OPENAI,
+                context_length=128000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 1.00, "output_tokens": 4.00},  # o3-mini pricing
+                max_output_tokens=65536,
+                recommended_max_tokens=32768,
+                description="Fast reasoning model with optimized performance"
+            ),
             # Reasoning models
             ModelInfo(
                 id="o4-mini",
@@ -207,8 +237,8 @@ class OpenAIAdapter(BaseAdapter):
         input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])
         input_tokens = self.estimate_tokens(input_text)
 
-        # Check if this is a reasoning model (o1, o3 series)
-        is_reasoning_model = any(model.startswith(prefix) for prefix in ['o1', 'o3'])
+        # Check if this is a reasoning model (o1, o3, o4 series)
+        is_reasoning_model = any(model.startswith(prefix) for prefix in ['o1', 'o3', 'o4'])
 
         payload = {
             "model": model,
@@ -221,7 +251,11 @@ class OpenAIAdapter(BaseAdapter):
         }
 
         # Use correct token parameter based on model
-        if is_reasoning_model or model in ['gpt-4o', 'gpt-4o-mini', 'gpt-5']:
+        # New OpenAI models use max_completion_tokens, legacy models use max_tokens
+        if (is_reasoning_model or 
+            model in ['gpt-4o', 'gpt-4o-mini', 'gpt-5', 'o1-preview', 'o1-mini', 'o3-mini', 'o4-mini'] or
+            model.startswith('gpt-4o') or model.startswith('gpt-5') or 
+            model.startswith('o1-') or model.startswith('o3-') or model.startswith('o4-')):
             payload["max_completion_tokens"] = params.max_tokens
         else:
             payload["max_tokens"] = params.max_tokens
