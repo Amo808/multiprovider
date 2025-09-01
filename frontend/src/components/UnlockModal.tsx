@@ -69,6 +69,12 @@ export const UnlockModal: React.FC<UnlockModalProps> = ({
       description: 'Enter your OpenAI API key to start chatting',
       getKeyUrl: 'https://platform.openai.com/api-keys'
     },
+    chatgpt_pro: {
+      name: 'ChatGPT Pro',
+      placeholder: 'sk-xxxxxxxxxxxxxxxx',
+      description: 'Enter your ChatGPT Pro API key to start chatting',
+      getKeyUrl: 'https://platform.openai.com/api-keys'
+    },
     anthropic: {
       name: 'Anthropic',
       placeholder: 'sk-ant-xxxxxxxxxxxxxxxx',
