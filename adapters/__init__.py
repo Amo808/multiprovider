@@ -17,11 +17,8 @@ from .base_provider import (
 from .deepseek_provider import DeepSeekAdapter
 from .openai_provider import OpenAIAdapter
 from .anthropic_provider import AnthropicAdapter
+from .chatgpt_pro_provider import ChatGPTProAdapter
 from .provider_manager import ProviderManager, ProviderStatus, provider_manager
-
-# Legacy imports for backward compatibility
-from .base import ProviderAdapter
-from .deepseek import DeepSeekAdapter as LegacyDeepSeekAdapter
 
 __all__ = [
     # Base classes
@@ -41,13 +38,10 @@ __all__ = [
     'DeepSeekAdapter',
     'OpenAIAdapter',
     'AnthropicAdapter',
+    'ChatGPTProAdapter',
     
     # Management
     'ProviderManager',
     'ProviderStatus',
-    'provider_manager',
-    
-    # Legacy
-    'ProviderAdapter',
-    'LegacyDeepSeekAdapter'
+    'provider_manager'
 ]

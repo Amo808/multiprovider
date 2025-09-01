@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Copy, RefreshCw, AlertCircle, Zap, Square } from 'lucide-react';
+import { Send, Bot, User, Copy, RefreshCw, AlertCircle, Zap, Square, Brain } from 'lucide-react';
 import { Message, ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversations } from '../hooks/useConversations';
 import { ContextViewer } from './ContextViewer';
@@ -19,7 +19,8 @@ const MessageBubble: React.FC<{
   selectedModel?: ModelInfo;
   isStreaming?: boolean;
   currentResponse?: string;
-}> = ({ message, selectedModel, isStreaming = false, currentResponse = '' }) => {
+  deepResearchStage?: string;
+}> = ({ message, selectedModel, isStreaming = false, currentResponse = '', deepResearchStage }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -64,10 +65,36 @@ const MessageBubble: React.FC<{
               {message.meta.provider.toUpperCase()}
             </span>
           )}
+          {/* Deep Research indicator */}
+          {!isUser && (deepResearchStage || message.meta?.deep_research) && (
+            <span className="px-2 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-full flex items-center space-x-1">
+              <Zap size={10} />
+              <span>Deep Research</span>
+            </span>
+          )}
+          {/* DEBUG: Add to console */}
+          {!isUser && (() => {
+            console.log('DEBUG Research:', {
+              deepResearchStage, 
+              deep_research: message.meta?.deep_research,
+              shouldShow: deepResearchStage || message.meta?.deep_research,
+              messageMeta: message.meta
+            });
+            return null;
+          })()}
           {isStreaming && (
-            <div className="flex items-center space-x-1 text-blue-600 dark:text-blue-400">
-              <Zap size={12} className="animate-pulse" />
-              <span className="text-xs">Streaming...</span>
+            <div className="flex items-center space-x-1">
+              {message.meta?.reasoning ? (
+                <>
+                  <Brain size={12} className="animate-pulse text-purple-600 dark:text-purple-400" />
+                  <span className="text-xs text-purple-600 dark:text-purple-400">Reasoning...</span>
+                </>
+              ) : (
+                <>
+                  <Zap size={12} className="animate-pulse text-green-600 dark:text-green-400" />
+                  <span className="text-xs text-green-600 dark:text-green-400">Streaming...</span>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -94,15 +121,44 @@ const MessageBubble: React.FC<{
                 : 'text-gray-900 dark:text-white prose-gray dark:prose-invert'
           }`}>
             {!isUser && !displayContent && !isError ? (
-              // Show "Thinking..." animation for empty assistant messages
-              <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
-                <div className="flex space-x-1">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              // Show Deep Research stage, specific reasoning status, or generic "Thinking..." 
+              deepResearchStage ? (
+                <div className="flex items-center space-x-2 text-blue-600 dark:text-blue-400">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-sm whitespace-pre-wrap">{deepResearchStage}</span>
                 </div>
-                <span className="text-sm">Thinking...</span>
-              </div>
+              ) : message.meta?.reasoning ? (
+                <div className="flex items-center space-x-2 text-purple-600 dark:text-purple-400">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-sm">🤔 Model is reasoning...</span>
+                </div>
+              ) : isStreaming ? (
+                <div className="flex items-center space-x-2 text-green-600 dark:text-green-400">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-sm">💭 Generating response...</span>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-sm">⏳ Preparing...</span>
+                </div>
+              )
             ) : (
               <p className="whitespace-pre-wrap m-0">
                 {displayContent}
@@ -130,7 +186,7 @@ const MessageBubble: React.FC<{
         </div>
 
         {/* Message Meta */}
-        {message.meta && !isUser && (message.meta.tokens_in || message.meta.tokens_out) && (
+        {message.meta && !isUser && (message.meta.tokens_in || message.meta.tokens_out || isStreaming) && (
           <div className="mt-1 flex items-center space-x-2 text-xs">
             <div className="text-gray-400 dark:text-gray-500">
               {new Date(message.timestamp).toLocaleTimeString()}
@@ -146,20 +202,25 @@ const MessageBubble: React.FC<{
                   ↓{message.meta.tokens_out}
                 </span>
               )}
-              {message.meta.estimated_cost && (
+              {message.meta.estimated_cost ? (
                 <span className="text-yellow-600 dark:text-yellow-400" title={`Estimated cost: $${message.meta.estimated_cost}`}>
                   ${message.meta.estimated_cost.toFixed(4)}
                 </span>
-              )}
+              ) : (isStreaming || (message.content && !message.meta.estimated_cost)) ? (
+                <span className="text-gray-500 dark:text-gray-400 animate-pulse">
+                  calculating cost...
+                </span>
+              ) : null}
             </div>
           </div>
         )}
 
-        {!message.meta || isUser || (!message.meta.tokens_in && !message.meta.tokens_out) ? (
+        {/* Show timestamp only if no meta info shown above */}
+        {(!message.meta || isUser || (!message.meta.tokens_in && !message.meta.tokens_out && !isStreaming)) && (
           <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
             {new Date(message.timestamp).toLocaleTimeString()}
           </div>
-        ) : null}
+        )}
       </div>
     </div>
   );
@@ -181,7 +242,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   
   const { getConversation, sendMessage, clearConversation, stopStreaming } = useConversations();
   const conversationState = getConversation(conversationId);
-  const { messages, isStreaming, error, currentResponse } = conversationState;
+  const { messages, isStreaming, error, currentResponse, deepResearchStage } = conversationState;
 
   // Custom message handler with API key error handling
   const handleSendMessage = async (request: SendMessageRequest) => {
@@ -327,6 +388,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 selectedModel={selectedModel}
                 isStreaming={isStreaming && index === messages.length - 1}
                 currentResponse={currentResponse}
+                deepResearchStage={index === messages.length - 1 ? deepResearchStage : undefined}
               />
             ))}
           </div>

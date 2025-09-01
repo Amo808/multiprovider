@@ -10,6 +10,7 @@ class ModelProvider(str, Enum):
     """Supported AI model providers"""
     DEEPSEEK = "deepseek"
     OPENAI = "openai"
+    CHATGPT_PRO = "chatgpt_pro"
     ANTHROPIC = "anthropic" 
     GEMINI = "gemini"
     OLLAMA = "ollama"
@@ -48,6 +49,7 @@ class ModelInfo:
     pricing: Optional[Dict[str, float]] = None
     max_output_tokens: int = 32768  # Max output tokens per model
     recommended_max_tokens: int = 4096  # Recommended max for quality
+    description: Optional[str] = None  # Model description
 
 @dataclass
 class GenerationParams:
@@ -83,6 +85,7 @@ class ChatResponse:
     done: bool = False
     error: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
+    stage_message: Optional[str] = None  # For Deep Research stages
 
 @dataclass
 class Usage:

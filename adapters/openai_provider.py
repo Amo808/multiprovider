@@ -105,6 +105,22 @@ class OpenAIAdapter(BaseAdapter):
                 max_output_tokens=8192,  # GPT-5 Nano max output
                 recommended_max_tokens=4096  # Recommended for quality
             ),
+            # Preview and reasoning models (limited access)
+            ModelInfo(
+                id="o1-preview",
+                name="o1-preview",
+                display_name="o1 Preview",
+                provider=ModelProvider.OPENAI,
+                context_length=128000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 15.00, "output_tokens": 60.00},  # Preview pricing
+                max_output_tokens=32768,
+                recommended_max_tokens=16384,
+                description="Preview version of o1 reasoning model"
+            ),
             # Reasoning models
             ModelInfo(
                 id="o4-mini",
@@ -118,7 +134,8 @@ class OpenAIAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 4.00, "output_tokens": 16.00},  # Reasoning model pricing
                 max_output_tokens=65536,  # o4 reasoning models have higher limits
-                recommended_max_tokens=32768  # Recommended for reasoning tasks
+                recommended_max_tokens=32768,  # Recommended for reasoning tasks
+                description="Lightweight version of o4 reasoning model"
             ),
             ModelInfo(
                 id="gpt-4-turbo",
@@ -190,19 +207,97 @@ class OpenAIAdapter(BaseAdapter):
         input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])
         input_tokens = self.estimate_tokens(input_text)
 
+        # Check if this is a reasoning model (o1, o3 series)
+        is_reasoning_model = any(model.startswith(prefix) for prefix in ['o1', 'o3'])
+
         payload = {
             "model": model,
             "messages": api_messages,
             "stream": params.stream,
             "temperature": params.temperature,
-            "max_tokens": params.max_tokens,
             "top_p": params.top_p,
             "frequency_penalty": params.frequency_penalty,
             "presence_penalty": params.presence_penalty,
         }
 
+        # Use correct token parameter based on model
+        if is_reasoning_model or model in ['gpt-4o', 'gpt-4o-mini', 'gpt-5']:
+            payload["max_completion_tokens"] = params.max_tokens
+        else:
+            payload["max_tokens"] = params.max_tokens
+
+        # Reasoning models have different parameters
+        if is_reasoning_model:
+            # o1/o3 models don't support some parameters
+            payload.pop("frequency_penalty", None)
+            payload.pop("presence_penalty", None)
+            payload.pop("top_p", None)
+            # Temperature is often fixed for reasoning models
+            if model.startswith('o1') or model.startswith('o3'):
+                payload["temperature"] = 1.0  # Fixed for reasoning models
+
         if params.stop_sequences:
             payload["stop"] = params.stop_sequences
+
+        # 🔍 Deep Research Mode for o3 model
+        is_deep_research = False
+        
+        # Activate Deep Research for o3 model based on query complexity or length
+        if model == "o3" and messages:
+            last_message = messages[-1].content
+            
+            # Auto-detect if Deep Research is needed based on:
+            # 1. Query length (complex queries are usually longer)
+            # 2. Question indicators (what, how, why, analyze, etc.)
+            # 3. Request for detailed information
+            should_use_deep_research = (
+                len(last_message) > 50 or  # Longer queries
+                any(indicator in last_message.lower() for indicator in [
+                    'почему', 'как', 'что такое', 'объясни', 'расскажи', 
+                    'why', 'how', 'what is', 'explain', 'tell me',
+                    'analyze', 'compare', 'research', 'study',
+                    'анализ', 'сравнение', 'исследование', 'изучение'
+                ]) or
+                '?' in last_message  # Questions usually benefit from deep research
+            )
+            
+            if should_use_deep_research:
+                is_deep_research = True
+                self.logger.info("🔍 DEEP RESEARCH ACTIVATED - detected complex query")
+                yield ChatResponse(
+                    content="",  # No content for stage events
+                    done=False,
+                    meta={
+                        "provider": ModelProvider.OPENAI,
+                        "model": model,
+                        "deep_research": True,
+                        "stage": "initialization"
+                    },
+                    stage_message="🔍 **Deep Research Mode** - Analyzing your query..."
+                )
+                
+                # Show research progress stages
+                research_stages = [
+                    "🔍 Understanding your question...",
+                    "🧠 Processing available knowledge...",
+                    "� Analyzing relevant information...",
+                    "📝 Preparing comprehensive response...",
+                ]
+                
+                for i, stage in enumerate(research_stages):
+                    yield ChatResponse(
+                        content="",  # No content for stage events
+                        done=False,
+                        meta={
+                            "provider": ModelProvider.OPENAI,
+                            "model": model,
+                            "deep_research": True,
+                            "stage": f"research_{i+1}",
+                            "progress": (i+1) / len(research_stages)
+                        },
+                        stage_message=stage
+                    )
+                    await asyncio.sleep(1.5)  # Shorter delay for better UX
 
         self.logger.info(f"Sending request to OpenAI API: {model}, temp={params.temperature}")
 
@@ -259,6 +354,25 @@ class OpenAIAdapter(BaseAdapter):
                             delta = choice.get("delta", {})
                             content = delta.get("content", "")
                             
+                            # Handle reasoning models' thinking process
+                            thinking = delta.get("reasoning", "")  # o1/o3 models may have reasoning field
+                            
+                            # For reasoning models, show thinking process
+                            if is_reasoning_model and thinking:
+                                yield ChatResponse(
+                                    content=f"🤔 **{model} is analyzing...**\n*Advanced reasoning in progress...*",
+                                    id=json_data.get("id"),
+                                    done=False,
+                                    meta={
+                                        "tokens_in": input_tokens,
+                                        "tokens_out": 0,
+                                        "provider": ModelProvider.OPENAI,
+                                        "model": model,
+                                        "reasoning": True,
+                                        "status": "thinking"
+                                    }
+                                )
+                            
                             if content:
                                 accumulated_content += content
                                 output_tokens = self.estimate_tokens(accumulated_content)
@@ -271,7 +385,9 @@ class OpenAIAdapter(BaseAdapter):
                                         "tokens_in": input_tokens,
                                         "tokens_out": output_tokens,
                                         "provider": ModelProvider.OPENAI,
-                                        "model": model
+                                        "model": model,
+                                        "reasoning": is_reasoning_model,
+                                        "status": "streaming" if not is_reasoning_model else "reasoning_output"
                                     }
                                 )
                             
@@ -300,16 +416,39 @@ class OpenAIAdapter(BaseAdapter):
         final_output_tokens = self.estimate_tokens(accumulated_content) if accumulated_content else output_tokens
         
         yield ChatResponse(
-            content="",
+            content="",  # Empty content for final usage update
             done=True,
             meta={
                 "tokens_in": input_tokens,
                 "tokens_out": final_output_tokens,
                 "total_tokens": input_tokens + final_output_tokens,
                 "provider": ModelProvider.OPENAI,
-                "model": model
+                "model": model,
+                "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model)
             }
         )
+
+    def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
+        """Calculate estimated cost based on model pricing"""
+        # Find pricing for this model
+        model_pricing = None
+        for model_info in self.supported_models:
+            if model_info.id == model:
+                model_pricing = model_info.pricing
+                break
+        
+        if not model_pricing:
+            # Fallback pricing for unknown models
+            model_pricing = {"input_tokens": 2.50, "output_tokens": 10.00}
+            
+        # Calculate cost per million tokens
+        input_cost_per_million = model_pricing["input_tokens"]
+        output_cost_per_million = model_pricing["output_tokens"]
+        
+        input_cost = (input_tokens / 1_000_000) * input_cost_per_million
+        output_cost = (output_tokens / 1_000_000) * output_cost_per_million
+        
+        return round(input_cost + output_cost, 6)
 
     async def get_available_models(self) -> List[ModelInfo]:
         """Get list of available models from OpenAI"""

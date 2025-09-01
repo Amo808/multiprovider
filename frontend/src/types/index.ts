@@ -2,6 +2,7 @@
 export type ModelProvider = 
   | 'deepseek'
   | 'openai' 
+  | 'chatgpt_pro'
   | 'anthropic'
   | 'gemini'
   | 'ollama'
@@ -21,6 +22,10 @@ export interface Message {
     model?: string;
     provider?: ModelProvider;
     estimated_cost?: number;
+    deep_research?: boolean;
+    stage?: string;
+    progress?: number;
+    reasoning?: boolean;
   };
 }
 
@@ -30,12 +35,17 @@ export interface ChatResponse {
   done?: boolean;
   error?: string;
   type?: string; // Error type (e.g., "API_KEY_MISSING")
+  stage_message?: string; // For Deep Research stages
   meta?: {
     tokens_in?: number;
     tokens_out?: number;
     model?: string;
     provider?: ModelProvider;
     estimated_cost?: number;
+    deep_research?: boolean;
+    stage?: string;
+    progress?: number;
+    reasoning?: boolean;
   };
 }
 

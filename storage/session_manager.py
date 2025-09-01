@@ -6,7 +6,7 @@ from pathlib import Path
 import logging
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-from adapters.base import Message
+from adapters.base_provider import Message
 
 
 logger = logging.getLogger(__name__)

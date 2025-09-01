@@ -3,7 +3,7 @@ import logging
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-from adapters.base import Message, ProviderAdapter
+from adapters.base_provider import Message, BaseAdapter
 
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class PromptBuilder:
     """Builds prompts with context clipping based on token limits."""
 
-    def __init__(self, adapter: ProviderAdapter, max_tokens: int = 32768):
+    def __init__(self, adapter: BaseAdapter, max_tokens: int = 32768):
         self.adapter = adapter
         self.max_tokens = max_tokens
 

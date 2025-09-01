@@ -19,13 +19,13 @@ ai-chat/
 
 ### PowerShell команда (рекомендуемый способ):
 ```powershell
-cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"; python main.py
+cd "c:\Users\Amo\Desktop\mulit\backend"; python main.py
 ```
 
 ### Пошаговый запуск:
 1. **Переход в директорию backend**
    ```powershell
-   cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"
+   cd "c:\Users\Amo\Desktop\mulit\backend"
    ```
 
 2. **Активация виртуального окружения (если нужно)**
@@ -53,13 +53,13 @@ cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"; python main.py
 
 ### PowerShell команда (рекомендуемый способ):
 ```powershell
-cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"; npm run dev
+cd "c:\Users\Amo\Desktop\mulit\frontend"; npm run dev
 ```
 
 ### Пошаговый запуск:
 1. **Переход в директорию frontend**
    ```powershell
-   cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"
+   cd "c:\Users\Amo\Desktop\mulit\frontend"
    ```
 
 2. **Установка зависимостей (если нужно)**
@@ -83,7 +83,7 @@ cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"; python main.py
 
 **Frontend (терминал 2):**
 ```powershell
-cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"; npm run dev
+cd "c:\Users\Amo\Desktop\mulit\frontend"; npm run dev
 ```
 
 ### Вариант 2: Пошагово в двух терминалах

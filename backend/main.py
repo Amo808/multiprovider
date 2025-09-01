@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import Dict, Any, Optional, List
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -40,61 +41,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="AI Chat API",
-    description="Multi-provider AI chat interface",
-    version="2.0.0"
-)
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://192.168.110.143:3000").split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Pydantic models
-class ChatRequest(BaseModel):
-    message: str
-    provider: str = "deepseek"  # Default provider
-    model: str = "deepseek-chat"  # Default model
-    conversation_id: Optional[str] = None
-    stream: bool = True
-    config: Optional[Dict[str, Any]] = None
-    system_prompt: Optional[str] = None
-
-class ChatResponse(BaseModel):
-    id: str
-    role: str
-    content: str
-    timestamp: str
-    provider: str
-    model: str
-    meta: Optional[Dict[str, Any]] = None
-    usage: Optional[Dict[str, Any]] = None  # Token usage information
-
-class ProviderConfigUpdate(BaseModel):
-    enabled: Optional[bool] = None
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
-    
-class ModelRequest(BaseModel):
-    provider: str
-
-# Global components
+# Global variables
 conversation_store = None
 prompt_builder = None
 app_config = None
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize on startup."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan."""
     global conversation_store, prompt_builder, app_config
     
     try:
+        # Startup
         # Initialize provider manager
         await provider_manager.initialize()
         
@@ -141,10 +99,64 @@ async def startup_event():
             
         logger.info(f"Initialized with {len(provider_manager.get_enabled_providers())} enabled providers")
         
+        yield  # Application runs here
+        
     except Exception as e:
         logger.error(f"Failed to initialize: {e}")
         raise
+    
+    # Shutdown (if needed)
+    logger.info("Application shutdown")
 
+# Initialize FastAPI app with lifespan
+app = FastAPI(
+    title="AI Chat API",
+    description="Multi-provider AI chat interface", 
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://192.168.110.143:3000").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Pydantic models
+class ChatRequest(BaseModel):
+    message: str
+    provider: str = "deepseek"  # Default provider
+    model: str = "deepseek-chat"  # Default model
+    conversation_id: Optional[str] = None
+    stream: bool = True
+    config: Optional[Dict[str, Any]] = None
+    system_prompt: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    id: str
+    role: str
+    content: str
+    timestamp: str
+    provider: str
+    model: str
+    meta: Optional[Dict[str, Any]] = None
+    usage: Optional[Dict[str, Any]] = None  # Token usage information
+
+class ProviderConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    
+class ModelRequest(BaseModel):
+    provider: str
+
+# Global components
+conversation_store = None
+prompt_builder = None
+app_config = None
 
 @app.get("/health")
 async def health_check():

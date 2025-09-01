@@ -8,6 +8,7 @@ interface ConversationState {
   error: string | null;
   currentResponse: string;
   loaded: boolean; // Track if conversation history has been loaded
+  deepResearchStage?: string; // Current Deep Research stage message
 }
 
 interface ConversationsState {
@@ -126,7 +127,8 @@ export const useConversations = () => {
         isStreaming: false,
         error: null,
         currentResponse: '',
-        loaded: false
+        loaded: false,
+        deepResearchStage: undefined
       };
       
       // Update state with empty conversation
@@ -214,15 +216,66 @@ export const useConversations = () => {
       }));
 
       await apiClient.sendMessage(request, (chunk: ChatResponse) => {
+        // Handle Deep Research stages
+        if (chunk.stage_message) {
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              deepResearchStage: chunk.stage_message,
+              // Also update the assistant message meta to mark it as deep research
+              messages: prev[conversationId].messages.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { 
+                      ...msg, 
+                      meta: {
+                        ...msg.meta,
+                        ...chunk.meta,
+                        deep_research: true // Mark this message as using deep research
+                      }
+                    }
+                  : msg
+              )
+            }
+          }));
+          return; // Don't process as regular content
+        }
+        
+        // Handle final chunk with done=true (usually contains estimated_cost)
+        if (chunk.done && chunk.meta) {
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              messages: prev[conversationId].messages.map(msg => 
+                msg.id === assistantMessage.id 
+                  ? { 
+                      ...msg, 
+                      meta: {
+                        ...msg.meta,
+                        ...chunk.meta, // This should include estimated_cost
+                        // Preserve flags
+                        deep_research: msg.meta?.deep_research || chunk.meta?.deep_research,
+                        reasoning: msg.meta?.reasoning || chunk.meta?.reasoning
+                      }
+                    }
+                  : msg
+              )
+            }
+          }));
+          return; // Don't process as content
+        }
+        
         if (chunk.content) {
           fullResponse += chunk.content;
           
-          // Update the assistant message
+          // Update the assistant message and clear Deep Research stage when content starts
           setConversations(prev => ({
             ...prev,
             [conversationId]: {
               ...prev[conversationId],
               currentResponse: fullResponse,
+              deepResearchStage: undefined, // Clear stage when content arrives
               messages: prev[conversationId].messages.map(msg => 
                 msg.id === assistantMessage.id 
                   ? { 
@@ -230,7 +283,9 @@ export const useConversations = () => {
                       content: fullResponse, 
                       meta: {
                         ...msg.meta,
-                        ...chunk.meta
+                        ...chunk.meta,
+                        // Preserve deep_research flag if it was set
+                        deep_research: msg.meta?.deep_research || chunk.meta?.deep_research
                       }
                     }
                   : msg
@@ -252,7 +307,8 @@ export const useConversations = () => {
         [conversationId]: {
           ...prev[conversationId],
           isStreaming: false,
-          currentResponse: ''
+          currentResponse: '',
+          deepResearchStage: undefined
         }
       }));
 
@@ -269,7 +325,8 @@ export const useConversations = () => {
           ...prev[conversationId],
           isStreaming: false,
           error: errorMessage,
-          currentResponse: ''
+          currentResponse: '',
+          deepResearchStage: undefined
         }
       }));
       
