@@ -39,6 +39,22 @@ class ChatGPTProAdapter(OpenAIAdapter):
                 recommended_max_tokens=32768,
                 description="Most advanced GPT-5 model with extended reasoning capabilities - Pro exclusive"
             ),
+            # Alternative API name
+            ModelInfo(
+                id="o3-pro",
+                name="o3-pro", 
+                display_name="o3 Pro (GPT-5 Pro)",
+                provider=ModelProvider.CHATGPT_PRO,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 5.00, "output_tokens": 20.00},
+                max_output_tokens=65536,
+                recommended_max_tokens=32768,
+                description="GPT-5 Pro with extended reasoning (o3-pro API name) - Pro exclusive"
+            ),
             # ChatGPT Pro exclusive models
             ModelInfo(
                 id="o1-pro",

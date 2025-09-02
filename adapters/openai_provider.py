@@ -108,7 +108,7 @@ class OpenAIAdapter(BaseAdapter):
             # GPT-5 Pro - highest performance with extended reasoning
             ModelInfo(
                 id="gpt-5-pro",
-                name="gpt-5-pro",
+                name="gpt-5-pro", 
                 display_name="GPT-5 Pro",
                 provider=ModelProvider.OPENAI,
                 context_length=200000,  # Extended context
@@ -120,6 +120,22 @@ class OpenAIAdapter(BaseAdapter):
                 max_output_tokens=65536,  # Extended output for reasoning
                 recommended_max_tokens=32768,  # Recommended for comprehensive tasks
                 description="Most advanced GPT-5 model with extended reasoning capabilities"
+            ),
+            # Alternative API name that might be used
+            ModelInfo(
+                id="o3-pro", 
+                name="o3-pro",
+                display_name="GPT-5 Pro (o3-pro)",
+                provider=ModelProvider.OPENAI,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 5.00, "output_tokens": 20.00},
+                max_output_tokens=65536,
+                recommended_max_tokens=32768,
+                description="GPT-5 Pro with extended reasoning (alternative API name)"
             ),
             # Preview and reasoning models (limited access)
             ModelInfo(
@@ -253,9 +269,9 @@ class OpenAIAdapter(BaseAdapter):
         input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])
         input_tokens = self.estimate_tokens(input_text)
 
-        # Check if this is a reasoning model (o1, o3, o4 series, and gpt-5-pro)
+        # Check if this is a reasoning model (o1, o3, o4 series, gpt-5-pro, and o3-pro)
         is_reasoning_model = (any(model.startswith(prefix) for prefix in ['o1', 'o3', 'o4']) or 
-                            model == 'gpt-5-pro')
+                            model in ['gpt-5-pro', 'o3-pro'])
 
         payload = {
             "model": model,
