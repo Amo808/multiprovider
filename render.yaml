@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: multichat-app
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY  
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: CHATGPT_PRO_API_KEY
+        sync: false
+      - key: PORT
+        value: 10000
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DEBUG
+        value: "False"
+      - key: HOST
+        value: "0.0.0.0"
+    buildCommand: ""
+    startCommand: ""
+    healthCheckPath: "/health"
+    autoDeploy: true
+    branch: main

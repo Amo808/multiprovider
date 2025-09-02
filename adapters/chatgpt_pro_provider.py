@@ -176,12 +176,8 @@ class ChatGPTProAdapter(OpenAIAdapter):
         # Add parameters based on model capabilities
         if model == "gpt-5":
             # GPT-5 specific parameters - more restrictive and optimized for long texts
-            # For very long inputs, disable streaming to avoid issues
-            if len("\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])) > 30000:
-                payload["stream"] = False  # Disable streaming for very long texts
-                self.logger.info(f"🔍 GPT-5 Pro: Large input detected, disabling streaming")
-            else:
-                payload["stream"] = True  # Enable streaming for shorter texts
+            # FORCE STREAMING for GPT-5 to avoid hanging
+            payload["stream"] = True
             
             # Limit max_tokens for very long inputs to avoid timeouts
             max_tokens = params.max_tokens if params.max_tokens else 16384
@@ -203,7 +199,7 @@ class ChatGPTProAdapter(OpenAIAdapter):
             # - top_p (causes error)
             # - frequency_penalty 
             # - presence_penalty
-            self.logger.info(f"🔍 GPT-5 payload (filtered, streaming={payload['stream']}): {json.dumps(payload, indent=2)}")
+            self.logger.info(f"🔍 GPT-5 payload (filtered, FORCED STREAMING): {json.dumps(payload, indent=2)}")
             
         else:
             # Other models (o1, o3, legacy models) - use standard parameters
@@ -346,12 +342,55 @@ class ChatGPTProAdapter(OpenAIAdapter):
                 stage_message="🔄 Processing with GPT-5 Pro... This may take a few minutes for long texts."
             )
             
+            # Start monitoring task for hang detection
+            start_time = asyncio.get_event_loop().time()
+            hang_detected = False
+            response_received = False
+            
+            async def send_periodic_updates():
+                """Send periodic status updates if request is taking long"""
+                nonlocal hang_detected, response_received
+                await asyncio.sleep(30)  # Wait 30 seconds before first check
+                
+                while not response_received and not hang_detected:
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    if elapsed > 120:  # If more than 2 minutes
+                        self.logger.warning(f"⚠️ GPT-5 Pro: Request taking longer than expected ({elapsed:.1f}s)")
+                        
+                        if elapsed > 300:  # If more than 5 minutes, consider it hung
+                            self.logger.error(f"🚨 GPT-5 Pro: Request appears to be hanging ({elapsed:.1f}s)")
+                            hang_detected = True
+                            return
+                    
+                    await asyncio.sleep(30)  # Check every 30 seconds
+            
+            # Start monitoring in background
+            monitor_task = asyncio.create_task(send_periodic_updates())
+            
             try:
-                # Create session with dynamic timeout for this request
+                # Create session with dynamic timeout for this request  
                 timeout = aiohttp.ClientTimeout(total=timeout_seconds, connect=30)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     self.logger.info(f"🔍 GPT-5 Pro: Sending POST request to {url}")
                     async with session.post(url, json=payload, headers=headers) as resp:
+                        response_received = True  # Mark that we got a response
+                        monitor_task.cancel()  # Cancel monitoring
+                        
+                        # Check if hang was detected during wait
+                        if hang_detected:
+                            self.logger.error(f"🚨 GPT-5 Pro: Request was marked as hung, aborting")
+                            yield ChatResponse(
+                                content="❌ Request timeout - GPT-5 Pro took too long to respond. This may be due to high server load or a very complex request. Please try again with a shorter prompt or try later.",
+                                done=True,
+                                error=True,
+                                meta={
+                                    "provider": ModelProvider.CHATGPT_PRO,
+                                    "model": model,
+                                    "timeout": True
+                                }
+                            )
+                            return
+                        
                         self.logger.info(f"🔍 GPT-5 Pro: Received response status: {resp.status}")
                         if resp.status != 200:
                             error_text = await resp.text()
@@ -365,81 +404,30 @@ class ChatGPTProAdapter(OpenAIAdapter):
                             return
                         
                         if payload.get("stream", False):
-                            self.logger.info(f"🔍 GPT-5 Pro: Starting streaming response processing")
-                            stream_started = False
-                            content_received = False
-                            
-                            try:
-                                async for line in resp.content:
-                                    if not stream_started:
-                                        stream_started = True
-                                        self.logger.info(f"🔍 GPT-5 Pro: First stream line received")
-                                    
-                                    line = line.decode('utf-8').strip()
-                                    if line.startswith('data: '):
-                                        if line == 'data: [DONE]':
-                                            self.logger.info(f"🔍 GPT-5 Pro: Streaming completed [DONE]")
-                                            # Send final done signal only if content was received
-                                            if content_received:
+                            async for line in resp.content:
+                                line = line.decode('utf-8').strip()
+                                if line.startswith('data: '):
+                                    if line == 'data: [DONE]':
+                                        break
+                                    try:
+                                        data = json.loads(line[6:])
+                                        if 'choices' in data and data['choices']:
+                                            delta = data['choices'][0].get('delta', {})
+                                            content = delta.get('content', '')
+                                            if content:
                                                 yield ChatResponse(
-                                                    content="",
-                                                    done=True,
+                                                    content=content,
+                                                    done=False,
                                                     meta={
                                                         "provider": ModelProvider.CHATGPT_PRO,
                                                         "model": model,
                                                         "chatgpt_pro": True,
                                                         "gpt5_pro": True,
-                                                        "reasoning_effort": "medium",
-                                                        "streaming_complete": True
+                                                        "reasoning_effort": "medium"
                                                     }
                                                 )
-                                            break
-                                        try:
-                                            data = json.loads(line[6:])
-                                            if 'choices' in data and data['choices']:
-                                                delta = data['choices'][0].get('delta', {})
-                                                content = delta.get('content', '')
-                                                if content:
-                                                    content_received = True
-                                                    yield ChatResponse(
-                                                        content=content,
-                                                        done=False,
-                                                        meta={
-                                                            "provider": ModelProvider.CHATGPT_PRO,
-                                                            "model": model,
-                                                            "chatgpt_pro": True,
-                                                            "gpt5_pro": True,
-                                                            "reasoning_effort": "medium"
-                                                        }
-                                                    )
-                                                # Check for finish_reason
-                                                finish_reason = data['choices'][0].get('finish_reason')
-                                                if finish_reason:
-                                                    self.logger.info(f"🔍 GPT-5 Pro: Finish reason: {finish_reason}")
-                                        except json.JSONDecodeError as json_err:
-                                            self.logger.warning(f"🔍 GPT-5 Pro: JSON decode error: {json_err}, line: {line}")
-                                            continue
-                            except Exception as stream_err:
-                                self.logger.error(f"🔍 GPT-5 Pro: Streaming error: {stream_err}")
-                                # Fallback to non-streaming if streaming fails
-                                if not content_received:
-                                    self.logger.info(f"🔍 GPT-5 Pro: Falling back to non-streaming mode")
-                                    # Re-read the response as non-streaming
-                                    response_data = await resp.json()
-                                    if 'choices' in response_data and response_data['choices']:
-                                        content = response_data['choices'][0]['message']['content']
-                                        yield ChatResponse(
-                                            content=content,
-                                            done=True,
-                                            meta={
-                                                "provider": ModelProvider.CHATGPT_PRO,
-                                                "model": model,
-                                                "chatgpt_pro": True,
-                                                "gpt5_pro": True,
-                                                "reasoning_effort": "medium",
-                                                "fallback_mode": True
-                                            }
-                                        )
+                                    except json.JSONDecodeError:
+                                        continue
                         else:
                             # Non-streaming response
                             response_data = await resp.json()
@@ -467,6 +455,10 @@ class ChatGPTProAdapter(OpenAIAdapter):
                                     meta={"provider": ModelProvider.CHATGPT_PRO, "model": model}
                                 )
             except Exception as e:
+                # Cancel monitoring task if still running
+                if 'monitor_task' in locals() and not monitor_task.done():
+                    monitor_task.cancel()
+                
                 self.logger.error(f"GPT-5 generation error: {e}")
                 yield ChatResponse(
                     content=f"Error: {str(e)}",
@@ -474,6 +466,10 @@ class ChatGPTProAdapter(OpenAIAdapter):
                     error=True,
                     meta={"provider": ModelProvider.CHATGPT_PRO, "model": model}
                 )
+            finally:
+                # Ensure monitoring task is cancelled
+                if 'monitor_task' in locals() and not monitor_task.done():
+                    monitor_task.cancel()
         else:
             # Use parent implementation for other models
             async for response in super().generate(messages, model, params, **kwargs):
