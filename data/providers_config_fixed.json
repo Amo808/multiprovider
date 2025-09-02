@@ -1,0 +1,86 @@
+{
+  "providers": {
+    "deepseek": {
+      "name": "DeepSeek",
+      "enabled": true,
+      "base_url": "https://api.deepseek.com",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    "openai": {
+      "name": "OpenAI",
+      "enabled": true,
+      "base_url": "https://api.openai.com/v1",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "chatgpt_pro": {
+      "name": "ChatGPT Pro",
+      "enabled": true,
+      "base_url": "https://api.openai.com/v1",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {
+        "subscription_tier": "pro"
+      },
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "anthropic": {
+      "name": "Anthropic",
+      "enabled": false,
+      "base_url": "https://api.anthropic.com",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    "gemini": {
+      "name": "Google Gemini",
+      "enabled": false,
+      "base_url": "https://generativelanguage.googleapis.com",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "GEMINI_API_KEY"
+    },
+    "ollama": {
+      "name": "Ollama",
+      "enabled": false,
+      "base_url": "http://localhost:11434",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "OLLAMA_API_KEY"
+    },
+    "groq": {
+      "name": "Groq",
+      "enabled": false,
+      "base_url": "https://api.groq.com/openai/v1",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "GROQ_API_KEY"
+    },
+    "mistral": {
+      "name": "Mistral AI",
+      "enabled": false,
+      "base_url": "https://api.mistral.ai/v1",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "MISTRAL_API_KEY"
+    }
+  }
+}

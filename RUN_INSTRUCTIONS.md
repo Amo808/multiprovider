@@ -83,7 +83,7 @@ cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"; python main.py
 
 **Frontend (терминал 2):**
 ```powershell
-cd "c:\Users\Amo\Desktop\mulit\frontend"; npm run dev
+cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"; npm run dev
 ```
 
 ### Вариант 2: Пошагово в двух терминалах

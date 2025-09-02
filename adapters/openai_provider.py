@@ -62,80 +62,51 @@ class OpenAIAdapter(BaseAdapter):
                 max_output_tokens=16384,  # GPT-4o mini max output
                 recommended_max_tokens=8192  # Recommended for quality
             ),
-            # Newer GPT-5 models (when available)
+            # GPT-5 (available in API)
             ModelInfo(
                 id="gpt-5",
                 name="gpt-5",
                 display_name="GPT-5",
                 provider=ModelProvider.OPENAI, 
-                context_length=200000,  # Estimated
+                context_length=400000,  # Official context window
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 1.25, "output_tokens": 10.00},  # New pricing
-                max_output_tokens=32768,  # Estimated GPT-5 max output
-                recommended_max_tokens=16384  # Recommended for quality
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00},  # Official pricing
+                max_output_tokens=128000,  # Official max output
+                recommended_max_tokens=64000,  # Recommended for quality
+                description="Most advanced GPT model with built-in thinking capabilities"
             ),
             ModelInfo(
                 id="gpt-5-mini",
                 name="gpt-5-mini",
                 display_name="GPT-5 Mini",
                 provider=ModelProvider.OPENAI,
-                context_length=200000,  # Estimated
+                context_length=400000,  # Same as GPT-5
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.25, "output_tokens": 2.00},  # New pricing
-                max_output_tokens=16384,  # GPT-5 Mini max output
-                recommended_max_tokens=8192  # Recommended for quality
+                pricing={"input_tokens": 0.25, "output_tokens": 2.00},  # Estimated pricing
+                max_output_tokens=128000,  # Same as GPT-5
+                recommended_max_tokens=32000,  # Recommended for quality
+                description="Lightweight version of GPT-5"
             ),
             ModelInfo(
                 id="gpt-5-nano",
                 name="gpt-5-nano",
                 display_name="GPT-5 Nano",
                 provider=ModelProvider.OPENAI,
-                context_length=128000,
+                context_length=400000,  # Same as GPT-5
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.05, "output_tokens": 0.40},  # New pricing
-                max_output_tokens=8192,  # GPT-5 Nano max output
-                recommended_max_tokens=4096  # Recommended for quality
-            ),
-            # GPT-5 Pro - highest performance with extended reasoning
-            ModelInfo(
-                id="gpt-5-pro",
-                name="gpt-5-pro", 
-                display_name="GPT-5 Pro",
-                provider=ModelProvider.OPENAI,
-                context_length=200000,  # Extended context
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 5.00, "output_tokens": 20.00},  # Pro pricing
-                max_output_tokens=65536,  # Extended output for reasoning
-                recommended_max_tokens=32768,  # Recommended for comprehensive tasks
-                description="Most advanced GPT-5 model with extended reasoning capabilities"
-            ),
-            # Alternative API name that might be used
-            ModelInfo(
-                id="o3-pro", 
-                name="o3-pro",
-                display_name="GPT-5 Pro (o3-pro)",
-                provider=ModelProvider.OPENAI,
-                context_length=200000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 5.00, "output_tokens": 20.00},
-                max_output_tokens=65536,
-                recommended_max_tokens=32768,
-                description="GPT-5 Pro with extended reasoning (alternative API name)"
+                pricing={"input_tokens": 0.05, "output_tokens": 0.40},  # Estimated pricing
+                max_output_tokens=64000,  # Smaller max output
+                recommended_max_tokens=16000,  # Recommended for quality
+                description="Most efficient version of GPT-5"
             ),
             # Preview and reasoning models (limited access)
             ModelInfo(
@@ -269,9 +240,8 @@ class OpenAIAdapter(BaseAdapter):
         input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])
         input_tokens = self.estimate_tokens(input_text)
 
-        # Check if this is a reasoning model (o1, o3, o4 series, gpt-5-pro, and o3-pro)
-        is_reasoning_model = (any(model.startswith(prefix) for prefix in ['o1', 'o3', 'o4']) or 
-                            model in ['gpt-5-pro', 'o3-pro'])
+        # Check if this is a reasoning model (o1, o3, o4 series)
+        is_reasoning_model = any(model.startswith(prefix) for prefix in ['o1', 'o3', 'o4'])
 
         payload = {
             "model": model,
