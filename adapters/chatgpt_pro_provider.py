@@ -23,6 +23,22 @@ class ChatGPTProAdapter(OpenAIAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
+            # GPT-5 Pro exclusive model - highest tier
+            ModelInfo(
+                id="gpt-5-pro",
+                name="gpt-5-pro",
+                display_name="GPT-5 Pro",
+                provider=ModelProvider.CHATGPT_PRO,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 5.00, "output_tokens": 20.00},
+                max_output_tokens=65536,
+                recommended_max_tokens=32768,
+                description="Most advanced GPT-5 model with extended reasoning capabilities - Pro exclusive"
+            ),
             # ChatGPT Pro exclusive models
             ModelInfo(
                 id="o1-pro",
