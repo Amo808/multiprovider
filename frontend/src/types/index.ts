@@ -36,6 +36,9 @@ export interface ChatResponse {
   error?: string;
   type?: string; // Error type (e.g., "API_KEY_MISSING")
   stage_message?: string; // For Deep Research stages
+  heartbeat?: string; // For heartbeat/keepalive messages
+  streaming_ready?: boolean; // Backend ready to stream
+  first_content?: boolean; // First content chunk signal
   meta?: {
     tokens_in?: number;
     tokens_out?: number;

@@ -240,9 +240,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  const { getConversation, sendMessage, clearConversation, stopStreaming } = useConversations();
+  const { getConversation, sendMessage, clearConversation, stopStreaming, recoverStuckRequest } = useConversations();
   const conversationState = getConversation(conversationId);
-  const { messages, isStreaming, error, currentResponse, deepResearchStage } = conversationState;
+  const { messages, isStreaming, error, currentResponse, deepResearchStage, connectionLost, lastHeartbeat } = conversationState;
 
   // Custom message handler with API key error handling
   const handleSendMessage = async (request: SendMessageRequest) => {
@@ -398,6 +398,33 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       {/* Input Area */}
       <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 flex-shrink-0">
+        {/* Connection Status and Recovery */}
+        {connectionLost && isStreaming && (
+          <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <AlertCircle size={16} className="text-yellow-600 dark:text-yellow-400" />
+                <div>
+                  <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Connection Issue</p>
+                  <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                    No response from server for over a minute. The model might still be processing.
+                    {lastHeartbeat && (
+                      <span> Last activity: {Math.round((Date.now() - lastHeartbeat) / 1000)}s ago</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => recoverStuckRequest(conversationId)}
+                className="px-3 py-1 text-xs bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors"
+              >
+                Retry Connection
+              </button>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
             <div className="flex items-center space-x-2">

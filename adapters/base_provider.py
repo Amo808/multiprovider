@@ -86,6 +86,9 @@ class ChatResponse:
     error: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
     stage_message: Optional[str] = None  # For Deep Research stages
+    heartbeat: Optional[str] = None  # For heartbeat/keepalive messages
+    streaming_ready: Optional[bool] = None  # Backend ready to stream
+    first_content: Optional[bool] = None  # First content chunk signal
 
 @dataclass
 class Usage:

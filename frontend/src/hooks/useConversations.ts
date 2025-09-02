@@ -9,6 +9,8 @@ interface ConversationState {
   currentResponse: string;
   loaded: boolean; // Track if conversation history has been loaded
   deepResearchStage?: string; // Current Deep Research stage message
+  lastHeartbeat?: number; // Timestamp of last heartbeat/activity
+  connectionLost?: boolean; // Track if connection seems lost
 }
 
 interface ConversationsState {
@@ -54,6 +56,90 @@ export const useConversations = () => {
   // Track active requests for cancellation
   const [activeRequests, setActiveRequests] = useState<Map<string, string>>(new Map());
 
+  // Connection monitoring and auto-recovery
+  useEffect(() => {
+    const checkConnectionHealth = () => {
+      const now = Date.now();
+      const HEARTBEAT_TIMEOUT = 60000; // 60 seconds without heartbeat = connection issue
+      const STREAMING_TIMEOUT = 300000; // 5 minutes total timeout for streaming requests
+      
+      setConversations(prev => {
+        const updated = { ...prev };
+        let hasUpdates = false;
+        
+        Object.entries(updated).forEach(([conversationId, conversation]) => {
+          if (conversation.isStreaming && conversation.lastHeartbeat) {
+            const timeSinceHeartbeat = now - conversation.lastHeartbeat;
+            const shouldMarkAsLost = timeSinceHeartbeat > HEARTBEAT_TIMEOUT;
+            const shouldTimeout = timeSinceHeartbeat > STREAMING_TIMEOUT;
+            
+            if (shouldTimeout && !conversation.connectionLost) {
+              console.warn(`[${conversationId}] Streaming timeout (${Math.round(timeSinceHeartbeat/1000)}s), marking as failed`);
+              updated[conversationId] = {
+                ...conversation,
+                isStreaming: false,
+                error: 'Request timed out. The model may still be processing, but the connection was lost.',
+                connectionLost: true,
+                deepResearchStage: undefined
+              };
+              hasUpdates = true;
+            } else if (shouldMarkAsLost && !conversation.connectionLost) {
+              console.warn(`[${conversationId}] Connection seems lost (${Math.round(timeSinceHeartbeat/1000)}s since heartbeat)`);
+              updated[conversationId] = {
+                ...conversation,
+                connectionLost: true,
+                deepResearchStage: conversation.deepResearchStage 
+                  ? `⚠️ Connection issue detected. ${conversation.deepResearchStage}` 
+                  : '⚠️ Connection issue detected. Trying to reconnect...'
+              };
+              hasUpdates = true;
+            }
+          }
+        });
+        
+        return hasUpdates ? updated : prev;
+      });
+    };
+    
+    // Check every 30 seconds
+    const interval = setInterval(checkConnectionHealth, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Auto-recovery for stuck requests
+  const recoverStuckRequest = useCallback(async (conversationId: string) => {
+    console.log(`[${conversationId}] Attempting to recover stuck request`);
+    
+    setConversations(prev => ({
+      ...prev,
+      [conversationId]: {
+        ...prev[conversationId],
+        connectionLost: false,
+        error: null,
+        deepResearchStage: '🔄 Retrying connection...'
+      }
+    }));
+    
+    // Give it a few seconds to potentially receive delayed data
+    setTimeout(() => {
+      setConversations(prev => {
+        const conversation = prev[conversationId];
+        if (conversation && conversation.isStreaming && !conversation.lastHeartbeat) {
+          return {
+            ...prev,
+            [conversationId]: {
+              ...conversation,
+              isStreaming: false,
+              error: 'Connection could not be recovered. Please try sending the message again.',
+              deepResearchStage: undefined
+            }
+          };
+        }
+        return prev;
+      });
+    }, 10000); // Wait 10 seconds for recovery
+  }, []);
+
   // Save conversations to localStorage whenever they change
   useEffect(() => {
     try {
@@ -85,6 +171,8 @@ export const useConversations = () => {
             isStreaming: false,
             error: null,
             currentResponse: '',
+            lastHeartbeat: undefined,
+            connectionLost: false
           }),
           messages: messages.map((msg: any) => ({
             id: msg.id,
@@ -107,6 +195,8 @@ export const useConversations = () => {
             isStreaming: false,
             error: null,
             currentResponse: '',
+            lastHeartbeat: undefined,
+            connectionLost: false
           }),
           messages: [],
           loaded: true
@@ -128,7 +218,9 @@ export const useConversations = () => {
         error: null,
         currentResponse: '',
         loaded: false,
-        deepResearchStage: undefined
+        deepResearchStage: undefined,
+        lastHeartbeat: undefined,
+        connectionLost: false
       };
       
       // Update state with empty conversation
@@ -171,7 +263,9 @@ export const useConversations = () => {
           ...getConversation(conversationId),
           isStreaming: true,
           error: null,
-          currentResponse: ''
+          currentResponse: '',
+          lastHeartbeat: Date.now(), // Track start time
+          connectionLost: false
         }
       }));
 
@@ -216,14 +310,31 @@ export const useConversations = () => {
       }));
 
       await apiClient.sendMessage(request, (chunk: ChatResponse) => {
-        // Handle Deep Research stages
+        // Handle heartbeat messages - keep connection alive, update last activity
+        if (chunk.heartbeat) {
+          console.log(`[${conversationId}] Heartbeat received:`, chunk.heartbeat);
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              lastHeartbeat: Date.now(),
+              // Keep current stage message if no new one provided
+              deepResearchStage: chunk.stage_message || prev[conversationId].deepResearchStage
+            }
+          }));
+          return; // Don't process as regular content
+        }
+
+        // Handle stage messages (status updates) - immediate UI feedback
         if (chunk.stage_message) {
+          console.log(`[${conversationId}] Stage message:`, chunk.stage_message);
           setConversations(prev => ({
             ...prev,
             [conversationId]: {
               ...prev[conversationId],
               deepResearchStage: chunk.stage_message,
-              // Also update the assistant message meta to mark it as deep research
+              lastHeartbeat: Date.now(),
+              // Also update the assistant message meta to mark special processing
               messages: prev[conversationId].messages.map(msg => 
                 msg.id === assistantMessage.id 
                   ? { 
@@ -231,7 +342,8 @@ export const useConversations = () => {
                       meta: {
                         ...msg.meta,
                         ...chunk.meta,
-                        deep_research: true // Mark this message as using deep research
+                        deep_research: chunk.meta?.deep_research || true,
+                        reasoning: chunk.meta?.reasoning
                       }
                     }
                   : msg
@@ -240,9 +352,38 @@ export const useConversations = () => {
           }));
           return; // Don't process as regular content
         }
+
+        // Handle streaming_ready signal - backend is ready to start streaming
+        if (chunk.streaming_ready) {
+          console.log(`[${conversationId}] Streaming ready signal received`);
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              deepResearchStage: "🚀 Starting response generation...",
+              lastHeartbeat: Date.now()
+            }
+          }));
+          return;
+        }
+
+        // Handle first_content signal - first actual content is coming
+        if (chunk.first_content) {
+          console.log(`[${conversationId}] First content signal received`);
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              deepResearchStage: undefined, // Clear stage as content starts
+              lastHeartbeat: Date.now()
+            }
+          }));
+          return;
+        }
         
         // Handle final chunk with done=true (usually contains estimated_cost)
         if (chunk.done && chunk.meta) {
+          console.log(`[${conversationId}] Final chunk received with metadata:`, chunk.meta);
           setConversations(prev => ({
             ...prev,
             [conversationId]: {
@@ -276,6 +417,7 @@ export const useConversations = () => {
               ...prev[conversationId],
               currentResponse: fullResponse,
               deepResearchStage: undefined, // Clear stage when content arrives
+              lastHeartbeat: Date.now(),
               messages: prev[conversationId].messages.map(msg => 
                 msg.id === assistantMessage.id 
                   ? { 
@@ -285,7 +427,8 @@ export const useConversations = () => {
                         ...msg.meta,
                         ...chunk.meta,
                         // Preserve deep_research flag if it was set
-                        deep_research: msg.meta?.deep_research || chunk.meta?.deep_research
+                        deep_research: msg.meta?.deep_research || chunk.meta?.deep_research,
+                        reasoning: msg.meta?.reasoning || chunk.meta?.reasoning
                       }
                     }
                   : msg
@@ -308,7 +451,9 @@ export const useConversations = () => {
           ...prev[conversationId],
           isStreaming: false,
           currentResponse: '',
-          deepResearchStage: undefined
+          deepResearchStage: undefined,
+          connectionLost: false,
+          lastHeartbeat: undefined
         }
       }));
 
@@ -326,7 +471,9 @@ export const useConversations = () => {
           isStreaming: false,
           error: errorMessage,
           currentResponse: '',
-          deepResearchStage: undefined
+          deepResearchStage: undefined,
+          connectionLost: false,
+          lastHeartbeat: undefined
         }
       }));
       
@@ -418,6 +565,7 @@ export const useConversations = () => {
     sendMessage,
     clearConversation,
     deleteConversation,
-    stopStreaming
+    stopStreaming,
+    recoverStuckRequest
   };
 };
