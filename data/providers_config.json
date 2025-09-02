@@ -30,7 +30,7 @@
       "extra_params": {
         "subscription_tier": "pro"
       },
-      "api_key_env": "OPENAI_API_KEY"
+      "api_key_env": "CHATGPT_PRO_API_KEY"
     },
     "anthropic": {
       "name": "Anthropic",

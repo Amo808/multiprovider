@@ -118,15 +118,50 @@ class ChatGPTProAdapter(OpenAIAdapter):
             ),
         ]
 
-    def _prepare_api_payload(self, messages: List[Message], model: str, params: GenerationParams) -> dict:
-        """Prepare API payload with model-specific parameter filtering"""
-        # Convert messages to OpenAI format
+    def _prepare_messages_for_gpt5(self, messages: List[Message], max_context_length: int = 200000) -> List[dict]:
+        """Prepare messages for GPT-5 with smart truncation for very long content"""
         api_messages = []
+        total_length = 0
+        
         for msg in messages:
+            content = msg.content
+            content_length = len(content)
+            
+            # If this is a very long message, provide a summary approach
+            if content_length > 50000:  # Very long content
+                self.logger.info(f"⚠️ GPT-5 Pro: Very long message detected ({content_length} chars)")
+                # For very long academic papers, keep first part and add summary notice
+                if content_length > 100000:
+                    content = content[:50000] + f"\n\n[Note: This is a very long text ({content_length:,} characters). Content truncated to first 50,000 characters for processing efficiency. Please provide analysis based on the available content.]"
+                elif content_length > 75000:
+                    content = content[:60000] + f"\n\n[Note: Long text truncated for processing efficiency. Original length: {content_length:,} characters.]"
+            
             api_messages.append({
                 "role": msg.role,
-                "content": msg.content
+                "content": content
             })
+            total_length += len(content)
+            
+            # Check if we're approaching context limits
+            if total_length > max_context_length:
+                self.logger.warning(f"⚠️ GPT-5 Pro: Context length limit approached ({total_length:,} chars)")
+                break
+                
+        return api_messages
+
+    def _prepare_api_payload(self, messages: List[Message], model: str, params: GenerationParams) -> dict:
+        """Prepare API payload with model-specific parameter filtering"""
+        # Convert messages to API format with smart handling for long content
+        if model == "gpt-5":
+            api_messages = self._prepare_messages_for_gpt5(messages)
+        else:
+            # Standard conversion for other models
+            api_messages = []
+            for msg in messages:
+                api_messages.append({
+                    "role": msg.role,
+                    "content": msg.content
+                })
 
         # Base payload
         payload = {
@@ -136,24 +171,39 @@ class ChatGPTProAdapter(OpenAIAdapter):
         }
 
         # Debug: Log input parameters
-        self.logger.info(f"🔍 Input params for {model}: max_tokens={params.max_tokens}, temperature={params.temperature}, top_p={params.top_p}")
+        self.logger.info(f"🔍 Input params for {model}: max_tokens={params.max_tokens}, temperature={params.temperature}, top_p={params.top_p}, stream={params.stream}")
 
         # Add parameters based on model capabilities
         if model == "gpt-5":
-            # GPT-5 specific parameters - more restrictive
-            if params.max_tokens:
-                payload["max_completion_tokens"] = params.max_tokens
-            if params.temperature is not None and params.temperature <= 1.0:
-                payload["temperature"] = params.temperature
-            # GPT-5 Pro reasoning parameters
-            payload["reasoning_effort"] = "high"
-            payload["verbosity"] = 3  # Medium verbosity for detailed responses
+            # GPT-5 specific parameters - more restrictive and optimized for long texts
+            # For very long inputs, disable streaming to avoid issues
+            if len("\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])) > 30000:
+                payload["stream"] = False  # Disable streaming for very long texts
+                self.logger.info(f"🔍 GPT-5 Pro: Large input detected, disabling streaming")
+            else:
+                payload["stream"] = True  # Enable streaming for shorter texts
+            
+            # Limit max_tokens for very long inputs to avoid timeouts
+            max_tokens = params.max_tokens if params.max_tokens else 16384
+            if max_tokens > 32768:  # Cap for stability
+                max_tokens = 32768
+            payload["max_completion_tokens"] = max_tokens
+            
+            # Use more conservative temperature for long texts
+            temperature = params.temperature if params.temperature is not None else 0.7
+            if temperature > 1.0:
+                temperature = 1.0
+            payload["temperature"] = temperature
+            
+            # GPT-5 Pro reasoning parameters - adjusted for long content
+            payload["reasoning_effort"] = "medium"  # Use medium instead of high for long texts
+            payload["verbosity"] = 2  # Lower verbosity to reduce processing time
             
             # GPT-5 doesn't support these parameters:
             # - top_p (causes error)
             # - frequency_penalty 
             # - presence_penalty
-            self.logger.info(f"🔍 GPT-5 payload (filtered): {json.dumps(payload, indent=2)}")
+            self.logger.info(f"🔍 GPT-5 payload (filtered, streaming={payload['stream']}): {json.dumps(payload, indent=2)}")
             
         else:
             # Other models (o1, o3, legacy models) - use standard parameters
@@ -240,8 +290,8 @@ class ChatGPTProAdapter(OpenAIAdapter):
                         "extended_reasoning": True
                     }
                 )
-        elif model == "gpt-5" and hasattr(params, 'reasoning_effort'):
-            # GPT-5 Pro mode with enhanced reasoning
+        elif model == "gpt-5":
+            # GPT-5 Pro mode with enhanced reasoning - always show this
             yield ChatResponse(
                 content="🚀 **GPT-5 Pro Mode Engaged**\n\nUsing extended reasoning capabilities for comprehensive analysis...\n",
                 done=False,
@@ -262,66 +312,160 @@ class ChatGPTProAdapter(OpenAIAdapter):
             # Debug: Log the payload being sent to API
             self.logger.info(f"🔍 GPT-5 Pro API Payload: {json.dumps(payload, indent=2)}")
             
-            # Custom GPT-5 API call
+            # Custom GPT-5 API call with extended timeout for long texts
             url = f"{self.base_url}/chat/completions"
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
             
+            # Calculate input length to adjust timeout
+            input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in payload["messages"]])
+            input_length = len(input_text)
+            
+            # Dynamic timeout based on input length (longer texts need more time)
+            base_timeout = 120  # 2 minutes base
+            if input_length > 50000:  # Very long text (>50k chars)
+                timeout_seconds = 600  # 10 minutes
+            elif input_length > 20000:  # Long text (>20k chars)
+                timeout_seconds = 300  # 5 minutes
+            else:
+                timeout_seconds = base_timeout
+            
+            self.logger.info(f"🔍 GPT-5 Pro: Input length {input_length} chars, timeout {timeout_seconds}s")
+            
+            # Send status update for long processing
+            yield ChatResponse(
+                content="",
+                done=False,
+                meta={
+                    "provider": ModelProvider.CHATGPT_PRO,
+                    "model": model,
+                    "processing": True
+                },
+                stage_message="🔄 Processing with GPT-5 Pro... This may take a few minutes for long texts."
+            )
+            
             try:
-                async with self.session.post(url, json=payload, headers=headers) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        self.logger.error(f"GPT-5 API Error {resp.status}: {error_text}")
-                        yield ChatResponse(
-                            content=f"API Error {resp.status}: {error_text}",
-                            done=True,
-                            error=True,
-                            meta={"provider": ModelProvider.CHATGPT_PRO, "model": model}
-                        )
-                        return
-                    
-                    if payload.get("stream", False):
-                        async for line in resp.content:
-                            line = line.decode('utf-8').strip()
-                            if line.startswith('data: '):
-                                if line == 'data: [DONE]':
-                                    break
-                                try:
-                                    data = json.loads(line[6:])
-                                    if 'choices' in data and data['choices']:
-                                        delta = data['choices'][0].get('delta', {})
-                                        content = delta.get('content', '')
-                                        if content:
-                                            yield ChatResponse(
-                                                content=content,
-                                                done=False,
-                                                meta={
-                                                    "provider": ModelProvider.CHATGPT_PRO,
-                                                    "model": model,
-                                                    "chatgpt_pro": True,
-                                                    "gpt5_pro": True,
-                                                    "reasoning_effort": "high"
-                                                }
-                                            )
-                                except json.JSONDecodeError:
-                                    continue
-                    else:
-                        response_data = await resp.json()
-                        if 'choices' in response_data and response_data['choices']:
-                            content = response_data['choices'][0]['message']['content']
+                # Create session with dynamic timeout for this request
+                timeout = aiohttp.ClientTimeout(total=timeout_seconds, connect=30)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    self.logger.info(f"🔍 GPT-5 Pro: Sending POST request to {url}")
+                    async with session.post(url, json=payload, headers=headers) as resp:
+                        self.logger.info(f"🔍 GPT-5 Pro: Received response status: {resp.status}")
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            self.logger.error(f"GPT-5 API Error {resp.status}: {error_text}")
                             yield ChatResponse(
-                                content=content,
+                                content=f"API Error {resp.status}: {error_text}",
                                 done=True,
-                                meta={
-                                    "provider": ModelProvider.CHATGPT_PRO,
-                                    "model": model,
-                                    "chatgpt_pro": True,
-                                    "gpt5_pro": True,
-                                    "reasoning_effort": "high"
-                                }
+                                error=True,
+                                meta={"provider": ModelProvider.CHATGPT_PRO, "model": model}
                             )
+                            return
+                        
+                        if payload.get("stream", False):
+                            self.logger.info(f"🔍 GPT-5 Pro: Starting streaming response processing")
+                            stream_started = False
+                            content_received = False
+                            
+                            try:
+                                async for line in resp.content:
+                                    if not stream_started:
+                                        stream_started = True
+                                        self.logger.info(f"🔍 GPT-5 Pro: First stream line received")
+                                    
+                                    line = line.decode('utf-8').strip()
+                                    if line.startswith('data: '):
+                                        if line == 'data: [DONE]':
+                                            self.logger.info(f"🔍 GPT-5 Pro: Streaming completed [DONE]")
+                                            # Send final done signal only if content was received
+                                            if content_received:
+                                                yield ChatResponse(
+                                                    content="",
+                                                    done=True,
+                                                    meta={
+                                                        "provider": ModelProvider.CHATGPT_PRO,
+                                                        "model": model,
+                                                        "chatgpt_pro": True,
+                                                        "gpt5_pro": True,
+                                                        "reasoning_effort": "medium",
+                                                        "streaming_complete": True
+                                                    }
+                                                )
+                                            break
+                                        try:
+                                            data = json.loads(line[6:])
+                                            if 'choices' in data and data['choices']:
+                                                delta = data['choices'][0].get('delta', {})
+                                                content = delta.get('content', '')
+                                                if content:
+                                                    content_received = True
+                                                    yield ChatResponse(
+                                                        content=content,
+                                                        done=False,
+                                                        meta={
+                                                            "provider": ModelProvider.CHATGPT_PRO,
+                                                            "model": model,
+                                                            "chatgpt_pro": True,
+                                                            "gpt5_pro": True,
+                                                            "reasoning_effort": "medium"
+                                                        }
+                                                    )
+                                                # Check for finish_reason
+                                                finish_reason = data['choices'][0].get('finish_reason')
+                                                if finish_reason:
+                                                    self.logger.info(f"🔍 GPT-5 Pro: Finish reason: {finish_reason}")
+                                        except json.JSONDecodeError as json_err:
+                                            self.logger.warning(f"🔍 GPT-5 Pro: JSON decode error: {json_err}, line: {line}")
+                                            continue
+                            except Exception as stream_err:
+                                self.logger.error(f"🔍 GPT-5 Pro: Streaming error: {stream_err}")
+                                # Fallback to non-streaming if streaming fails
+                                if not content_received:
+                                    self.logger.info(f"🔍 GPT-5 Pro: Falling back to non-streaming mode")
+                                    # Re-read the response as non-streaming
+                                    response_data = await resp.json()
+                                    if 'choices' in response_data and response_data['choices']:
+                                        content = response_data['choices'][0]['message']['content']
+                                        yield ChatResponse(
+                                            content=content,
+                                            done=True,
+                                            meta={
+                                                "provider": ModelProvider.CHATGPT_PRO,
+                                                "model": model,
+                                                "chatgpt_pro": True,
+                                                "gpt5_pro": True,
+                                                "reasoning_effort": "medium",
+                                                "fallback_mode": True
+                                            }
+                                        )
+                        else:
+                            # Non-streaming response
+                            response_data = await resp.json()
+                            if 'choices' in response_data and response_data['choices']:
+                                content = response_data['choices'][0]['message']['content']
+                                # Send final response
+                                yield ChatResponse(
+                                    content=content,
+                                    done=True,
+                                    meta={
+                                        "provider": ModelProvider.CHATGPT_PRO,
+                                        "model": model,
+                                        "chatgpt_pro": True,
+                                        "gpt5_pro": True,
+                                        "reasoning_effort": "medium"
+                                    }
+                                )
+                            else:
+                                # No content in response
+                                self.logger.error(f"GPT-5 API: No content in response: {response_data}")
+                                yield ChatResponse(
+                                    content="No response received from GPT-5 Pro",
+                                    done=True,
+                                    error=True,
+                                    meta={"provider": ModelProvider.CHATGPT_PRO, "model": model}
+                                )
             except Exception as e:
                 self.logger.error(f"GPT-5 generation error: {e}")
                 yield ChatResponse(
