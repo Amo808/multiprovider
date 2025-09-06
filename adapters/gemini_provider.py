@@ -272,122 +272,55 @@ class GeminiAdapter(BaseAdapter):
                         )
                     return
 
-                # Handle streaming response - simplify to avoid hanging
-                response_buffer = b""
-                heartbeat_count = 0
+                # Handle streaming response - Gemini sends NDJSON stream
+                # Each line is a separate JSON object with incremental content
+                buffer = b""
                 
                 async for chunk in response.content.iter_chunked(1024):
-                    response_buffer += chunk
-                    heartbeat_count += 1
+                    buffer += chunk
                     
-                    # Send periodic heartbeats while downloading
-                    if heartbeat_count % 5 == 0:  # Every 5 chunks
-                        yield ChatResponse(
-                            content="",
-                            done=False,
-                            meta={
-                                "tokens_in": input_tokens,
-                                "tokens_out": 0,
-                                "provider": ModelProvider.GEMINI,
-                                "model": model,
-                                "heartbeat": True
-                            }
-                        )
-                
-                # Parse complete response after all chunks received
-                try:
-                    response_text = response_buffer.decode('utf-8', errors='ignore').strip()
-                    self.logger.debug(f"Complete response received, length: {len(response_text)}")
-                    
-                    # Parse JSON (array or single object)
-                    if response_text.startswith('['):
-                        json_responses = json.loads(response_text)
-                    else:
-                        json_responses = [json.loads(response_text)]
-                    
-                    # Process all responses and stream content gradually
-                    for json_data in json_responses:
-                        candidates = json_data.get("candidates", [])
-                        if candidates:
-                            content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
-                            if content:
-                                # Stream content gradually for better UX
-                                async for chunk_response in self._stream_content_gradually(content, accumulated_content, input_tokens, model):
-                                    yield chunk_response
-                                accumulated_content += content
+                    # Process complete lines
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+                        line_text = line.decode('utf-8', errors='ignore').strip()
+                        
+                        if not line_text:
+                            continue
                             
-                            # Check for finish reason
-                            finish_reason = candidates[0].get("finishReason")
-                            if finish_reason:
-                                self.logger.info(f"Gemini response finished with reason: {finish_reason}")
-                                if finish_reason == "MAX_TOKENS":
-                                    self.logger.warning(f"Response was truncated due to max_tokens limit.")
-                                    accumulated_content += "\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*"
+                        try:
+                            # Parse each JSON line
+                            json_response = json.loads(line_text)
+                            candidates = json_response.get("candidates", [])
+                            
+                            if candidates:
+                                candidate = candidates[0]
+                                content_part = candidate.get("content", {})
+                                parts = content_part.get("parts", [])
                                 
-                                # Send final response immediately
-                                final_output_tokens = self.estimate_tokens(accumulated_content)
-                                yield ChatResponse(
-                                    content="",
-                                    done=True,
-                                    meta={
-                                        "tokens_in": input_tokens,
-                                        "tokens_out": final_output_tokens,
-                                        "total_tokens": input_tokens + final_output_tokens,
-                                        "provider": ModelProvider.GEMINI,
-                                        "model": model
-                                    }
-                                )
-                                return
+                                if parts and "text" in parts[0]:
+                                    content = parts[0]["text"]
+                                    accumulated_content += content
+                                    
+                                    # Yield the streaming chunk immediately
+                                    yield ChatResponse(
+                                        content=content,
+                                        done=False,
+                                        meta={
+                                            "tokens_in": input_tokens,
+                                            "tokens_out": self.estimate_tokens(accumulated_content),
+                                            "provider": ModelProvider.GEMINI,
+                                            "model": model
+                                        }
+                                    )
                                 
-                except json.JSONDecodeError as e:
-                    self.logger.error(f"Failed to parse Gemini response: {e}")
-                    yield ChatResponse(
-                        error="Failed to parse response from Gemini",
-                        meta={"provider": ModelProvider.GEMINI, "model": model}
-                    )
-                    return
-                except Exception as e:
-                    self.logger.error(f"Error processing Gemini response: {e}")
-                    yield ChatResponse(
-                        error=f"Error processing response: {str(e)}",
-                        meta={"provider": ModelProvider.GEMINI, "model": model}
-                    )
-                    return
-                
-                # Final attempt if we haven't successfully parsed anything
-                if response_buffer:
-                    try:
-                        response_text = response_buffer.decode('utf-8', errors='ignore').strip()
-                        if response_text:
-                            self.logger.debug(f"Final parse attempt for response: {response_text[:200]}...")
-                            # Try parsing as any valid JSON
-                            if response_text.startswith('['):
-                                json_responses = json.loads(response_text)
-                                for json_data in json_responses:
-                                    candidates = json_data.get("candidates", [])
-                                    if candidates:
-                                        content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
-                                        if content:
-                                            accumulated_content += content
-                                            yield ChatResponse(
-                                                content=content,
-                                                done=False,
-                                                meta={
-                                                    "tokens_in": input_tokens,
-                                                    "tokens_out": self.estimate_tokens(accumulated_content),
-                                                    "provider": ModelProvider.GEMINI,
-                                                    "model": model
-                                                }
-                                            )
-                            else:
-                                json_data = json.loads(response_text)
-                                candidates = json_data.get("candidates", [])
-                                if candidates:
-                                    content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
-                                    if content:
-                                        accumulated_content += content
+                                # Check for finish reason
+                                finish_reason = candidate.get("finishReason")
+                                if finish_reason:
+                                    self.logger.info(f"Gemini response finished with reason: {finish_reason}")
+                                    if finish_reason == "MAX_TOKENS":
+                                        self.logger.warning(f"Response was truncated due to max_tokens limit.")
                                         yield ChatResponse(
-                                            content=content,
+                                            content="\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*",
                                             done=False,
                                             meta={
                                                 "tokens_in": input_tokens,
@@ -396,11 +329,60 @@ class GeminiAdapter(BaseAdapter):
                                                 "model": model
                                             }
                                         )
-                    except json.JSONDecodeError:
-                        # If we still can't parse, log the issue but don't crash
-                        self.logger.warning(f"Could not parse Gemini response after complete download. Response length: {len(response_text)}")
-                    except Exception as e:
-                        self.logger.error(f"Error in final parse attempt: {e}")
+                                    
+                                    # Send final completion signal
+                                    final_output_tokens = self.estimate_tokens(accumulated_content)
+                                    yield ChatResponse(
+                                        content="",
+                                        done=True,
+                                        meta={
+                                            "tokens_in": input_tokens,
+                                            "tokens_out": final_output_tokens,
+                                            "total_tokens": input_tokens + final_output_tokens,
+                                            "provider": ModelProvider.GEMINI,
+                                            "model": model
+                                        }
+                                    )
+                                    return
+                                    
+                        except json.JSONDecodeError as e:
+                            self.logger.warning(f"Failed to parse JSON line: {line_text[:100]}... - {e}")
+                            continue
+                        except Exception as e:
+                            self.logger.error(f"Error processing streaming response: {e}")
+                            continue
+                
+                # Process any remaining buffer content
+                if buffer:
+                    line_text = buffer.decode('utf-8', errors='ignore').strip()
+                    if line_text:
+                        try:
+                            json_response = json.loads(line_text)
+                            candidates = json_response.get("candidates", [])
+                            
+                            if candidates:
+                                candidate = candidates[0]
+                                content_part = candidate.get("content", {})
+                                parts = content_part.get("parts", [])
+                                
+                                if parts and "text" in parts[0]:
+                                    content = parts[0]["text"]
+                                    accumulated_content += content
+                                    
+                                    yield ChatResponse(
+                                        content=content,
+                                        done=False,
+                                        meta={
+                                            "tokens_in": input_tokens,
+                                            "tokens_out": self.estimate_tokens(accumulated_content),
+                                            "provider": ModelProvider.GEMINI,
+                                            "model": model
+                                        }
+                                    )
+                        except json.JSONDecodeError:
+                            self.logger.warning(f"Failed to parse final buffer: {line_text[:100]}...")
+                        except Exception as e:
+                            self.logger.error(f"Error processing final buffer: {e}")
 
         except Exception as e:
             self.logger.error(f"Error in Gemini API call: {e}")
@@ -423,46 +405,6 @@ class GeminiAdapter(BaseAdapter):
                 "model": model
             }
         )
-
-    async def _stream_content_gradually(self, content, accumulated_content, input_tokens, model):
-        """Stream content gradually to simulate real-time streaming"""
-        import asyncio
-        
-        # Split content into smaller chunks for streaming effect
-        words = content.split()
-        current_chunk = ""
-        
-        for i, word in enumerate(words):
-            current_chunk += word + " "
-            
-            # Send chunk every 3-5 words or at sentence boundaries
-            if (i + 1) % 4 == 0 or word.endswith(('.', '!', '?', '\n')):
-                yield ChatResponse(
-                    content=current_chunk.strip(),
-                    done=False,
-                    meta={
-                        "tokens_in": input_tokens,
-                        "tokens_out": self.estimate_tokens(accumulated_content + current_chunk),
-                        "provider": ModelProvider.GEMINI,
-                        "model": model
-                    }
-                )
-                current_chunk = ""
-                # Small delay to simulate typing
-                await asyncio.sleep(0.05)
-        
-        # Send any remaining content
-        if current_chunk.strip():
-            yield ChatResponse(
-                content=current_chunk.strip(),
-                done=False,
-                meta={
-                    "tokens_in": input_tokens,
-                    "tokens_out": self.estimate_tokens(accumulated_content + current_chunk),
-                    "provider": ModelProvider.GEMINI,
-                    "model": model
-                }
-            )
 
     def _process_gemini_candidate(self, candidate, accumulated_content, input_tokens, model):
         """Process a single Gemini candidate and return the content"""
