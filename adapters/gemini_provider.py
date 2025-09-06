@@ -272,46 +272,37 @@ class GeminiAdapter(BaseAdapter):
                         )
                     return
 
-                # Handle streaming response - Gemini sends complete JSON responses, not NDJSON
-                # We need to accumulate the complete response before attempting to parse
+                # Handle streaming response - Gemini sends responses in chunks
+                # We need to process chunks as they arrive for true streaming experience
                 response_buffer = b""
-                last_chunk_size = 0
+                last_processed_length = 0
                 response_complete = False
                 
-                async for chunk in response.content.iter_chunked(8192):
+                async for chunk in response.content.iter_chunked(1024):  # Smaller chunks for faster streaming
                     response_buffer += chunk
-                    current_size = len(response_buffer)
                     
-                    # Only try to parse if we haven't received new data for a bit
-                    # or if the buffer looks complete (starts with [ and ends with ])
                     try:
                         response_text = response_buffer.decode('utf-8', errors='ignore').strip()
                         
-                        # Check if this looks like a complete JSON structure
+                        # Try to parse partial responses for streaming effect
+                        # First, try to parse as complete JSON
                         is_complete_array = (response_text.startswith('[') and response_text.endswith(']'))
                         is_complete_object = (response_text.startswith('{') and response_text.endswith('}'))
                         
                         if is_complete_array or is_complete_object:
-                            # Attempt to parse the complete JSON
+                            # Parse complete response
                             if is_complete_array:
                                 json_responses = json.loads(response_text)
-                                # Process each response object in the array
                                 for json_data in json_responses:
                                     candidates = json_data.get("candidates", [])
                                     if candidates:
                                         content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
                                         if content:
+                                            # Stream content in smaller pieces for better UX
+                                            async for chunk_response in self._stream_content_gradually(content, accumulated_content, input_tokens, model):
+                                                yield chunk_response
                                             accumulated_content += content
-                                            yield ChatResponse(
-                                                content=content,
-                                                done=False,
-                                                meta={
-                                                    "tokens_in": input_tokens,
-                                                    "tokens_out": self.estimate_tokens(accumulated_content),
-                                                    "provider": ModelProvider.GEMINI,
-                                                    "model": model
-                                                }
-                                            )
+                                        
                                         # Check for finish reason
                                         finish_reason = candidates[0].get("finishReason")
                                         if finish_reason:
@@ -328,17 +319,11 @@ class GeminiAdapter(BaseAdapter):
                                 if candidates:
                                     content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
                                     if content:
+                                        # Stream content gradually for better UX
+                                        async for chunk_response in self._stream_content_gradually(content, accumulated_content, input_tokens, model):
+                                            yield chunk_response
                                         accumulated_content += content
-                                        yield ChatResponse(
-                                            content=content,
-                                            done=False,
-                                            meta={
-                                                "tokens_in": input_tokens,
-                                                "tokens_out": self.estimate_tokens(accumulated_content),
-                                                "provider": ModelProvider.GEMINI,
-                                                "model": model
-                                            }
-                                        )
+                                    
                                     # Check for finish reason
                                     finish_reason = candidates[0].get("finishReason")
                                     if finish_reason:
@@ -352,10 +337,26 @@ class GeminiAdapter(BaseAdapter):
                             # Successfully processed complete response
                             if response_complete:
                                 break
+                        else:
+                            # If we have partial data that's growing, send heartbeat to keep connection alive
+                            current_length = len(response_text)
+                            if current_length > last_processed_length and current_length > 100:
+                                # Send a heartbeat to show progress
+                                yield ChatResponse(
+                                    content="",  # Empty content for heartbeat
+                                    done=False,
+                                    meta={
+                                        "tokens_in": input_tokens,
+                                        "tokens_out": 0,
+                                        "provider": ModelProvider.GEMINI,
+                                        "model": model,
+                                        "heartbeat": True
+                                    }
+                                )
+                                last_processed_length = current_length
                             
                     except json.JSONDecodeError:
-                        # This is expected - response is not complete yet
-                        # Continue accumulating without logging warnings
+                        # This is expected while accumulating - continue without warnings
                         pass
                     except Exception as e:
                         self.logger.error(f"Error processing Gemini response: {e}")
@@ -430,6 +431,46 @@ class GeminiAdapter(BaseAdapter):
                 "model": model
             }
         )
+
+    async def _stream_content_gradually(self, content, accumulated_content, input_tokens, model):
+        """Stream content gradually to simulate real-time streaming"""
+        import asyncio
+        
+        # Split content into smaller chunks for streaming effect
+        words = content.split()
+        current_chunk = ""
+        
+        for i, word in enumerate(words):
+            current_chunk += word + " "
+            
+            # Send chunk every 3-5 words or at sentence boundaries
+            if (i + 1) % 4 == 0 or word.endswith(('.', '!', '?', '\n')):
+                yield ChatResponse(
+                    content=current_chunk.strip(),
+                    done=False,
+                    meta={
+                        "tokens_in": input_tokens,
+                        "tokens_out": self.estimate_tokens(accumulated_content + current_chunk),
+                        "provider": ModelProvider.GEMINI,
+                        "model": model
+                    }
+                )
+                current_chunk = ""
+                # Small delay to simulate typing
+                await asyncio.sleep(0.05)
+        
+        # Send any remaining content
+        if current_chunk.strip():
+            yield ChatResponse(
+                content=current_chunk.strip(),
+                done=False,
+                meta={
+                    "tokens_in": input_tokens,
+                    "tokens_out": self.estimate_tokens(accumulated_content + current_chunk),
+                    "provider": ModelProvider.GEMINI,
+                    "model": model
+                }
+            )
 
     def _process_gemini_candidate(self, candidate, accumulated_content, input_tokens, model):
         """Process a single Gemini candidate and return the content"""
