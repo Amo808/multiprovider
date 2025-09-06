@@ -273,96 +273,139 @@ class GeminiAdapter(BaseAdapter):
                     return
 
                 # Handle streaming response - Gemini sends complete JSON responses, not NDJSON
+                # We need to accumulate the complete response before attempting to parse
                 response_buffer = b""
+                last_chunk_size = 0
+                response_complete = False
+                
                 async for chunk in response.content.iter_chunked(8192):
                     response_buffer += chunk
+                    current_size = len(response_buffer)
                     
-                    # Try to parse the complete JSON response
+                    # Only try to parse if we haven't received new data for a bit
+                    # or if the buffer looks complete (starts with [ and ends with ])
                     try:
-                        response_text = response_buffer.decode('utf-8', errors='ignore')
+                        response_text = response_buffer.decode('utf-8', errors='ignore').strip()
                         
-                        # Check if we have what looks like a complete JSON array
-                        if response_text.strip().startswith('[') and response_text.strip().endswith(']'):
-                            # Parse the complete JSON response
-                            json_responses = json.loads(response_text.strip())
-                            
-                            # Process each response object in the array
-                            for json_data in json_responses:
+                        # Check if this looks like a complete JSON structure
+                        is_complete_array = (response_text.startswith('[') and response_text.endswith(']'))
+                        is_complete_object = (response_text.startswith('{') and response_text.endswith('}'))
+                        
+                        if is_complete_array or is_complete_object:
+                            # Attempt to parse the complete JSON
+                            if is_complete_array:
+                                json_responses = json.loads(response_text)
+                                # Process each response object in the array
+                                for json_data in json_responses:
+                                    candidates = json_data.get("candidates", [])
+                                    if candidates:
+                                        content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
+                                        if content:
+                                            accumulated_content += content
+                                            yield ChatResponse(
+                                                content=content,
+                                                done=False,
+                                                meta={
+                                                    "tokens_in": input_tokens,
+                                                    "tokens_out": self.estimate_tokens(accumulated_content),
+                                                    "provider": ModelProvider.GEMINI,
+                                                    "model": model
+                                                }
+                                            )
+                                        # Check for finish reason
+                                        finish_reason = candidates[0].get("finishReason")
+                                        if finish_reason:
+                                            self.logger.info(f"Gemini response finished with reason: {finish_reason}")
+                                            if finish_reason == "MAX_TOKENS":
+                                                self.logger.warning(f"Response was truncated due to max_tokens limit.")
+                                                accumulated_content += "\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*"
+                                            response_complete = True
+                                            break
+                            else:
+                                # Single JSON object
+                                json_data = json.loads(response_text)
                                 candidates = json_data.get("candidates", [])
-                                
-                                if not candidates:
-                                    continue
-                                    
-                                candidate = candidates[0]
-                                content_part = candidate.get("content", {})
-                                parts = content_part.get("parts", [])
-                                
-                                if parts and "text" in parts[0]:
-                                    content = parts[0]["text"]
-                                    accumulated_content += content
-                                    output_tokens = self.estimate_tokens(accumulated_content)
-                                    
-                                    yield ChatResponse(
-                                        content=content,
-                                        done=False,
-                                        meta={
-                                            "tokens_in": input_tokens,
-                                            "tokens_out": output_tokens,
-                                            "provider": ModelProvider.GEMINI,
-                                            "model": model
-                                        }
-                                    )
-                                
-                                # Check if finished
-                                finish_reason = candidate.get("finishReason")
-                                if finish_reason:
-                                    self.logger.info(f"Gemini response finished with reason: {finish_reason}")
-                                    if finish_reason == "MAX_TOKENS":
-                                        self.logger.warning(f"Response was truncated due to max_tokens limit.")
-                                        accumulated_content += "\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*"
-                                    return
+                                if candidates:
+                                    content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
+                                    if content:
+                                        accumulated_content += content
+                                        yield ChatResponse(
+                                            content=content,
+                                            done=False,
+                                            meta={
+                                                "tokens_in": input_tokens,
+                                                "tokens_out": self.estimate_tokens(accumulated_content),
+                                                "provider": ModelProvider.GEMINI,
+                                                "model": model
+                                            }
+                                        )
+                                    # Check for finish reason
+                                    finish_reason = candidates[0].get("finishReason")
+                                    if finish_reason:
+                                        self.logger.info(f"Gemini response finished with reason: {finish_reason}")
+                                        if finish_reason == "MAX_TOKENS":
+                                            self.logger.warning(f"Response was truncated due to max_tokens limit.")
+                                            accumulated_content += "\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*"
+                                        response_complete = True
+                                        break
                             
                             # Successfully processed complete response
-                            break
+                            if response_complete:
+                                break
                             
                     except json.JSONDecodeError:
-                        # Not a complete JSON yet, continue accumulating
-                        continue
+                        # This is expected - response is not complete yet
+                        # Continue accumulating without logging warnings
+                        pass
                     except Exception as e:
                         self.logger.error(f"Error processing Gemini response: {e}")
                         break
                 
-                # If we exit the loop without successful parsing, try one final parse attempt
-                if response_buffer:
+                # Final attempt if we haven't successfully parsed anything
+                if not response_complete and response_buffer:
                     try:
                         response_text = response_buffer.decode('utf-8', errors='ignore').strip()
                         if response_text:
-                            # Try parsing as a single JSON object
-                            json_data = json.loads(response_text)
-                            candidates = json_data.get("candidates", [])
-                            
-                            if candidates:
-                                candidate = candidates[0]
-                                content_part = candidate.get("content", {})
-                                parts = content_part.get("parts", [])
-                                
-                                if parts and "text" in parts[0]:
-                                    content = parts[0]["text"]
-                                    accumulated_content += content
-                                    output_tokens = self.estimate_tokens(accumulated_content)
-                                    
-                                    yield ChatResponse(
-                                        content=content,
-                                        done=False,
-                                        meta={
-                                            "tokens_in": input_tokens,
-                                            "tokens_out": output_tokens,
-                                            "provider": ModelProvider.GEMINI,
-                                            "model": model
-                                        }
-                                    )
-                    except json.JSONDecodeError as e:
-                        self.logger.warning(f"Failed to parse final response buffer: {e}")
+                            self.logger.debug(f"Final parse attempt for response: {response_text[:200]}...")
+                            # Try parsing as any valid JSON
+                            if response_text.startswith('['):
+                                json_responses = json.loads(response_text)
+                                for json_data in json_responses:
+                                    candidates = json_data.get("candidates", [])
+                                    if candidates:
+                                        content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
+                                        if content:
+                                            accumulated_content += content
+                                            yield ChatResponse(
+                                                content=content,
+                                                done=False,
+                                                meta={
+                                                    "tokens_in": input_tokens,
+                                                    "tokens_out": self.estimate_tokens(accumulated_content),
+                                                    "provider": ModelProvider.GEMINI,
+                                                    "model": model
+                                                }
+                                            )
+                            else:
+                                json_data = json.loads(response_text)
+                                candidates = json_data.get("candidates", [])
+                                if candidates:
+                                    content = self._process_gemini_candidate(candidates[0], accumulated_content, input_tokens, model)
+                                    if content:
+                                        accumulated_content += content
+                                        yield ChatResponse(
+                                            content=content,
+                                            done=False,
+                                            meta={
+                                                "tokens_in": input_tokens,
+                                                "tokens_out": self.estimate_tokens(accumulated_content),
+                                                "provider": ModelProvider.GEMINI,
+                                                "model": model
+                                            }
+                                        )
+                    except json.JSONDecodeError:
+                        # If we still can't parse, log the issue but don't crash
+                        self.logger.warning(f"Could not parse Gemini response after complete download. Response length: {len(response_text)}")
                     except Exception as e:
                         self.logger.error(f"Error in final parse attempt: {e}")
 
@@ -387,6 +430,16 @@ class GeminiAdapter(BaseAdapter):
                 "model": model
             }
         )
+
+    def _process_gemini_candidate(self, candidate, accumulated_content, input_tokens, model):
+        """Process a single Gemini candidate and return the content"""
+        content_part = candidate.get("content", {})
+        parts = content_part.get("parts", [])
+        
+        if parts and "text" in parts[0]:
+            content = parts[0]["text"]
+            return content
+        return None
 
     async def get_available_models(self) -> List[ModelInfo]:
         """Get list of available models from Gemini"""
