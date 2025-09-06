@@ -217,6 +217,15 @@ class GeminiAdapter(BaseAdapter):
         accumulated_content = ""
         output_tokens = 0
         
+        # Check if API key is available
+        if not self.api_key:
+            self.logger.error("Gemini API key not configured")
+            yield ChatResponse(
+                error="Gemini API key not configured. Please add your API key in settings.",
+                meta={"provider": ModelProvider.GEMINI, "model": model}
+            )
+            return
+
         try:
             # Use streaming or non-streaming endpoint
             if params.stream:
@@ -225,7 +234,7 @@ class GeminiAdapter(BaseAdapter):
                 url = f"{self.base_url}/v1beta/models/{model}:generateContent?key={self.api_key}"
             
             # Log URL for debugging (hide API key)
-            safe_url = url.replace(self.api_key, "***API_KEY***")
+            safe_url = url.replace(self.api_key, "***API_KEY***") if self.api_key else url
             self.logger.info(f"Making request to: {safe_url}")
             
             async with self.session.post(url, json=payload) as response:
