@@ -311,7 +311,20 @@ class GeminiAdapter(BaseAdapter):
                                                 self.logger.warning(f"Response was truncated due to max_tokens limit.")
                                                 accumulated_content += "\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*"
                                             response_complete = True
-                                            break
+                                            # Send final response immediately when finished
+                                            final_output_tokens = self.estimate_tokens(accumulated_content)
+                                            yield ChatResponse(
+                                                content="",
+                                                done=True,
+                                                meta={
+                                                    "tokens_in": input_tokens,
+                                                    "tokens_out": final_output_tokens,
+                                                    "total_tokens": input_tokens + final_output_tokens,
+                                                    "provider": ModelProvider.GEMINI,
+                                                    "model": model
+                                                }
+                                            )
+                                            return  # Exit immediately after sending final response
                             else:
                                 # Single JSON object
                                 json_data = json.loads(response_text)
@@ -332,7 +345,20 @@ class GeminiAdapter(BaseAdapter):
                                             self.logger.warning(f"Response was truncated due to max_tokens limit.")
                                             accumulated_content += "\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*"
                                         response_complete = True
-                                        break
+                                        # Send final response immediately when finished
+                                        final_output_tokens = self.estimate_tokens(accumulated_content)
+                                        yield ChatResponse(
+                                            content="",
+                                            done=True,
+                                            meta={
+                                                "tokens_in": input_tokens,
+                                                "tokens_out": final_output_tokens,
+                                                "total_tokens": input_tokens + final_output_tokens,
+                                                "provider": ModelProvider.GEMINI,
+                                                "model": model
+                                            }
+                                        )
+                                        return  # Exit immediately after sending final response
                             
                             # Successfully processed complete response
                             if response_complete:
@@ -416,21 +442,22 @@ class GeminiAdapter(BaseAdapter):
                 error=f"API Error: {str(e)}",
                 meta={"provider": ModelProvider.GEMINI, "model": model}
             )
+            return
 
-        # Final response with complete usage
-        final_output_tokens = self.estimate_tokens(accumulated_content) if accumulated_content else output_tokens
-        
-        yield ChatResponse(
-            content="",
-            done=True,
-            meta={
-                "tokens_in": input_tokens,
-                "tokens_out": final_output_tokens,
-                "total_tokens": input_tokens + final_output_tokens,
-                "provider": ModelProvider.GEMINI,
-                "model": model
-            }
-        )
+        # If we reach here without completing, send final response
+        if not response_complete:
+            final_output_tokens = self.estimate_tokens(accumulated_content) if accumulated_content else output_tokens
+            yield ChatResponse(
+                content="",
+                done=True,
+                meta={
+                    "tokens_in": input_tokens,
+                    "tokens_out": final_output_tokens,
+                    "total_tokens": input_tokens + final_output_tokens,
+                    "provider": ModelProvider.GEMINI,
+                    "model": model
+                }
+            )
 
     async def _stream_content_gradually(self, content, accumulated_content, input_tokens, model):
         """Stream content gradually to simulate real-time streaming"""
