@@ -328,10 +328,9 @@ class ProviderManager:
         if not config:
             return False
             
-        # Special handling for API key - update .env file
+        # Special handling for API key - update config object only, not .env file
         if 'api_key' in updates:
             api_key = updates['api_key']
-            await self.update_env_file(provider_id, api_key)
             # Update the config object
             if hasattr(config, 'api_key'):
                 config.api_key = api_key
@@ -350,6 +349,7 @@ class ProviderManager:
             ModelProvider.OPENAI: OpenAIAdapter,
             ModelProvider.CHATGPT_PRO: ChatGPTProAdapter,
             ModelProvider.ANTHROPIC: AnthropicAdapter,
+            ModelProvider.GEMINI: GeminiAdapter,
         }
         
         adapter_class = adapter_classes.get(provider_id)
