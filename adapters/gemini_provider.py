@@ -162,18 +162,6 @@ class GeminiAdapter(BaseAdapter):
         if params is None:
             params = GenerationParams()
 
-        # Check API key
-        if not self.api_key:
-            self.logger.error("GEMINI_API_KEY not found in environment variables")
-            yield ChatResponse(
-                error="GEMINI_API_KEY not configured. Please set the API key in environment variables.",
-                meta={"provider": ModelProvider.GEMINI, "model": model}
-            )
-            return
-        
-        # Log API key status (first 10 chars for security)
-        self.logger.info(f"Using Gemini API key: {self.api_key[:10]}..." if len(self.api_key) > 10 else "API key too short")
-
         await self._ensure_session()
         
         # Convert messages to Gemini API format

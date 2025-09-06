@@ -155,8 +155,8 @@ class ProviderManager:
             ModelProvider.GEMINI: ProviderConfig(
                 id=ModelProvider.GEMINI,
                 name="Google Gemini",
-                enabled=bool(os.getenv("GEMINI_API_KEY")),
-                api_key=os.getenv("GEMINI_API_KEY"),
+                enabled=False,  # Will be set from config file
+                api_key=None,   # Will be set from config file or environment
                 base_url="https://generativelanguage.googleapis.com"
             ),
             ModelProvider.OLLAMA: ProviderConfig(
