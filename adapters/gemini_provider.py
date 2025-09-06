@@ -17,6 +17,12 @@ class GeminiAdapter(BaseAdapter):
         self.base_url = config.base_url or "https://generativelanguage.googleapis.com"
         self.base_url = self.base_url.rstrip("/")
         self.session = None
+        
+        # Debug: Check if API key is available
+        if self.api_key:
+            self.logger.info(f"Gemini API key loaded successfully (length: {len(self.api_key)})")
+        else:
+            self.logger.error("Gemini API key not found in environment variables!")
 
     @property
     def name(self) -> str:
@@ -156,6 +162,18 @@ class GeminiAdapter(BaseAdapter):
         if params is None:
             params = GenerationParams()
 
+        # Check API key
+        if not self.api_key:
+            self.logger.error("GEMINI_API_KEY not found in environment variables")
+            yield ChatResponse(
+                error="GEMINI_API_KEY not configured. Please set the API key in environment variables.",
+                meta={"provider": ModelProvider.GEMINI, "model": model}
+            )
+            return
+        
+        # Log API key status (first 10 chars for security)
+        self.logger.info(f"Using Gemini API key: {self.api_key[:10]}..." if len(self.api_key) > 10 else "API key too short")
+
         await self._ensure_session()
         
         # Convert messages to Gemini API format
@@ -217,6 +235,10 @@ class GeminiAdapter(BaseAdapter):
                 url = f"{self.base_url}/v1beta/models/{model}:streamGenerateContent?key={self.api_key}"
             else:
                 url = f"{self.base_url}/v1beta/models/{model}:generateContent?key={self.api_key}"
+            
+            # Log URL for debugging (hide API key)
+            safe_url = url.replace(self.api_key, "***API_KEY***")
+            self.logger.info(f"Making request to: {safe_url}")
             
             async with self.session.post(url, json=payload) as response:
                 if response.status != 200:
