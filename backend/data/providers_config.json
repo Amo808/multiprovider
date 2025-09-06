@@ -7,7 +7,7 @@
       "endpoint": null,
       "region": null,
       "api_version": null,
-      "extra_params": null,
+      "extra_params": {},
       "api_key_env": "DEEPSEEK_API_KEY"
     },
     "openai": {
@@ -17,7 +17,7 @@
       "endpoint": null,
       "region": null,
       "api_version": null,
-      "extra_params": null,
+      "extra_params": {},
       "api_key_env": "OPENAI_API_KEY"
     },
     "chatgpt_pro": {
@@ -34,22 +34,22 @@
     },
     "anthropic": {
       "name": "Anthropic",
-      "enabled": true,
+      "enabled": false,
       "base_url": "https://api.anthropic.com",
       "endpoint": null,
       "region": null,
       "api_version": null,
-      "extra_params": null,
+      "extra_params": {},
       "api_key_env": "ANTHROPIC_API_KEY"
     },
     "gemini": {
       "name": "Google Gemini",
-      "enabled": false,
+      "enabled": true,
       "base_url": "https://generativelanguage.googleapis.com",
       "endpoint": null,
       "region": null,
       "api_version": null,
-      "extra_params": null,
+      "extra_params": {},
       "api_key_env": "GEMINI_API_KEY"
     },
     "ollama": {
@@ -59,7 +59,7 @@
       "endpoint": null,
       "region": null,
       "api_version": null,
-      "extra_params": null,
+      "extra_params": {},
       "api_key_env": "OLLAMA_API_KEY"
     },
     "groq": {
@@ -69,7 +69,7 @@
       "endpoint": null,
       "region": null,
       "api_version": null,
-      "extra_params": null,
+      "extra_params": {},
       "api_key_env": "GROQ_API_KEY"
     },
     "mistral": {
@@ -79,7 +79,7 @@
       "endpoint": null,
       "region": null,
       "api_version": null,
-      "extra_params": null,
+      "extra_params": {},
       "api_key_env": "MISTRAL_API_KEY"
     }
   }

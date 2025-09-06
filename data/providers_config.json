@@ -44,7 +44,7 @@
     },
     "gemini": {
       "name": "Google Gemini",
-      "enabled": false,
+      "enabled": true,
       "base_url": "https://generativelanguage.googleapis.com",
       "endpoint": null,
       "region": null,

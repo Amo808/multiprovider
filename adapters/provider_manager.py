@@ -21,6 +21,7 @@ from .deepseek_provider import DeepSeekAdapter
 from .openai_provider import OpenAIAdapter
 from .chatgpt_pro_provider import ChatGPTProAdapter
 from .anthropic_provider import AnthropicAdapter
+from .gemini_provider import GeminiAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +223,7 @@ class ProviderManager:
             ModelProvider.OPENAI: OpenAIAdapter,
             ModelProvider.CHATGPT_PRO: ChatGPTProAdapter,
             ModelProvider.ANTHROPIC: AnthropicAdapter,
+            ModelProvider.GEMINI: GeminiAdapter,
             # TODO: Add more providers
         }
         
