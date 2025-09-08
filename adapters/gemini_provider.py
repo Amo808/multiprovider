@@ -44,7 +44,8 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Most powerful thinking model with advanced reasoning and multimodal understanding"
+                description="Most powerful thinking model with advanced reasoning and multimodal understanding",
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00}  # Per million tokens (<=200k prompts)
             ),
             # Gemini 2.5 Flash - лучшее соотношение цена/качество
             ModelInfo(
@@ -59,7 +60,8 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Best price-performance with adaptive thinking and comprehensive capabilities"
+                description="Best price-performance with adaptive thinking and comprehensive capabilities",
+                pricing={"input_tokens": 0.30, "output_tokens": 2.50}  # Per million tokens
             ),
             # Gemini 2.5 Flash Lite - самая экономичная
             ModelInfo(
@@ -74,7 +76,8 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Most cost-effective model with high throughput and low latency"
+                description="Most cost-effective model with high throughput and low latency",
+                pricing={"input_tokens": 0.10, "output_tokens": 0.40}  # Per million tokens
             ),
             # Gemini 2.0 Flash - новое поколение
             ModelInfo(
@@ -89,7 +92,8 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Next-generation features with speed and real-time streaming"
+                description="Next-generation features with speed and real-time streaming",
+                pricing={"input_tokens": 0.10, "output_tokens": 0.40}  # Per million tokens
             ),
             # Gemini 1.5 Pro - устаревшая но мощная
             ModelInfo(
@@ -104,7 +108,8 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Complex reasoning tasks requiring greater intelligence (legacy)"
+                description="Complex reasoning tasks requiring greater intelligence (legacy)",
+                pricing={"input_tokens": 1.25, "output_tokens": 5.00}  # Per million tokens (<=128k prompts)
             ),
             # Gemini 1.5 Flash - устаревшая но быстрая
             ModelInfo(
@@ -119,7 +124,8 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Fast and versatile performance across diverse tasks (legacy)"
+                description="Fast and versatile performance across diverse tasks (legacy)",
+                pricing={"input_tokens": 0.075, "output_tokens": 0.30}  # Per million tokens (<=128k prompts)
             )
         ]
 
@@ -255,12 +261,15 @@ class GeminiAdapter(BaseAdapter):
                         content = candidates[0]["content"]["parts"][0]["text"]
                         usage_metadata = data.get("usageMetadata", {})
                         
+                        tokens_in = usage_metadata.get("promptTokenCount", input_tokens)
+                        tokens_out = usage_metadata.get("candidatesTokenCount", self.estimate_tokens(content))
                         yield ChatResponse(
                             content=content,
                             done=True,
                             meta={
-                                "tokens_in": usage_metadata.get("promptTokenCount", input_tokens),
-                                "tokens_out": usage_metadata.get("candidatesTokenCount", self.estimate_tokens(content)),
+                                "tokens_in": tokens_in,
+                                "tokens_out": tokens_out,
+                                "estimated_cost": self._calculate_cost(tokens_in, tokens_out, model),
                                 "provider": ModelProvider.GEMINI,
                                 "model": model
                             }
@@ -315,12 +324,14 @@ class GeminiAdapter(BaseAdapter):
                                                 accumulated_content += content
                                                 
                                                 # Yield the streaming chunk immediately
+                                                tokens_out = self.estimate_tokens(accumulated_content)
                                                 yield ChatResponse(
                                                     content=content,
                                                     done=False,
                                                     meta={
                                                         "tokens_in": input_tokens,
-                                                        "tokens_out": self.estimate_tokens(accumulated_content),
+                                                        "tokens_out": tokens_out,
+                                                        "estimated_cost": self._calculate_cost(input_tokens, tokens_out, model),
                                                         "provider": ModelProvider.GEMINI,
                                                         "model": model
                                                     }
@@ -332,12 +343,14 @@ class GeminiAdapter(BaseAdapter):
                                                 self.logger.info(f"Gemini response finished with reason: {finish_reason}")
                                                 if finish_reason == "MAX_TOKENS":
                                                     self.logger.warning(f"Response was truncated due to max_tokens limit.")
+                                                    tokens_out = self.estimate_tokens(accumulated_content)
                                                     yield ChatResponse(
                                                         content="\n\n⚠️ *Response was truncated due to token limit. You can increase max_tokens in settings for longer responses.*",
                                                         done=False,
                                                         meta={
                                                             "tokens_in": input_tokens,
-                                                            "tokens_out": self.estimate_tokens(accumulated_content),
+                                                            "tokens_out": tokens_out,
+                                                            "estimated_cost": self._calculate_cost(input_tokens, tokens_out, model),
                                                             "provider": ModelProvider.GEMINI,
                                                             "model": model
                                                         }
@@ -352,6 +365,7 @@ class GeminiAdapter(BaseAdapter):
                                                         "tokens_in": input_tokens,
                                                         "tokens_out": final_output_tokens,
                                                         "total_tokens": input_tokens + final_output_tokens,
+                                                        "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
                                                         "provider": ModelProvider.GEMINI,
                                                         "model": model
                                                     }
@@ -395,6 +409,7 @@ class GeminiAdapter(BaseAdapter):
                 "tokens_in": input_tokens,
                 "tokens_out": final_output_tokens,
                 "total_tokens": input_tokens + final_output_tokens,
+                "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
                 "provider": ModelProvider.GEMINI,
                 "model": model
             }
@@ -413,6 +428,28 @@ class GeminiAdapter(BaseAdapter):
     async def get_available_models(self) -> List[ModelInfo]:
         """Get list of available models from Gemini"""
         return self.supported_models
+
+    def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
+        """Calculate estimated cost based on Gemini model pricing"""
+        # Find pricing for this model
+        model_pricing = None
+        for model_info in self.supported_models:
+            if model_info.id == model:
+                model_pricing = getattr(model_info, 'pricing', None)
+                break
+        
+        if not model_pricing:
+            # Fallback pricing for unknown models (use Flash pricing)
+            model_pricing = {"input_tokens": 0.30, "output_tokens": 2.50}
+            
+        # Calculate cost per million tokens
+        input_cost_per_million = model_pricing["input_tokens"]
+        output_cost_per_million = model_pricing["output_tokens"]
+        
+        input_cost = (input_tokens / 1_000_000) * input_cost_per_million
+        output_cost = (output_tokens / 1_000_000) * output_cost_per_million
+        
+        return round(input_cost + output_cost, 6)
 
     def estimate_tokens(self, text: str) -> int:
         """Estimate token count (rough approximation for Gemini)"""
