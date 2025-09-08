@@ -1,0 +1,32 @@
+# Environment Variables for Render Deployment
+# Add these in Render Dashboard -> Service -> Environment
+
+# Required API Keys (set these in Render dashboard):
+OPENAI_API_KEY=your_actual_openai_api_key
+CHATGPT_PRO_API_KEY=your_actual_chatgpt_pro_api_key  
+DEEPSEEK_API_KEY=your_actual_deepseek_api_key
+GEMINI_API_KEY=your_actual_gemini_api_key
+
+# Optional API Keys:
+ANTHROPIC_API_KEY=your_actual_anthropic_api_key
+GROQ_API_KEY=your_actual_groq_api_key
+MISTRAL_API_KEY=your_actual_mistral_api_key
+OLLAMA_API_KEY=
+
+# Application Configuration (already set in render.yaml):
+PORT=10000
+HOST=0.0.0.0
+NODE_ENV=production
+PYTHONUNBUFFERED=1
+DEBUG=False
+
+# Database Configuration:
+DATABASE_URL=sqlite:///./data/conversations.db
+LOG_LEVEL=INFO
+
+# Instructions:
+# 1. Go to your Render service dashboard
+# 2. Click on "Environment" tab
+# 3. Add each variable above with your actual API keys
+# 4. Click "Save Changes"
+# 5. Service will automatically redeploy
