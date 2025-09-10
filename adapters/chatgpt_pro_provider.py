@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class ChatGPTProAdapter(OpenAIAdapter):
-    """ChatGPT Pro Provider with Deep Research and o1 Pro Mode"""
+    """ChatGPT Pro Provider with Deep Research and o1 Pro Mode - Render Optimized"""
     
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
@@ -179,10 +179,10 @@ class ChatGPTProAdapter(OpenAIAdapter):
             # FORCE STREAMING for GPT-5 to avoid hanging
             payload["stream"] = True
             
-            # Limit max_tokens for very long inputs to avoid timeouts
-            max_tokens = params.max_tokens if params.max_tokens else 16384
-            if max_tokens > 32768:  # Cap for stability
-                max_tokens = 32768
+            # RENDER OPTIMIZATION: Reduce max_tokens for hosting limitations
+            max_tokens = params.max_tokens if params.max_tokens else 8192  # Reduced from 16384
+            if max_tokens > 16384:  # Reduced cap for Render stability
+                max_tokens = 16384
             payload["max_completion_tokens"] = max_tokens
             
             # Use more conservative temperature for long texts
@@ -191,15 +191,15 @@ class ChatGPTProAdapter(OpenAIAdapter):
                 temperature = 1.0
             payload["temperature"] = temperature
             
-            # GPT-5 Pro reasoning parameters - adjusted for long content
-            payload["reasoning_effort"] = "medium"  # Use medium instead of high for long texts
-            payload["verbosity"] = 2  # Lower verbosity to reduce processing time
+            # RENDER OPTIMIZATION: Use lighter reasoning for faster response
+            payload["reasoning_effort"] = "low"  # Changed from "medium" for Render
+            payload["verbosity"] = 1  # Reduced verbosity to speed up
             
             # GPT-5 doesn't support these parameters:
             # - top_p (causes error)
             # - frequency_penalty 
             # - presence_penalty
-            self.logger.info(f"🔍 GPT-5 payload (filtered, FORCED STREAMING): {json.dumps(payload, indent=2)}")
+            self.logger.info(f"🔍 GPT-5 payload (RENDER OPTIMIZED): {json.dumps(payload, indent=2)}")
             
         else:
             # Other models (o1, o3, legacy models) - use standard parameters
@@ -227,9 +227,24 @@ class ChatGPTProAdapter(OpenAIAdapter):
         params: GenerationParams = None,
         **kwargs
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Enhanced generation with Pro features and proper parameter handling"""
+        """Enhanced generation with Pro features and Render optimization"""
         if params is None:
             params = GenerationParams()
+
+        # Check API key first
+        if not self.api_key or self.api_key == "your_api_key_here":
+            self.logger.error(f"🚨 [GPT-5] No valid API key configured for ChatGPT Pro")
+            yield ChatResponse(
+                content="❌ **ChatGPT Pro API Key Required**\n\nPlease configure your ChatGPT Pro API key in the settings to use GPT-5 Pro features.",
+                done=True,
+                error=True,
+                meta={
+                    "provider": ModelProvider.CHATGPT_PRO,
+                    "model": model,
+                    "error": "missing_api_key"
+                }
+            )
+            return
 
         # EARLY DEBUGGING: Log entry point
         total_input_length = sum(len(msg.content) for msg in messages)
@@ -253,30 +268,29 @@ class ChatGPTProAdapter(OpenAIAdapter):
                 },
                 stage_message="🔍 **Deep Research Mode** - Pro research capabilities activated..."
             )
-            
-            # Enhanced Pro research stages
-            research_stages = [
-                "🔍 Analyzing query with Pro capabilities...",
-                "🌐 Accessing latest information sources...",
-                "📚 Cross-referencing multiple databases...",
-                "🧠 Advanced reasoning and synthesis...",
-                "📝 Generating comprehensive response...",
-            ]
-            
-            for i, stage in enumerate(research_stages):
-                yield ChatResponse(
-                    content="",  # No content for stage events
-                    done=False,
-                    meta={
-                        "provider": ModelProvider.CHATGPT_PRO,
-                        "model": model,
-                        "deep_research": True,
-                        "stage": f"research_{i+1}",
-                        "progress": (i+1) / len(research_stages)
-                    },
-                    stage_message=stage
-                )
-                await asyncio.sleep(2)  # Simulate research time
+                 # Enhanced Pro research stages - reduced delays for Render
+        research_stages = [
+            "🔍 Analyzing query with Pro capabilities...",
+            "🌐 Accessing latest information sources...",
+            "📚 Cross-referencing multiple databases...", 
+            "🧠 Advanced reasoning and synthesis...",
+            "📝 Generating comprehensive response...",
+        ]
+        
+        for i, stage in enumerate(research_stages):
+            yield ChatResponse(
+                content="",  # No content for stage events
+                done=False,
+                meta={
+                    "provider": ModelProvider.CHATGPT_PRO,
+                    "model": model,
+                    "deep_research": True,
+                    "stage": f"research_{i+1}",
+                    "progress": (i+1) / len(research_stages)
+                },
+                stage_message=stage
+            )
+            await asyncio.sleep(0.5)  # Reduced delay for production
 
         # Enhanced Pro mode indication
         if model == "o1-pro":
@@ -293,24 +307,27 @@ class ChatGPTProAdapter(OpenAIAdapter):
         elif model == "gpt-5":
             # GPT-5 Pro mode with enhanced reasoning - IMMEDIATELY send status
             self.logger.info(f"🚀 [GPT-5] Starting GPT-5 Pro processing for {total_input_length} chars")
+            
+            # RENDER WARNING: Inform about hosting limitations
             yield ChatResponse(
-                content="🚀 **GPT-5 Pro Mode Engaged**\n\nInitializing advanced reasoning capabilities...\n",
+                content="🚀 **GPT-5 Pro Mode Engaged**\n\n⚠️ *Running on Render hosting with shorter timeouts. For best GPT-5 experience, consider local setup.*\n\nInitializing advanced reasoning capabilities...\n",
                 done=False,
                 meta={
                     "provider": ModelProvider.CHATGPT_PRO,
                     "model": "gpt-5-pro",
                     "pro_mode": True,
                     "extended_reasoning": True,
-                    "reasoning_effort": "high",
-                    "input_length": total_input_length
+                    "reasoning_effort": "low",  # Reduced for Render
+                    "input_length": total_input_length,
+                    "render_optimized": True
                 }
             )
 
         # Delegate to parent OpenAI implementation with special handling for GPT-5
         if model == "gpt-5":
-            # EARLY WARNING for large texts
+            # EARLY WARNING for large texts and Render hosting
             if total_input_length > 30000:
-                self.logger.warning(f"⚠️ [GPT-5] Large input detected: {total_input_length} chars - may take several minutes")
+                self.logger.warning(f"⚠️ [GPT-5] Large input detected: {total_input_length} chars - may exceed Render limits")
                 yield ChatResponse(
                     content="",
                     done=False,
@@ -318,9 +335,10 @@ class ChatGPTProAdapter(OpenAIAdapter):
                         "provider": ModelProvider.CHATGPT_PRO,
                         "model": model,
                         "processing": True,
-                        "large_input": True
+                        "large_input": True,
+                        "render_warning": True
                     },
-                    stage_message=f"⚠️ Large text detected ({total_input_length:,} chars). Processing may take 3-5 minutes. Please wait..."
+                    stage_message=f"⚠️ Large text ({total_input_length:,} chars) on Render hosting. May timeout after 1-2 minutes. Consider shorter prompts or local setup."
                 )
             
             # Use our custom payload preparation for GPT-5 Pro
@@ -341,12 +359,12 @@ class ChatGPTProAdapter(OpenAIAdapter):
             input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in payload["messages"]])
             input_length = len(input_text)
             
-            # Dynamic timeout based on input length (longer texts need more time)
-            base_timeout = 120  # 2 minutes base
+            # RENDER OPTIMIZED: Shorter timeouts for hosting limitations
+            base_timeout = 60  # 1 minute base for Render
             if input_length > 50000:  # Very long text (>50k chars)
-                timeout_seconds = 600  # 10 minutes
+                timeout_seconds = 180  # 3 minutes max for Render
             elif input_length > 20000:  # Long text (>20k chars)
-                timeout_seconds = 300  # 5 minutes
+                timeout_seconds = 120  # 2 minutes for Render
             else:
                 timeout_seconds = base_timeout
             
@@ -370,19 +388,20 @@ class ChatGPTProAdapter(OpenAIAdapter):
             response_received = False
             self.logger.info(f"🔍 [GPT-5] Starting hang detection monitor at {start_time}")
             
-            # Simplified monitoring - no async generator, just background task
+            # Simplified monitoring for Render - shorter timeout
             async def background_monitoring():
                 """Background task for monitoring and UI updates"""
                 nonlocal hang_detected, response_received
-                check_interval = 30  # Check every 30 seconds
+                check_interval = 15  # Check every 15 seconds for Render
                 await asyncio.sleep(check_interval)
                 
                 while not response_received and not hang_detected:
                     elapsed = asyncio.get_event_loop().time() - start_time
                     self.logger.info(f"🔍 [GPT-5] Monitor: {elapsed:.1f}s elapsed, response_received={response_received}")
                     
-                    if elapsed > 180:  # After 3 minutes - timeout
-                        self.logger.error(f"🚨 [GPT-5] Timeout after {elapsed:.1f}s")
+                    # RENDER OPTIMIZATION: Shorter timeout for hosting limits
+                    if elapsed > 90:  # After 1.5 minutes - timeout for Render
+                        self.logger.error(f"🚨 [GPT-5] Render timeout after {elapsed:.1f}s")
                         hang_detected = True
                         return
                     
@@ -408,13 +427,14 @@ class ChatGPTProAdapter(OpenAIAdapter):
                         if hang_detected:
                             self.logger.error(f"🚨 [GPT-5] Request was marked as hung, aborting")
                             yield ChatResponse(
-                                content="❌ Request timeout - GPT-5 Pro took too long to respond. This may be due to high server load or a very complex request. Please try again with a shorter prompt or try later.",
+                                content="⚠️ **Request timeout on Render hosting**\n\nGPT-5 Pro requests can take 2-5 minutes, but Render has shorter limits. Try:\n• Use shorter prompts\n• Try GPT-4o or o1-mini instead\n• Or use locally for long GPT-5 sessions",
                                 done=True,
                                 error=True,
                                 meta={
                                     "provider": ModelProvider.CHATGPT_PRO,
                                     "model": model,
-                                    "timeout": True
+                                    "timeout": True,
+                                    "render_limitation": True
                                 }
                             )
                             return
@@ -449,9 +469,9 @@ class ChatGPTProAdapter(OpenAIAdapter):
                                 stage_message="🔄 GPT-5 Pro is generating response..."
                             )
                             
-                            # Start periodic heartbeat to keep connection alive
+                            # Start periodic heartbeat to keep connection alive - more frequent for Render
                             last_heartbeat = asyncio.get_event_loop().time()
-                            heartbeat_interval = 10  # Send heartbeat every 10 seconds
+                            heartbeat_interval = 5  # Send heartbeat every 5 seconds for Render stability
                             
                             first_content_chunk = True
                             content_received = False
@@ -512,7 +532,7 @@ class ChatGPTProAdapter(OpenAIAdapter):
                                                         "model": model,
                                                         "chatgpt_pro": True,
                                                         "gpt5_pro": True,
-                                                        "reasoning_effort": "medium"
+                                                        "reasoning_effort": "low"  # Updated for Render
                                                     }
                                                 )
                                     except json.JSONDecodeError as e:
@@ -529,7 +549,7 @@ class ChatGPTProAdapter(OpenAIAdapter):
                                         "model": model,
                                         "chatgpt_pro": True,
                                         "gpt5_pro": True,
-                                        "reasoning_effort": "medium"
+                                        "reasoning_effort": "low"  # Updated for Render
                                     }
                                 )
                         else:
@@ -546,7 +566,7 @@ class ChatGPTProAdapter(OpenAIAdapter):
                                         "model": model,
                                         "chatgpt_pro": True,
                                         "gpt5_pro": True,
-                                        "reasoning_effort": "medium"
+                                        "reasoning_effort": "low"  # Updated for Render
                                     }
                                 )
                             else:
@@ -588,7 +608,7 @@ class ChatGPTProAdapter(OpenAIAdapter):
                     # Add GPT-5 Pro metadata
                     if model == "gpt-5":
                         response.meta["gpt5_pro"] = True
-                        response.meta["reasoning_effort"] = "high"
+                        response.meta["reasoning_effort"] = "low"  # Updated for Render
                 
                 yield response
 
@@ -627,6 +647,7 @@ class ChatGPTProAdapter(OpenAIAdapter):
             "advanced_voice": True,
             "priority_access": True,
             "extended_reasoning": True,
+            "render_optimized": True,  # Added for Render hosting
             "monthly_quota": {
                 "deep_research": 100,  # Pro users get 100 queries per month
                 "o1_pro": "unlimited"
@@ -661,7 +682,7 @@ class ChatGPTProAdapter(OpenAIAdapter):
                     error_text = await response.text()
                     return False, f"Pro API validation failed: {error_text}"
                     
-            return True, "ChatGPT Pro connection validated successfully"
+            return True, "ChatGPT Pro connection validated successfully (Render optimized)"
             
         except Exception as e:
             return False, f"Pro validation error: {str(e)}"
