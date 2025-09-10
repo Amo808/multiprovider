@@ -644,30 +644,32 @@ async def get_provider_models(provider_id: str):
         logger.error(f"Failed to get models for provider {provider_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to get provider models")
 
-@app.post("/config")
-async def update_config(config_data: dict):
+@app.put("/config")
+async def update_config(config: dict):
     """Update application configuration."""
     try:
-        global app_config
+        logger.info(f"[CONFIG] Updating app config: {config}")
         
-        # Update configuration
-        for key, value in config_data.items():
-            if key in app_config:
-                if isinstance(app_config[key], dict) and isinstance(value, dict):
-                    app_config[key].update(value)
-                else:
-                    app_config[key] = value
-        
-        # Save updated config to file
+        # Load current config
         config_path = Path(__file__).parent.parent / "data" / "config.json"
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-        with open(config_path, "w") as f:
-            json.dump(app_config, f, indent=2)
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                app_config = json.load(f)
+        else:
+            app_config = {}
         
-        return {"message": "Configuration updated successfully", "config": app_config}
+        # Update with new config
+        app_config.update(config)
+        
+        # Save updated config
+        with open(config_path, 'w') as f:
+            json.dump(app_config, f, indent=2)
+            
+        logger.info(f"[CONFIG] Successfully updated app config")
+        return {"success": True, "message": "Configuration updated"}
         
     except Exception as e:
-        logger.error(f"Failed to update config: {e}")
+        logger.error(f"[CONFIG] Failed to update config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/config")
