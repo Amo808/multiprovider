@@ -231,21 +231,6 @@ class ChatGPTProAdapter(OpenAIAdapter):
         if params is None:
             params = GenerationParams()
 
-        # Check API key first
-        if not self.api_key or self.api_key == "your_api_key_here":
-            self.logger.error(f"🚨 [GPT-5] No valid API key configured for ChatGPT Pro")
-            yield ChatResponse(
-                content="❌ **ChatGPT Pro API Key Required**\n\nPlease configure your ChatGPT Pro API key in the settings to use GPT-5 Pro features.",
-                done=True,
-                error=True,
-                meta={
-                    "provider": ModelProvider.CHATGPT_PRO,
-                    "model": model,
-                    "error": "missing_api_key"
-                }
-            )
-            return
-
         # EARLY DEBUGGING: Log entry point
         total_input_length = sum(len(msg.content) for msg in messages)
         self.logger.info(f"🔍 [ENTRY] GPT-5 Pro generate called - model={model}, input_length={total_input_length} chars")
