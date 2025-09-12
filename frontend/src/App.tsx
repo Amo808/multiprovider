@@ -218,8 +218,14 @@ function App() {
         console.log('App: Modal closed');
         
         // Refresh config to get updated provider status
-        console.log('App: Refreshing page...');
-        window.location.reload(); // Simple refresh for now
+        console.log('App: Refreshing configuration...');
+        // Instead of reloading the page, refetch the config
+        try {
+          await apiClient.getConfig();
+          console.log('App: Config refreshed successfully');
+        } catch (error) {
+          console.error('App: Failed to refresh config:', error);
+        }
         
         // TODO: Re-send pending message
         console.log('API key saved, pending message:', pendingMessage);

@@ -80,6 +80,18 @@ class AnthropicAdapter(BaseAdapter):
                 supports_vision=False,
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 1.00, "output_tokens": 5.00}  # per 1M tokens
+            ),
+            ModelInfo(
+                id="claude-4-opus",
+                name="claude-4-opus",
+                display_name="Claude 4 Opus",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=500000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 20.00, "output_tokens": 100.00}  # estimated per 1M tokens
             )
         ]
 

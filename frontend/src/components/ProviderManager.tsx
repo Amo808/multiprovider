@@ -219,7 +219,7 @@ const ModelsList: React.FC<{
 };
 
 export const ProviderManager: React.FC<ProviderManagerProps> = ({ onClose }) => {
-  const { providers, loading, error, toggleProvider, refreshModels, testProvider } = useProviders();
+  const { providers, loading, error, toggleProvider, refreshModels, testProvider, fetchProviders } = useProviders();
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | null>(null);
   const [showModels, setShowModels] = useState(false);
   const [showApiKeySettings, setShowApiKeySettings] = useState(false);
@@ -254,7 +254,13 @@ export const ProviderManager: React.FC<ProviderManagerProps> = ({ onClose }) => 
 
   const handleApiKeySaved = async (_providerId: ModelProvider, _apiKey: string) => {
     // Refresh providers to get updated status
-    window.location.reload(); // Simple approach - could be improved with proper state management
+    console.log('ProviderManager: API key saved, refreshing providers...');
+    try {
+      await fetchProviders();
+      console.log('ProviderManager: Providers refreshed successfully');
+    } catch (error) {
+      console.error('ProviderManager: Failed to refresh providers:', error);
+    }
   };
 
   const handleRefreshModels = async (providerId: ModelProvider) => {
