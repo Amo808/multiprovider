@@ -33,10 +33,60 @@ class AnthropicAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
+            # Latest Claude 4 models
+            ModelInfo(
+                id="claude-opus-4-1-20250805",
+                name="claude-opus-4-1-20250805",
+                display_name="Claude Opus 4.1",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=1000000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 30.00, "output_tokens": 150.00}  # estimated per 1M tokens
+            ),
+            ModelInfo(
+                id="claude-opus-4-20250514",
+                name="claude-opus-4-20250514",
+                display_name="Claude Opus 4",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=500000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 25.00, "output_tokens": 125.00}  # estimated per 1M tokens
+            ),
+            ModelInfo(
+                id="claude-sonnet-4-20250514",
+                name="claude-sonnet-4-20250514",
+                display_name="Claude Sonnet 4",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=500000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 15.00, "output_tokens": 75.00}  # estimated per 1M tokens
+            ),
+            ModelInfo(
+                id="claude-3-7-sonnet-20250219",
+                name="claude-3-7-sonnet-20250219",
+                display_name="Claude Sonnet 3.7",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=300000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 5.00, "output_tokens": 25.00}  # estimated per 1M tokens
+            ),
+            # Claude 3.5 models
             ModelInfo(
                 id="claude-3-5-sonnet-20241022",
                 name="claude-3-5-sonnet-20241022",
-                display_name="Claude 3.5 Sonnet",
+                display_name="Claude 3.5 Sonnet (New)",
                 provider=ModelProvider.ANTHROPIC,
                 context_length=200000,
                 supports_streaming=True,
@@ -45,6 +95,31 @@ class AnthropicAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 3.00, "output_tokens": 15.00}  # per 1M tokens
             ),
+            ModelInfo(
+                id="claude-3-5-haiku-20241022",
+                name="claude-3-5-haiku-20241022",
+                display_name="Claude 3.5 Haiku",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 1.00, "output_tokens": 5.00}  # per 1M tokens
+            ),
+            ModelInfo(
+                id="claude-3-5-sonnet-20240620",
+                name="claude-3-5-sonnet-20240620",
+                display_name="Claude 3.5 Sonnet (Old)",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 3.00, "output_tokens": 15.00}  # per 1M tokens
+            ),
+            # Claude 3 models
             ModelInfo(
                 id="claude-3-opus-20240229",
                 name="claude-3-opus-20240229",
@@ -68,30 +143,6 @@ class AnthropicAdapter(BaseAdapter):
                 supports_vision=True,
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 0.25, "output_tokens": 1.25}  # per 1M tokens
-            ),
-            ModelInfo(
-                id="claude-3-5-haiku-20241022",
-                name="claude-3-5-haiku-20241022",
-                display_name="Claude 3.5 Haiku",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=200000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=False,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 1.00, "output_tokens": 5.00}  # per 1M tokens
-            ),
-            ModelInfo(
-                id="claude-4-opus",
-                name="claude-4-opus",
-                display_name="Claude 4 Opus",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=500000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 20.00, "output_tokens": 100.00}  # estimated per 1M tokens
             )
         ]
 
@@ -265,6 +316,7 @@ class AnthropicAdapter(BaseAdapter):
                 "tokens_in": input_tokens,
                 "tokens_out": final_output_tokens,
                 "total_tokens": input_tokens + final_output_tokens,
+                "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
                 "provider": ModelProvider.ANTHROPIC,
                 "model": model
             }
@@ -282,6 +334,28 @@ class AnthropicAdapter(BaseAdapter):
         except Exception:
             # Fallback to character-based estimation
             return super().estimate_tokens(text)
+
+    def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
+        """Calculate estimated cost based on model pricing"""
+        # Find pricing for this model
+        model_pricing = None
+        for model_info in self.supported_models:
+            if model_info.id == model:
+                model_pricing = model_info.pricing
+                break
+        
+        if not model_pricing:
+            # Fallback pricing for unknown models (Claude 3.5 Sonnet pricing)
+            model_pricing = {"input_tokens": 3.00, "output_tokens": 15.00}
+            
+        # Calculate cost per million tokens
+        input_cost_per_million = model_pricing["input_tokens"]
+        output_cost_per_million = model_pricing["output_tokens"]
+        
+        input_cost = (input_tokens / 1_000_000) * input_cost_per_million
+        output_cost = (output_tokens / 1_000_000) * output_cost_per_million
+        
+        return round(input_cost + output_cost, 6)
 
     async def close(self):
         """Clean up session"""
