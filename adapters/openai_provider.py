@@ -108,7 +108,7 @@ class OpenAIAdapter(BaseAdapter):
                 recommended_max_tokens=16000,  # Recommended for quality
                 description="Most efficient version of GPT-5"
             ),
-            # Preview and reasoning models (limited access)
+            # o1 Series - Reasoning Models
             ModelInfo(
                 id="o1-preview",
                 name="o1-preview",
@@ -119,7 +119,7 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 15.00, "output_tokens": 60.00},  # Preview pricing
+                pricing={"input_tokens": 15.00, "output_tokens": 60.00},
                 max_output_tokens=32768,
                 recommended_max_tokens=16384,
                 description="Preview version of o1 reasoning model"
@@ -134,11 +134,27 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 3.00, "output_tokens": 12.00},  # o1-mini pricing
+                pricing={"input_tokens": 3.00, "output_tokens": 12.00},
                 max_output_tokens=65536,
                 recommended_max_tokens=32768,
                 description="Lightweight version of o1 reasoning model"
             ),
+            ModelInfo(
+                id="o1-pro",
+                name="o1-pro", 
+                display_name="o1 Pro Mode",
+                provider=ModelProvider.OPENAI,
+                context_length=128000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 30.00, "output_tokens": 120.00},
+                max_output_tokens=65536,
+                recommended_max_tokens=32768,
+                description="o1 with extended compute for the most reliable responses - Pro exclusive"
+            ),
+            # o3 Series
             ModelInfo(
                 id="o3-mini",
                 name="o3-mini",
@@ -149,10 +165,25 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 1.00, "output_tokens": 4.00},  # o3-mini pricing
+                pricing={"input_tokens": 1.00, "output_tokens": 4.00},
                 max_output_tokens=65536,
                 recommended_max_tokens=32768,
                 description="Fast reasoning model with optimized performance"
+            ),
+            ModelInfo(
+                id="o3-deep-research",
+                name="o3-deep-research",
+                display_name="o3 Deep Research",
+                provider=ModelProvider.OPENAI,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 50.00, "output_tokens": 200.00},
+                max_output_tokens=65536,
+                recommended_max_tokens=32768,
+                description="o3 optimized for web browsing and multi-step research tasks"
             ),
             # Reasoning models
             ModelInfo(

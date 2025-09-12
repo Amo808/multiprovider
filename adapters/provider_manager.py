@@ -19,7 +19,6 @@ from .base_provider import (
 )
 from .deepseek_provider import DeepSeekAdapter
 from .openai_provider import OpenAIAdapter
-from .chatgpt_pro_provider import ChatGPTProAdapter
 from .anthropic_provider import AnthropicAdapter
 from .gemini_provider import GeminiAdapter
 
@@ -68,34 +67,15 @@ class ProviderManager:
         """Load provider configurations from file"""
         try:
             if os.path.exists(self.config_path):
-                self.logger.info(f"DEBUG: Reading config file from: {self.config_path}")
+                self.logger.info(f"Loading provider configs from: {self.config_path}")
                 with open(self.config_path, 'r', encoding='utf-8') as f:
-                    raw_content = f.read()
-                    self.logger.info(f"DEBUG: Raw file content length: {len(raw_content)}")
-                    if 'chatgpt_pro' in raw_content:
-                        self.logger.info("DEBUG: chatgpt_pro found in raw file content!")
-                    else:
-                        self.logger.warning("DEBUG: chatgpt_pro NOT found in raw file content!")
-                    
-                    f.seek(0)  # Reset file pointer
                     config_data = json.load(f)
-                    self.logger.info(f"DEBUG: Loaded config_data keys: {list(config_data.keys())}")
                     providers_dict = config_data.get("providers", {})
-                    self.logger.info(f"DEBUG: Providers dict keys: {list(providers_dict.keys())}")
-                    
-                    if 'chatgpt_pro' in providers_dict:
-                        self.logger.info("DEBUG: chatgpt_pro found in providers dict!")
-                        self.logger.info(f"DEBUG: chatgpt_pro config: {providers_dict['chatgpt_pro']}")
-                    else:
-                        self.logger.warning("DEBUG: chatgpt_pro NOT found in providers dict!")
                     
                 for provider_id, config in providers_dict.items():
-                    self.logger.info(f"DEBUG: Loading config for provider_id='{provider_id}'")
-                    self.logger.info(f"DEBUG: Config data: {config}")
-                    self.logger.info(f"DEBUG: Available ModelProvider values: {[p.value for p in ModelProvider]}")
                     try:
                         provider_enum = ModelProvider(provider_id)
-                        self.logger.info(f"DEBUG: Successfully mapped '{provider_id}' to {provider_enum}")
+                        self.logger.info(f"Successfully mapped '{provider_id}' to {provider_enum}")
                         self.provider_configs[provider_enum] = ProviderConfig(
                             id=provider_enum,
                             name=config.get("name", provider_id),
@@ -107,9 +87,9 @@ class ProviderManager:
                             api_version=config.get("api_version"),
                             extra_params=config.get("extra_params", {})
                         )
-                        self.logger.info(f"DEBUG: Config successfully created for {provider_enum}, enabled={config.get('enabled', False)}")
+                        self.logger.info(f"Config successfully created for {provider_enum}, enabled={config.get('enabled', False)}")
                     except ValueError as e:
-                        self.logger.warning(f"DEBUG: Failed to map provider '{provider_id}': {e}")
+                        self.logger.warning(f"Failed to map provider '{provider_id}': {e}")
                         self.logger.warning(f"Unknown provider: {provider_id}")
             else:
                 # Create default configurations
@@ -136,14 +116,6 @@ class ProviderManager:
                 enabled=bool(os.getenv("OPENAI_API_KEY")),
                 api_key=os.getenv("OPENAI_API_KEY"),
                 base_url="https://api.openai.com/v1"
-            ),
-            ModelProvider.CHATGPT_PRO: ProviderConfig(
-                id=ModelProvider.CHATGPT_PRO,
-                name="ChatGPT Pro",
-                enabled=bool(os.getenv("OPENAI_API_KEY")),  # Uses same API key as OpenAI
-                api_key=os.getenv("OPENAI_API_KEY"),
-                base_url="https://api.openai.com/v1",
-                extra_params={"subscription_tier": "pro"}
             ),
             ModelProvider.ANTHROPIC: ProviderConfig(
                 id=ModelProvider.ANTHROPIC,
@@ -216,22 +188,20 @@ class ProviderManager:
 
     async def register_providers(self):
         """Register all available provider adapters"""
-        from .chatgpt_pro_provider import ChatGPTProAdapter
         
         available_adapters = {
             ModelProvider.DEEPSEEK: DeepSeekAdapter,
             ModelProvider.OPENAI: OpenAIAdapter,
-            ModelProvider.CHATGPT_PRO: ChatGPTProAdapter,
             ModelProvider.ANTHROPIC: AnthropicAdapter,
             ModelProvider.GEMINI: GeminiAdapter,
             # TODO: Add more providers
         }
         
         for provider_id, adapter_class in available_adapters.items():
-            self.logger.info(f"DEBUG: Trying to register {provider_id}")
+            self.logger.info(f"Trying to register {provider_id}")
             config = self.provider_configs.get(provider_id)
             if config:
-                self.logger.info(f"DEBUG: Config found for {provider_id}, enabled={config.enabled}")
+                self.logger.info(f"Config found for {provider_id}, enabled={config.enabled}")
                 try:
                     adapter = adapter_class(config)
                     self.registry.register(adapter)
@@ -347,7 +317,6 @@ class ProviderManager:
         adapter_classes = {
             ModelProvider.DEEPSEEK: DeepSeekAdapter,
             ModelProvider.OPENAI: OpenAIAdapter,
-            ModelProvider.CHATGPT_PRO: ChatGPTProAdapter,
             ModelProvider.ANTHROPIC: AnthropicAdapter,
             ModelProvider.GEMINI: GeminiAdapter,
         }

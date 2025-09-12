@@ -17,7 +17,6 @@ from .base_provider import (
 from .deepseek_provider import DeepSeekAdapter
 from .openai_provider import OpenAIAdapter
 from .anthropic_provider import AnthropicAdapter
-from .chatgpt_pro_provider import ChatGPTProAdapter
 from .provider_manager import ProviderManager, ProviderStatus, provider_manager
 
 __all__ = [
@@ -38,7 +37,6 @@ __all__ = [
     'DeepSeekAdapter',
     'OpenAIAdapter',
     'AnthropicAdapter',
-    'ChatGPTProAdapter',
     
     # Management
     'ProviderManager',

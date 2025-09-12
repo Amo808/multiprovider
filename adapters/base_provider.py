@@ -10,7 +10,6 @@ class ModelProvider(str, Enum):
     """Supported AI model providers"""
     DEEPSEEK = "deepseek"
     OPENAI = "openai"
-    CHATGPT_PRO = "chatgpt_pro"
     ANTHROPIC = "anthropic" 
     GEMINI = "gemini"
     OLLAMA = "ollama"

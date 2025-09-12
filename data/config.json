@@ -1,6 +1,6 @@
 {
-  "activeProvider": "anthropic",
-  "activeModel": "claude-opus-4-1-20250805",
+  "activeProvider": "gemini",
+  "activeModel": "gemini-2.5-pro",
   "providers": {
     "deepseek": {
       "enabled": true,
@@ -10,20 +10,25 @@
       ]
     },
     "openai": {
-      "enabled": false,
+      "enabled": true,
       "models": [
         "gpt-4o",
         "gpt-4o-mini",
         "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",
+        "o1-preview",
+        "o1-mini",
+        "o1-pro",
+        "o3-mini",
+        "o3-deep-research",
         "o4-mini",
         "gpt-4-turbo",
         "gpt-3.5-turbo"
       ]
     },
     "anthropic": {
-      "enabled": false,
+      "enabled": true,
       "models": [
         "claude-opus-4-1-20250805",
         "claude-opus-4-20250514",

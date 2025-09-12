@@ -622,6 +622,13 @@ async def get_provider_models(provider_id: str):
     """Get models for specific provider."""
     try:
         models = provider_manager.get_models_by_provider(provider_id)
+        
+        # Filter models based on app_config if available
+        if app_config and "providers" in app_config and provider_id in app_config["providers"]:
+            enabled_model_ids = app_config["providers"][provider_id].get("models", [])
+            if enabled_model_ids:
+                models = [model for model in models if model.id in enabled_model_ids]
+        
         return {
             "provider": provider_id,
             "models": [
