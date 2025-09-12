@@ -1,6 +1,6 @@
 {
-  "activeProvider": "gemini",
-  "activeModel": "gemini-2.5-pro",
+  "activeProvider": "openai",
+  "activeModel": "gpt-5",
   "providers": {
     "deepseek": {
       "enabled": true,

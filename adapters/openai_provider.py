@@ -373,7 +373,34 @@ class OpenAIAdapter(BaseAdapter):
         output_tokens = 0
         
         try:
-            url = f"{self.base_url}/chat/completions"
+            # Use different endpoint for special models
+            uses_responses_endpoint = model in ['o1-pro', 'o3-deep-research']
+            
+            if uses_responses_endpoint:
+                url = f"{self.base_url}/responses"
+                self.logger.info(f"Using /responses endpoint for model: {model}")
+                
+                # Transform payload for responses endpoint
+                responses_payload = {
+                    "model": model,
+                    "prompt": messages[-1].content if messages else "",  # Use last message as prompt
+                    "stream": params.stream,
+                }
+                
+                # Add context from previous messages as system context
+                if len(messages) > 1:
+                    context = "\n".join([f"{msg.role}: {msg.content}" for msg in messages[:-1]])
+                    responses_payload["system"] = context
+                
+                if params.max_tokens:
+                    responses_payload["max_completion_tokens"] = params.max_tokens
+                if params.temperature is not None:
+                    responses_payload["temperature"] = params.temperature
+                    
+                payload = responses_payload
+            else:
+                url = f"{self.base_url}/chat/completions"
+            
             async with self.session.post(url, json=payload) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -387,8 +414,15 @@ class OpenAIAdapter(BaseAdapter):
                 if not params.stream:
                     # Handle non-streaming response
                     data = await response.json()
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    usage = data.get("usage", {})
+                    
+                    if uses_responses_endpoint:
+                        # Handle responses endpoint format
+                        content = data.get("response", "")  # Different field name
+                        usage = data.get("usage", {})
+                    else:
+                        # Handle chat/completions endpoint format
+                        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        usage = data.get("usage", {})
                     
                     yield ChatResponse(
                         content=content,
@@ -413,33 +447,41 @@ class OpenAIAdapter(BaseAdapter):
                     if line.startswith("data: "):
                         try:
                             json_data = json.loads(line[6:])
-                            choices = json_data.get("choices", [])
                             
-                            if not choices:
-                                continue
+                            if uses_responses_endpoint:
+                                # Handle responses endpoint streaming format
+                                content = json_data.get("delta", "")
+                                if not content:
+                                    continue
+                            else:
+                                # Handle chat/completions endpoint streaming format
+                                choices = json_data.get("choices", [])
                                 
-                            choice = choices[0]
-                            delta = choice.get("delta", {})
-                            content = delta.get("content", "")
-                            
-                            # Handle reasoning models' thinking process
-                            thinking = delta.get("reasoning", "")  # o1/o3 models may have reasoning field
-                            
-                            # For reasoning models, show thinking process
-                            if is_reasoning_model and thinking:
-                                yield ChatResponse(
-                                    content=f"🤔 **{model} is analyzing...**\n*Advanced reasoning in progress...*",
-                                    id=json_data.get("id"),
-                                    done=False,
-                                    meta={
-                                        "tokens_in": input_tokens,
-                                        "tokens_out": 0,
-                                        "provider": ModelProvider.OPENAI,
-                                        "model": model,
-                                        "reasoning": True,
-                                        "status": "thinking"
-                                    }
-                                )
+                                if not choices:
+                                    continue
+                                    
+                                choice = choices[0]
+                                delta = choice.get("delta", {})
+                                content = delta.get("content", "")
+                                
+                                # Handle reasoning models' thinking process
+                                thinking = delta.get("reasoning", "")  # o1/o3 models may have reasoning field
+                                
+                                # For reasoning models, show thinking process
+                                if is_reasoning_model and thinking:
+                                    yield ChatResponse(
+                                        content=f"🤔 **{model} is analyzing...**\n*Advanced reasoning in progress...*",
+                                        id=json_data.get("id"),
+                                        done=False,
+                                        meta={
+                                            "tokens_in": input_tokens,
+                                            "tokens_out": 0,
+                                            "provider": ModelProvider.OPENAI,
+                                            "model": model,
+                                            "reasoning": True,
+                                            "status": "thinking"
+                                        }
+                                    )
                             
                             if content:
                                 accumulated_content += content
@@ -460,8 +502,14 @@ class OpenAIAdapter(BaseAdapter):
                                 )
                             
                             # Check if finished
-                            if choice.get("finish_reason"):
-                                break
+                            if uses_responses_endpoint:
+                                # For responses endpoint, check for done field
+                                if json_data.get("done", False):
+                                    break
+                            else:
+                                # For chat/completions endpoint, check finish_reason
+                                if choice.get("finish_reason"):
+                                    break
                                 
                         except json.JSONDecodeError as e:
                             self.logger.error(f"Failed to parse JSON: {line} - {e}")

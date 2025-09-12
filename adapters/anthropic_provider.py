@@ -203,10 +203,31 @@ class AnthropicAdapter(BaseAdapter):
             "model": model,
             "messages": api_messages,
             "stream": params.stream,
-            "temperature": params.temperature,
             "max_tokens": params.max_tokens,
-            "top_p": params.top_p,
         }
+
+        # For newer Claude models (Claude 4 series), use only temperature OR top_p, not both
+        is_claude_4_series = any(claude_4_id in model for claude_4_id in [
+            "claude-opus-4", "claude-sonnet-4", "claude-4", "claude-3-7-sonnet"
+        ])
+        
+        if is_claude_4_series:
+            # For Claude 4 series: prefer temperature over top_p
+            if params.temperature is not None:
+                payload["temperature"] = params.temperature
+                self.logger.info(f"Using temperature={params.temperature} for Claude 4 model: {model}")
+            elif params.top_p is not None:
+                payload["top_p"] = params.top_p
+                self.logger.info(f"Using top_p={params.top_p} for Claude 4 model: {model}")
+            else:
+                # Default to temperature for Claude 4
+                payload["temperature"] = 0.7
+        else:
+            # For older Claude models: can use both parameters
+            if params.temperature is not None:
+                payload["temperature"] = params.temperature
+            if params.top_p is not None:
+                payload["top_p"] = params.top_p
 
         if system_message:
             payload["system"] = system_message
