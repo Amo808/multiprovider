@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Settings, Sun, Moon, Monitor, Menu, X } from 'lucide-react';
 import { 
   ModelSelector, 
