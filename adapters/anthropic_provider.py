@@ -68,6 +68,18 @@ class AnthropicAdapter(BaseAdapter):
                 supports_vision=True,
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 0.25, "output_tokens": 1.25}  # per 1M tokens
+            ),
+            ModelInfo(
+                id="claude-3-5-haiku-20241022",
+                name="claude-3-5-haiku-20241022",
+                display_name="Claude 3.5 Haiku",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 1.00, "output_tokens": 5.00}  # per 1M tokens
             )
         ]
 

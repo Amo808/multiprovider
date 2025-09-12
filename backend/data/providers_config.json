@@ -34,7 +34,7 @@
     },
     "anthropic": {
       "name": "Anthropic",
-      "enabled": false,
+      "enabled": true,
       "base_url": "https://api.anthropic.com",
       "endpoint": null,
       "region": null,

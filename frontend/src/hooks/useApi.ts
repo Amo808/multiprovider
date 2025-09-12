@@ -200,10 +200,13 @@ export const useConfig = () => {
 
   const updateConfig = useCallback(async (updates: Partial<AppConfig>) => {
     try {
+      console.log('Updating config with:', updates);
       const updatedConfig = await apiClient.updateConfig(updates);
+      console.log('Received updated config:', updatedConfig);
       setConfig(updatedConfig);
       return updatedConfig;
     } catch (err) {
+      console.error('Failed to update config:', err);
       throw err;
     }
   }, []);

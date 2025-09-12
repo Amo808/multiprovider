@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, memo } from 'react';
 import { ChevronDown, Bot, Check, Settings, Zap, Eye, Image } from 'lucide-react';
 import { ModelInfo, ModelProvider } from '../types';
 import { useModels, useProviders } from '../hooks/useApi';
@@ -40,7 +40,7 @@ const ProviderBadge: React.FC<{ provider: ModelProvider }> = ({ provider }) => {
   );
 };
 
-export const ModelSelector: React.FC<ModelSelectorProps> = ({
+export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
   selectedModel,
   selectedProvider,
   onModelChange,
@@ -232,4 +232,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       )}
     </div>
   );
-};
+});
+
+ModelSelector.displayName = 'ModelSelector';

@@ -345,7 +345,7 @@ export class ApiClient {
 
   async updateConfig(config: Partial<AppConfig>): Promise<AppConfig> {
     const response = await fetch(`${this.baseUrl}/config`, {
-      method: 'PUT',
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -357,7 +357,7 @@ export class ApiClient {
       throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const data: ConfigResponse = await response.json();
+    const data = await response.json();
     return data.config;
   }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Settings, Sun, Moon, Monitor, Menu, X } from 'lucide-react';
 import { 
   ModelSelector, 
@@ -40,7 +40,7 @@ function App() {
   const [pendingMessage, setPendingMessage] = useState<string>('');
 
   // API hooks
-  const { config, error: configError, updateConfig, updateGenerationConfig } = useConfig();
+  const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig } = useConfig();
   const { health } = useHealth();
   const { deleteConversation: deleteConversationMessages } = useConversations();
   const { deleteConversation: deleteConversationFromServer } = useApiConversations();
@@ -142,33 +142,48 @@ function App() {
     console.log('State update - conversation exists:', conversations.some(conv => conv.id === currentConversationId));
   }, [currentConversationId, conversations]);
 
+  // Debug config changes
+  useEffect(() => {
+    console.log('Config changed:', config);
+    console.log('Config loading:', configLoading);
+    console.log('Config error:', configError);
+  }, [config, configLoading, configError]);
+
   // Handlers
-  const handleModelChange = async (model: ModelInfo) => {
+  const handleModelChange = useCallback(async (model: ModelInfo) => {
     setSelectedModel(model);
     if (model.provider !== selectedProvider) {
       setSelectedProvider(model.provider);
     }
     
-    // Update config
+    // Update config without triggering full reload
     if (config) {
-      await updateConfig({
-        activeProvider: model.provider,
-        activeModel: model.id
-      });
+      try {
+        await updateConfig({
+          activeProvider: model.provider,
+          activeModel: model.id
+        });
+      } catch (error) {
+        console.error('Failed to update config:', error);
+      }
     }
-  };
+  }, [selectedProvider, config, updateConfig]);
 
-  const handleProviderChange = async (provider: ModelProvider) => {
+  const handleProviderChange = useCallback(async (provider: ModelProvider) => {
     setSelectedProvider(provider);
     if (config) {
-      await updateConfig({ activeProvider: provider });
+      try {
+        await updateConfig({ activeProvider: provider });
+      } catch (error) {
+        console.error('Failed to update config:', error);
+      }
     }
-  };
+  }, [config, updateConfig]);
 
-  const handleGenerationConfigChange = (newConfig: Partial<GenerationConfig>) => {
+  const handleGenerationConfigChange = useCallback((newConfig: Partial<GenerationConfig>) => {
     // Update local config state immediately
     console.log('Generation config changed:', newConfig);
-  };
+  }, []);
 
   const handleSaveGenerationSettings = async (settingsToSave: GenerationConfig) => {
     try {
@@ -415,7 +430,7 @@ function App() {
     }
   };
 
-  if (!config) {
+  if (configLoading || !config) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="text-center">
