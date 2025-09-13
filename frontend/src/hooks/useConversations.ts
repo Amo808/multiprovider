@@ -560,12 +560,99 @@ export const useConversations = () => {
     }));
   }, [activeRequests]);
 
+  const continueGpt5Response = useCallback(async (
+    conversationId: string,
+    model: string,
+    partialContent: string
+  ) => {
+    try {
+      console.log(`[${conversationId}] Starting GPT-5 continuation`);
+      
+      setConversations(prev => ({
+        ...prev,
+        [conversationId]: {
+          ...prev[conversationId],
+          isStreaming: true,
+          error: null,
+          currentResponse: '',
+          deepResearchStage: "🔄 Continuing GPT-5 response..."
+        }
+      }));
+
+      let continuationContent = '';
+      
+      const requestBody = {
+        conversation_id: conversationId,
+        model: model,
+        partial_content: partialContent
+      };
+
+      await apiClient.continueGpt5Response(requestBody, (chunk: ChatResponse) => {
+        if (chunk.content) {
+          continuationContent += chunk.content;
+          
+          // Find the last assistant message and append continuation
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              currentResponse: continuationContent,
+              deepResearchStage: undefined,
+              messages: prev[conversationId].messages.map(msg => {
+                // Find last assistant message
+                const assistantMessages = prev[conversationId].messages.filter(m => m.role === 'assistant');
+                const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+                
+                if (msg.role === 'assistant' && msg.id === lastAssistantMessage?.id) {
+                  return {
+                    ...msg,
+                    content: partialContent + continuationContent
+                  };
+                }
+                return msg;
+              })
+            }
+          }));
+        }
+      });
+
+      setConversations(prev => ({
+        ...prev,
+        [conversationId]: {
+          ...prev[conversationId],
+          isStreaming: false,
+          currentResponse: '',
+          deepResearchStage: undefined
+        }
+      }));
+
+      console.log(`[${conversationId}] GPT-5 continuation completed`);
+      
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to continue response';
+      
+      setConversations(prev => ({
+        ...prev,
+        [conversationId]: {
+          ...prev[conversationId],
+          isStreaming: false,
+          error: errorMessage,
+          currentResponse: '',
+          deepResearchStage: undefined
+        }
+      }));
+      
+      throw err;
+    }
+  }, []);
+
   return {
     getConversation,
     sendMessage,
     clearConversation,
     deleteConversation,
     stopStreaming,
-    recoverStuckRequest
+    recoverStuckRequest,
+    continueGpt5Response
   };
 };
