@@ -279,7 +279,25 @@ class OpenAIAdapter(BaseAdapter):
         is_gpt5 = model.startswith('gpt-5')
         timeout_seconds = 300 if is_gpt5 else 300  # Extended: 5min for GPT-5, 5min for others
         
+        # EARLY DEBUGGING: Log entry point
+        total_input_length = sum(len(msg.content) for msg in messages)
+        self.logger.info(f"🔍 [ENTRY] {model} generate called - input_length={total_input_length:,} chars")
+        
         if is_gpt5:
+            # EARLY WARNING for large texts
+            if total_input_length > 30000:
+                self.logger.warning(f"⚠️ [GPT-5] Large input detected: {total_input_length:,} chars - may take several minutes")
+                yield ChatResponse(
+                    content="",
+                    done=False,
+                    meta={
+                        "provider": ModelProvider.OPENAI,
+                        "model": model,
+                        "input_length": total_input_length
+                    },
+                    stage_message=f"⚠️ Processing large request ({total_input_length:,} chars). Processing may take 3-5 minutes. Please wait..."
+                )
+            
             # Force streaming for GPT-5 stability on Render
             params.stream = True
             self.logger.info(f"🔧 GPT-5 Render optimization: streaming enabled, extended 5min timeout")
@@ -470,9 +488,24 @@ class OpenAIAdapter(BaseAdapter):
                 render_timeout = 300 if is_gpt5 else 300  # Extended: 5 minutes for GPT-5, 5 minutes for others
                 
                 if is_gpt5:
+                    # GPT-5 Pro mode with enhanced reasoning - IMMEDIATELY send status
+                    self.logger.info(f"🔍 [GPT-5] Sending immediate Pro mode status")
+                    yield ChatResponse(
+                        content="🚀 **GPT-5 Pro Mode Engaged**\n\nInitializing advanced reasoning capabilities...\n",
+                        done=False,
+                        meta={
+                            "provider": ModelProvider.OPENAI,
+                            "model": "gpt-5-pro",
+                            "pro_mode": True,
+                            "extended_reasoning": True,
+                            "reasoning_effort": "high",
+                            "input_length": total_input_length
+                        }
+                    )
+                else:
                     # Send optimistic message about Render optimizations
                     yield ChatResponse(
-                        content="🚀 **GPT-5** (⚡ Extended timeout + Render optimizations):\n\n",
+                        content="🚀 **OpenAI** (⚡ Extended timeout + Render optimizations):\n\n",
                         done=False,
                         meta={
                             "provider": ModelProvider.OPENAI,
@@ -481,15 +514,55 @@ class OpenAIAdapter(BaseAdapter):
                         }
                     )
                 
+                # IMMEDIATELY send status update when streaming starts
+                self.logger.info(f"🔍 [OpenAI] Sending immediate status update - streaming ready")
+                yield ChatResponse(
+                    content="",
+                    done=False,
+                    streaming_ready=True,
+                    meta={
+                        "provider": ModelProvider.OPENAI,
+                        "model": model,
+                        "timestamp": asyncio.get_event_loop().time(),
+                        "stage": "streaming_started"
+                    },
+                    stage_message="🔄 OpenAI is generating response..."
+                )
+                
+                # Start periodic heartbeat to keep connection alive
+                last_heartbeat = asyncio.get_event_loop().time()
+                heartbeat_interval = 10  # Send heartbeat every 10 seconds
+                
+                first_content_chunk = True
+                content_received = False
+                
                 async for line in response.content:
-                    # Check timeout for GPT-5 on Render
+                    current_time = asyncio.get_event_loop().time()
+                    
+                    # Send periodic heartbeat to prevent frontend timeout
+                    if current_time - last_heartbeat > heartbeat_interval:
+                        self.logger.info(f"🔍 [OpenAI] Sending heartbeat after {current_time - last_heartbeat:.1f}s")
+                        yield ChatResponse(
+                            content="",
+                            done=False,
+                            heartbeat="OpenAI processing... connection active",
+                            meta={
+                                "provider": ModelProvider.OPENAI,
+                                "model": model,
+                                "elapsed_time": current_time - start_time,
+                                "timestamp": current_time
+                            },
+                            stage_message="⏳ OpenAI is still processing... (connection active)"
+                        )
+                        last_heartbeat = current_time
+                    
+                    # Check timeout for GPT-5 on Render - reduced to 3 minutes
                     if is_gpt5:
-                        current_time = asyncio.get_event_loop().time()
                         elapsed = current_time - start_time
-                        if elapsed > render_timeout:
-                            self.logger.warning(f"🚨 GPT-5 complete timeout after {elapsed:.1f}s on Render")
+                        if elapsed > 180:  # After 3 minutes - timeout
+                            self.logger.error(f"🚨 [GPT-5] Timeout after {elapsed:.1f}s")
                             yield ChatResponse(
-                                content="\n\n⚠️ **Extended timeout reached** - Even with 5-minute extended timeout, the response took too long. This might indicate:\n• Very complex query requiring extensive reasoning\n• Temporary API slowness\n• Try breaking the query into smaller parts",
+                                content="\n\n⚠️ **Extended timeout reached** - Request took over 3 minutes. This might indicate:\n• Very complex query requiring extensive reasoning\n• Temporary API slowness\n• Try breaking the query into smaller parts",
                                 done=True,
                                 error=True,
                                 meta={
@@ -545,6 +618,22 @@ class OpenAIAdapter(BaseAdapter):
                                     )
                             
                             if content:
+                                # On first content chunk, send another status update
+                                if first_content_chunk:
+                                    self.logger.info(f"🔍 [OpenAI] First content chunk received - confirming generation")
+                                    yield ChatResponse(
+                                        content="",
+                                        done=False,
+                                        first_content=True,
+                                        meta={
+                                            "provider": ModelProvider.OPENAI,
+                                            "model": model
+                                        },
+                                        stage_message="✨ OpenAI generation in progress..."
+                                    )
+                                    first_content_chunk = False
+                                
+                                content_received = True
                                 accumulated_content += content
                                 output_tokens = self.estimate_tokens(accumulated_content)
                                 
@@ -573,8 +662,21 @@ class OpenAIAdapter(BaseAdapter):
                                     break
                                 
                         except json.JSONDecodeError as e:
-                            self.logger.error(f"Failed to parse JSON: {line} - {e}")
+                            self.logger.warning(f"🔍 [OpenAI] JSON decode error: {e}")
                             continue
+                
+                # Send final completion signal
+                if content_received:
+                    yield ChatResponse(
+                        content="",
+                        done=True,
+                        meta={
+                            "provider": ModelProvider.OPENAI,
+                            "model": model,
+                            "openai_completion": True,
+                            "total_tokens": output_tokens + input_tokens
+                        }
+                    )
 
         except asyncio.TimeoutError:
             self.logger.error(f"Request to OpenAI API timed out after {timeout_seconds}s")
