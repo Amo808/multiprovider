@@ -400,22 +400,40 @@ class OpenAIAdapter(BaseAdapter):
                 url = f"{self.base_url}/responses"
                 self.logger.info(f"Using /responses endpoint for model: {model}")
                 
-                # Transform payload for responses endpoint
-                responses_payload = {
-                    "model": model,
-                    "prompt": messages[-1].content if messages else "",  # Use last message as prompt
-                    "stream": params.stream,
-                }
-                
-                # Add context from previous messages as system context
+                # For /responses endpoint, combine all messages into a single prompt
                 if len(messages) > 1:
-                    context = "\n".join([f"{msg.role}: {msg.content}" for msg in messages[:-1]])
-                    responses_payload["system"] = context
+                    # Combine all messages into context + current prompt
+                    context_messages = messages[:-1]  # All but last
+                    current_prompt = messages[-1].content
+                    
+                    # Build full prompt with conversation history
+                    full_prompt = ""
+                    for msg in context_messages:
+                        full_prompt += f"{msg.role.title()}: {msg.content}\n\n"
+                    full_prompt += f"User: {current_prompt}"
+                    
+                    responses_payload = {
+                        "model": model,
+                        "prompt": full_prompt,
+                        "stream": params.stream,
+                    }
+                else:
+                    # Single message case
+                    responses_payload = {
+                        "model": model,
+                        "prompt": messages[-1].content if messages else "",
+                        "stream": params.stream,
+                    }
                 
+                # Add parameters supported by /responses endpoint
                 if params.max_tokens:
-                    responses_payload["max_output_tokens"] = params.max_tokens  # Fixed parameter name for /responses endpoint
+                    responses_payload["max_output_tokens"] = params.max_tokens
                 if params.temperature is not None:
                     responses_payload["temperature"] = params.temperature
+                
+                # Log prompt info for debugging
+                prompt_length = len(responses_payload["prompt"])
+                self.logger.info(f"🔍 [/responses] Sending prompt: {prompt_length} chars")
                     
                 payload = responses_payload
             else:
