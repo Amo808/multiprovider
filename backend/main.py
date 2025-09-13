@@ -153,6 +153,11 @@ class ProviderConfigUpdate(BaseModel):
 class ModelRequest(BaseModel):
     provider: str
 
+class ContinuationRequest(BaseModel):
+    conversation_id: str
+    model: str = "gpt-5"
+    partial_content: str
+
 # Global components
 conversation_store = None
 prompt_builder = None
@@ -490,6 +495,13 @@ async def send_message(request: ChatRequest, http_request: Request):
                         else:
                             yield f"data: {json.dumps({'error': response.error, 'done': True})}\n\n"
                         break
+                    
+                    # Handle heartbeat for GPT-5 Render bypass
+                    if response.meta and response.meta.get('heartbeat'):
+                        elapsed = response.meta.get('elapsed_time', 0)
+                        logger.info(f"[HEARTBEAT] GPT-5 keeping connection alive - {elapsed:.1f}s elapsed")
+                        yield f"data: {json.dumps({'heartbeat': True, 'elapsed': elapsed, 'model': model_id})}\n\n"
+                        continue  # Don't process as regular content
                         
                     if response.content:
                         full_content += response.content
@@ -573,6 +585,89 @@ async def send_message(request: ChatRequest, http_request: Request):
         
     except Exception as e:
         logger.error(f"Chat request failed: {e}")
+        return StreamingResponse(
+            generate_error_stream(f"Internal server error: {str(e)}"),
+            media_type="text/plain",
+            headers={"X-Error-Type": "INTERNAL_ERROR"}
+        )
+
+@app.post("/chat/continue")
+async def continue_gpt5_response(request: ContinuationRequest, http_request: Request):
+    """Continue a GPT-5 response that was cut off due to timeout."""
+    
+    def generate_error_stream(error_message: str, error_type: str = "error"):
+        """Generate SSE stream with error message."""
+        yield f"data: {json.dumps({'error': error_message, 'type': error_type, 'done': True})}\n\n"
+    
+    try:
+        # Load conversation history
+        conversation_id = request.conversation_id
+        history = conversation_store.load_conversation_history(conversation_id)
+        
+        if not history:
+            return StreamingResponse(
+                generate_error_stream("No conversation history found"),
+                media_type="text/plain",
+                headers={"X-Error-Type": "NO_HISTORY"}
+            )
+        
+        logger.info(f"[CONTINUE] Continuing GPT-5 response for conversation {conversation_id}")
+        
+        async def generate_continuation():
+            """Generate continuation response."""
+            try:
+                # Check if client disconnected
+                if await http_request.is_disconnected():
+                    logger.info(f"[CONTINUE] Client disconnected for conversation {conversation_id}")
+                    return
+                
+                async for response in provider_manager.continue_gpt5_response(
+                    history, request.partial_content, request.model
+                ):
+                    # Check for client disconnection during streaming
+                    if await http_request.is_disconnected():
+                        logger.info(f"[CONTINUE] Client disconnected during streaming for conversation {conversation_id}")
+                        return
+                    
+                    if response.error:
+                        yield f"data: {json.dumps({'error': response.error, 'done': True})}\n\n"
+                        break
+                        
+                    if response.content:
+                        # Stream continuation content
+                        chunk_data = {
+                            'content': response.content,
+                            'type': 'continuation',
+                            'done': response.done,
+                            'meta': response.meta
+                        }
+                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                        
+                    if response.done:
+                        # Send final completion message
+                        final_data = {
+                            'type': 'completion',
+                            'done': True,
+                            'meta': response.meta
+                        }
+                        yield f"data: {json.dumps(final_data)}\n\n"
+                        break
+                        
+            except Exception as e:
+                logger.error(f"[CONTINUE] Error during continuation: {e}")
+                yield f"data: {json.dumps({'error': f'Continuation failed: {str(e)}', 'done': True})}\n\n"
+        
+        return StreamingResponse(
+            generate_continuation(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Continuation request failed: {e}")
         return StreamingResponse(
             generate_error_stream(f"Internal server error: {str(e)}"),
             media_type="text/plain",
@@ -914,10 +1009,16 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     debug = os.getenv("DEBUG", "True").lower() == "true"
     
+    # Настройки для Render: увеличенные таймауты для длинных OpenAI запросов
     uvicorn.run(
         "main:app", 
         host=host, 
         port=port, 
         reload=debug,
-        log_level="info"
+        log_level="info",
+        timeout_keep_alive=300,  # 5 минут keep-alive
+        timeout_graceful_shutdown=30,  # 30 секунд на завершение
+        limit_concurrency=1000,  # Увеличиваем лимит соединений
+        limit_max_requests=1000,  # Увеличиваем лимит запросов
+        backlog=2048  # Увеличиваем очередь соединений
     )

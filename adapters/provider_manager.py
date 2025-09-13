@@ -430,5 +430,38 @@ class ProviderManager:
         async for response in adapter.chat_completion(messages, model, params):
             yield response
 
+    async def continue_gpt5_response(
+        self,
+        original_messages: List[Message],
+        partial_content: str,
+        model: str
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Continue a GPT-5 response that was cut off due to timeout"""
+        # GPT-5 is always OpenAI
+        adapter = self.registry.get(ModelProvider.OPENAI)
+        if not adapter:
+            yield ChatResponse(
+                error="OpenAI provider not found for GPT-5 continuation",
+                meta={"provider": ModelProvider.OPENAI, "model": model}
+            )
+            return
+            
+        if not adapter.config.enabled:
+            yield ChatResponse(
+                error="OpenAI provider is disabled",
+                meta={"provider": ModelProvider.OPENAI, "model": model}
+            )
+            return
+        
+        # Check if adapter has continue_response method (only OpenAI should have it)
+        if hasattr(adapter, 'continue_response'):
+            async for response in adapter.continue_response(original_messages, partial_content, model):
+                yield response
+        else:
+            yield ChatResponse(
+                error="Provider does not support response continuation",
+                meta={"provider": ModelProvider.OPENAI, "model": model}
+            )
+
 # Global provider manager instance
 provider_manager = ProviderManager()
