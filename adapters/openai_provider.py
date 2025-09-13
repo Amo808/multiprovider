@@ -321,10 +321,17 @@ class OpenAIAdapter(BaseAdapter):
             payload.pop("top_p", None)
             # Temperature is often fixed for reasoning models
             if model.startswith('o1') or model.startswith('o3'):
-                payload["temperature"] = 1.0  # Fixed for reasoning models
+                # Only add temperature for non-GPT-5 reasoning models
+                if not is_gpt5:
+                    payload["temperature"] = 1.0  # Fixed for reasoning models
 
         if params.stop_sequences:
             payload["stop"] = params.stop_sequences
+
+        # CRITICAL: Remove temperature from payload for GPT-5 models (they only support default)
+        if is_gpt5 and "temperature" in payload:
+            payload.pop("temperature", None)
+            self.logger.info("🔧 Removed temperature from GPT-5 payload (not supported)")
 
         # 🔍 Deep Research Mode for o3 model
         is_deep_research = False
