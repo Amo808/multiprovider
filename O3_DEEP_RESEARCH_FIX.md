@@ -14,14 +14,14 @@ OpenAI API error: 400 - {
 }
 ```
 
-### Проблема 2:  
+### Проблема 3:  
 ```
 OpenAI API error: 400 - {
   "error": {
-    "message": "Invalid type for 'prompt': expected an object, but got a string instead.",
+    "message": "Deep research models require at least one of 'web_search_preview', 'mcp', or 'file_search' tools.",
     "type": "invalid_request_error",
-    "param": "prompt", 
-    "code": "invalid_type"
+    "param": "tools", 
+    "code": null
   }
 }
 ```
@@ -30,7 +30,8 @@ OpenAI API error: 400 - {
 **Endpoint:** `/responses`  
 **Причины:** 
 1. `/responses` endpoint не поддерживает параметр `system`
-2. `/responses` endpoint ожидает `messages` array, а не `prompt` string
+2. `/responses` endpoint ожидает `input` array, а не `prompt` string или `messages` array
+3. `o3-deep-research` модель требует обязательные инструменты (`tools`)
 
 ## ✅ Решение
 
@@ -47,13 +48,17 @@ responses_payload = {
 
 ### После исправления:
 ```python
-# ✅ ПРАВИЛЬНО - используем 'input' array для нового /responses API
+# ✅ ПРАВИЛЬНО - используем 'input' array для нового /responses API + tools
 responses_payload = {
     "model": model,
     "input": api_messages,  # ✅ 'input' вместо 'messages' (новый API)
     "stream": params.stream,
     "max_output_tokens": params.max_tokens  # ✅ Правильный параметр токенов
 }
+
+# Deep research models require tools
+if model == "o3-deep-research":
+    responses_payload["tools"] = ["web_search_preview"]  # ✅ Обязательные инструменты
 ```
 
 **Ключевые изменения:**
@@ -61,6 +66,7 @@ responses_payload = {
 2. ❌ `"messages": [...]` → ✅ `"input": [...]` (новый API)
 3. ❌ `"system": "context"` → ✅ Убран совсем
 4. ❌ `"max_completion_tokens"` → ✅ `"max_output_tokens"`
+5. ✅ **НОВОЕ:** `"tools": ["web_search_preview"]` для o3-deep-research
 
 ## 🔍 Технические детали
 
@@ -70,6 +76,7 @@ responses_payload = {
 |----------|-------------------|-------------|
 | `messages` | ✅ | ❌ |
 | `input` | ❌ | ✅ |
+| `tools` | ✅ (опционально) | ✅ (обязательно для o3-deep-research) |
 | `prompt` | ❌ | ❌ |
 | `system` | ❌ | ❌ |
 | `max_completion_tokens` | ✅ | ❌ |
@@ -93,6 +100,7 @@ responses_payload = {
     {"role": "assistant", "content": "Quantum computing is..."},
     {"role": "user", "content": "Explain quantum entanglement"}
   ],
+  "tools": ["web_search_preview"],
   "stream": true,
   "max_output_tokens": 100,
   "temperature": 0.7

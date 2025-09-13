@@ -31,6 +31,10 @@ def test_responses_payload():
         "stream": params.stream,
     }
     
+    # Deep research models require tools
+    if model == "o3-deep-research":
+        responses_payload["tools"] = ["web_search_preview"]  # Required for o3-deep-research
+    
     # Add parameters
     if params.max_tokens:
         responses_payload["max_output_tokens"] = params.max_tokens
@@ -51,9 +55,14 @@ def test_responses_payload():
     print(f"✅ Input is array: {isinstance(responses_payload['input'], list)}")
     print(f"✅ Has 'stream': {('stream' in responses_payload)}")
     print(f"✅ Has 'max_output_tokens': {('max_output_tokens' in responses_payload)}")
+    print(f"✅ Has 'tools' (for o3-deep-research): {('tools' in responses_payload)}")
     print(f"✅ No 'messages' field: {('messages' not in responses_payload)}")
     print(f"✅ No 'prompt' field: {('prompt' not in responses_payload)}")
     print(f"✅ No 'system' field: {('system' not in responses_payload)}")
+    
+    # Check tools if present
+    if 'tools' in responses_payload:
+        print(f"🛠️ Tools: {responses_payload['tools']}")
     
     # Check message structure
     print(f"\n📝 Input structure ({len(responses_payload['input'])} messages):")
@@ -63,6 +72,7 @@ def test_responses_payload():
     print(f"\n🎯 This is the CORRECT format for /responses endpoint!")
     print(f"   - Uses 'input' array (NEW API format)")
     print(f"   - Uses 'max_output_tokens' (not 'max_completion_tokens')")
+    print(f"   - Includes required 'tools' for o3-deep-research")
     print(f"   - No 'messages', 'prompt', or 'system' parameters")
     
     return responses_payload

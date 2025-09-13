@@ -407,6 +407,11 @@ class OpenAIAdapter(BaseAdapter):
                     "stream": params.stream,
                 }
                 
+                # Deep research models require tools
+                if model == "o3-deep-research":
+                    responses_payload["tools"] = ["web_search_preview"]  # Required for o3-deep-research
+                    self.logger.info(f"🔍 [o3-deep-research] Added required tools: web_search_preview")
+                
                 # Add parameters supported by /responses endpoint
                 if params.max_tokens:
                     responses_payload["max_output_tokens"] = params.max_tokens
