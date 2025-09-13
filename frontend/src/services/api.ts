@@ -88,14 +88,6 @@ export class ApiClient {
               const data: ChatResponse = JSON.parse(line.slice(6));
               console.log('API Client: Parsed data:', data);
               
-              // Handle heartbeat messages for GPT-5 Render bypass
-              if ((data as any).heartbeat) {
-                const elapsed = (data as any).elapsed || 0;
-                const model = (data as any).model || 'GPT-5';
-                console.log(`API Client: Heartbeat from ${model} - ${elapsed.toFixed(1)}s elapsed`);
-                continue; // Skip processing heartbeat as regular content
-              }
-              
               if (data.error) {
                 console.error('API Client: Error in data:', data.error, 'type:', data.type);
                 // Create error with the original error message and include type info
@@ -128,70 +120,6 @@ export class ApiClient {
     } finally {
       // Clean up the request
       this.activeRequests.delete(reqId);
-    }
-  }
-
-  // Method to continue a GPT-5 response that was cut off due to timeout
-  async continueGpt5Response(
-    request: { conversation_id: string; model: string; partial_content: string },
-    onChunk?: (chunk: ChatResponse) => void
-  ): Promise<void> {
-    console.log('API Client: Continuing GPT-5 response:', request);
-    
-    try {
-      const response = await fetch(`${this.baseUrl}/chat/continue`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      if (!response.body) {
-        throw new Error('No response body');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) {
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.trim() && line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              
-              if (onChunk) {
-                onChunk(data);
-              }
-              
-              if (data.done) {
-                return;
-              }
-            } catch (e) {
-              if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
-                console.error('API Client: Parse error in continuation:', e);
-                throw e;
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('API Client: Error in continuation:', error);
-      throw error;
     }
   }
 
