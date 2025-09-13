@@ -400,10 +400,10 @@ class OpenAIAdapter(BaseAdapter):
                 url = f"{self.base_url}/responses"
                 self.logger.info(f"Using /responses endpoint for model: {model}")
                 
-                # For /responses endpoint, format messages as array (not single prompt string)
+                # For /responses endpoint, use 'input' parameter (new API format)
                 responses_payload = {
                     "model": model,
-                    "messages": api_messages,  # Use messages array instead of single prompt string
+                    "input": api_messages,  # Use 'input' instead of 'messages' for /responses API
                     "stream": params.stream,
                 }
                 
@@ -415,7 +415,7 @@ class OpenAIAdapter(BaseAdapter):
                 
                 # Log payload info for debugging
                 message_count = len(api_messages)
-                self.logger.info(f"🔍 [/responses] Sending {message_count} messages")
+                self.logger.info(f"🔍 [/responses] Sending {message_count} messages via 'input' parameter")
                     
                 payload = responses_payload
             else:
