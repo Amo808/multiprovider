@@ -285,19 +285,23 @@ class OpenAIAdapter(BaseAdapter):
             if params.max_tokens and params.max_tokens > 2048:
                 params.max_tokens = 2048
                 self.logger.info(f"🔧 GPT-5 Render optimization: reduced max_tokens to {params.max_tokens}")
-            if params.temperature and params.temperature > 0.8:
-                params.temperature = 0.8
-                self.logger.info(f"🔧 GPT-5 Render optimization: reduced temperature to {params.temperature}")
+            # GPT-5 only supports temperature = 1.0 (default)
+            if params.temperature != 1.0:
+                params.temperature = 1.0
+                self.logger.info(f"🔧 GPT-5 Render optimization: set temperature to 1.0 (required by GPT-5)")
 
         payload = {
             "model": model,
             "messages": api_messages,
             "stream": params.stream,
-            "temperature": params.temperature,
-            "top_p": params.top_p,
-            "frequency_penalty": params.frequency_penalty,
-            "presence_penalty": params.presence_penalty,
         }
+        
+        # GPT-5 models only support default temperature (1.0), don't include it in payload
+        if not is_gpt5:
+            payload["temperature"] = params.temperature
+            payload["top_p"] = params.top_p
+            payload["frequency_penalty"] = params.frequency_penalty
+            payload["presence_penalty"] = params.presence_penalty
 
         # Use correct token parameter based on model
         # New OpenAI models use max_completion_tokens, legacy models use max_tokens
