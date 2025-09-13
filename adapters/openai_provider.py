@@ -273,6 +273,18 @@ class OpenAIAdapter(BaseAdapter):
 
         # Check if this is a reasoning model (o1, o3, o4 series)
         is_reasoning_model = any(model.startswith(prefix) for prefix in ['o1', 'o3', 'o4'])
+        
+        # Special handling for GPT-5 on Render to prevent timeout
+        is_gpt5 = model.startswith('gpt-5')
+        if is_gpt5:
+            # Force streaming and reduce parameters for Render stability
+            params.stream = True
+            if params.max_tokens and params.max_tokens > 2048:
+                params.max_tokens = 2048
+                self.logger.info(f"🔧 GPT-5 Render optimization: reduced max_tokens to {params.max_tokens}")
+            if params.temperature and params.temperature > 0.8:
+                params.temperature = 0.8
+                self.logger.info(f"🔧 GPT-5 Render optimization: reduced temperature to {params.temperature}")
 
         payload = {
             "model": model,
@@ -438,7 +450,41 @@ class OpenAIAdapter(BaseAdapter):
                     return
 
                 # Handle streaming response
+                # Special timeout handling for GPT-5 on Render
+                start_time = asyncio.get_event_loop().time()
+                render_timeout = 50 if is_gpt5 else 300  # 50 seconds for GPT-5 on Render, 5 minutes for others
+                
+                if is_gpt5:
+                    # Send immediate warning about Render limitations
+                    yield ChatResponse(
+                        content="🚀 **GPT-5 starting** - Render hosting has 60s timeout limit. For longer responses, use GPT-4o or local setup.\n",
+                        done=False,
+                        meta={
+                            "provider": ModelProvider.OPENAI,
+                            "model": model,
+                            "render_warning": True
+                        }
+                    )
+                
                 async for line in response.content:
+                    # Check timeout for GPT-5 on Render
+                    if is_gpt5:
+                        current_time = asyncio.get_event_loop().time()
+                        elapsed = current_time - start_time
+                        if elapsed > render_timeout:
+                            self.logger.warning(f"🚨 GPT-5 timeout after {elapsed:.1f}s on Render")
+                            yield ChatResponse(
+                                content="\n\n⚠️ **Render timeout reached** - GPT-5 responses can take 2-5 minutes but Render has 60s limits. Try:\n• Use GPT-4o for faster responses\n• Use shorter prompts\n• Or deploy locally for full GPT-5 experience",
+                                done=True,
+                                error=True,
+                                meta={
+                                    "provider": ModelProvider.OPENAI,
+                                    "model": model,
+                                    "timeout": True,
+                                    "render_limitation": True
+                                }
+                            )
+                            return
                     line = line.decode('utf-8').strip()
                     
                     if not line or line == "data: [DONE]":
