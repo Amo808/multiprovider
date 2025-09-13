@@ -13,11 +13,17 @@
 
 ### ✅ 2. Исправлена ошибка 400 для o3-deep-research и o1-pro
 
-**Проблема:** Модели o3-deep-research и o1-pro возвращали ошибку 400 из-за неправильного параметра.
+**Проблема 1:** Модели o3-deep-research и o1-pro возвращали ошибку 400 из-за неправильного параметра.
 
-**Решение:** 
+**Решение 1:** 
 - Для `/responses` endpoint используется `max_output_tokens` вместо `max_completion_tokens`
-- Модели o3-deep-research и o1-pro теперь работают корректно
+
+**Проблема 2:** o3-deep-research возвращал ошибку "Unknown parameter: 'system'"
+
+**Решение 2:**
+- Убран неподдерживаемый параметр `system` из `/responses` endpoint  
+- Вся история разговора теперь объединяется в единый `prompt`
+- o3-deep-research и o1-pro теперь работают корректно без ошибок 400
 
 ### ✅ 3. Heartbeat/Streaming техника интегрирована
 

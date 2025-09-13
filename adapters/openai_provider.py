@@ -400,30 +400,12 @@ class OpenAIAdapter(BaseAdapter):
                 url = f"{self.base_url}/responses"
                 self.logger.info(f"Using /responses endpoint for model: {model}")
                 
-                # For /responses endpoint, combine all messages into a single prompt
-                if len(messages) > 1:
-                    # Combine all messages into context + current prompt
-                    context_messages = messages[:-1]  # All but last
-                    current_prompt = messages[-1].content
-                    
-                    # Build full prompt with conversation history
-                    full_prompt = ""
-                    for msg in context_messages:
-                        full_prompt += f"{msg.role.title()}: {msg.content}\n\n"
-                    full_prompt += f"User: {current_prompt}"
-                    
-                    responses_payload = {
-                        "model": model,
-                        "prompt": full_prompt,
-                        "stream": params.stream,
-                    }
-                else:
-                    # Single message case
-                    responses_payload = {
-                        "model": model,
-                        "prompt": messages[-1].content if messages else "",
-                        "stream": params.stream,
-                    }
+                # For /responses endpoint, format messages as array (not single prompt string)
+                responses_payload = {
+                    "model": model,
+                    "messages": api_messages,  # Use messages array instead of single prompt string
+                    "stream": params.stream,
+                }
                 
                 # Add parameters supported by /responses endpoint
                 if params.max_tokens:
@@ -431,9 +413,9 @@ class OpenAIAdapter(BaseAdapter):
                 if params.temperature is not None:
                     responses_payload["temperature"] = params.temperature
                 
-                # Log prompt info for debugging
-                prompt_length = len(responses_payload["prompt"])
-                self.logger.info(f"🔍 [/responses] Sending prompt: {prompt_length} chars")
+                # Log payload info for debugging
+                message_count = len(api_messages)
+                self.logger.info(f"🔍 [/responses] Sending {message_count} messages")
                     
                 payload = responses_payload
             else:

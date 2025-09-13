@@ -55,40 +55,32 @@ async def test_o3_deep_research():
         if uses_responses_endpoint:
             print(f"✅ Model '{model}' correctly identified for /responses endpoint")
             
-            # Test payload creation logic
-            if len(messages) > 1:
-                context_messages = messages[:-1]
-                current_prompt = messages[-1].content
+            # Test payload creation logic - NEW FORMAT
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": msg.role, "content": msg.content} for msg in messages
+                ],
+                "stream": params.stream,
+            }
+            
+            if params.max_tokens:
+                payload["max_output_tokens"] = params.max_tokens
+            if params.temperature is not None:
+                payload["temperature"] = params.temperature
+            
+            print(f"✅ Payload created successfully:")
+            print(f"   - Model: {payload['model']}")
+            print(f"   - Messages count: {len(payload['messages'])}")
+            print(f"   - Stream: {payload['stream']}")
+            print(f"   - Max output tokens: {payload.get('max_output_tokens', 'Not set')}")
+            print(f"   - Temperature: {payload.get('temperature', 'Not set')}")
+            print(f"   - Messages format: ✅ (array of objects)")
+            
+            print(f"\n📝 Messages structure:")
+            for i, msg in enumerate(payload['messages']):
+                print(f"   [{i}] {msg['role']}: {msg['content'][:50]}...")
                 
-                full_prompt = ""
-                for msg in context_messages:
-                    full_prompt += f"{msg.role.title()}: {msg.content}\n\n"
-                full_prompt += f"User: {current_prompt}"
-                
-                payload = {
-                    "model": model,
-                    "prompt": full_prompt,
-                    "stream": params.stream,
-                }
-                
-                if params.max_tokens:
-                    payload["max_output_tokens"] = params.max_tokens
-                if params.temperature is not None:
-                    payload["temperature"] = params.temperature
-                
-                print(f"✅ Payload created successfully:")
-                print(f"   - Model: {payload['model']}")
-                print(f"   - Prompt length: {len(payload['prompt'])} chars")
-                print(f"   - Stream: {payload['stream']}")
-                print(f"   - Max output tokens: {payload.get('max_output_tokens', 'Not set')}")
-                print(f"   - Temperature: {payload.get('temperature', 'Not set')}")
-                print(f"   - NO 'system' parameter: ✅")
-                
-                print(f"\n📝 Generated prompt preview:")
-                print(f"   {payload['prompt'][:200]}...")
-                
-            else:
-                print("✅ Single message case handled correctly")
         else:
             print(f"❌ Model '{model}' NOT identified for /responses endpoint")
             
