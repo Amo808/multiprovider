@@ -3,6 +3,7 @@ import json
 import logging
 from typing import Dict, List, Optional, AsyncGenerator, Any
 import aiohttp
+from aiohttp import ClientTimeout
 import tiktoken
 from .base_provider import BaseAdapter, Message, GenerationParams, ChatResponse, ModelInfo, ModelProvider, ModelType, ProviderConfig, Usage
 
@@ -276,6 +277,8 @@ class OpenAIAdapter(BaseAdapter):
         
         # Special handling for GPT-5 on Render to prevent timeout
         is_gpt5 = model.startswith('gpt-5')
+        timeout_seconds = 45 if is_gpt5 else 300  # 45s for GPT-5, 5min for others
+        
         if is_gpt5:
             # Force streaming and reduce parameters for Render stability
             params.stream = True
@@ -413,7 +416,10 @@ class OpenAIAdapter(BaseAdapter):
             else:
                 url = f"{self.base_url}/chat/completions"
             
-            async with self.session.post(url, json=payload) as response:
+            # Set timeout based on model type - aggressive timeout for GPT-5 on Render
+            request_timeout = ClientTimeout(total=timeout_seconds)
+            
+            async with self.session.post(url, json=payload, timeout=request_timeout) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     self.logger.error(f"OpenAI API error: {response.status} - {error_text}")
@@ -562,11 +568,31 @@ class OpenAIAdapter(BaseAdapter):
                             continue
 
         except asyncio.TimeoutError:
-            self.logger.error("Request to OpenAI API timed out")
-            yield ChatResponse(
-                error="Request timed out",
-                meta={"provider": ModelProvider.OPENAI, "model": model}
-            )
+            self.logger.error(f"Request to OpenAI API timed out after {timeout_seconds}s")
+            if is_gpt5:
+                yield ChatResponse(
+                    content=f"⚠️ **GPT-5 timeout after {timeout_seconds}s** - This is expected on Render hosting due to 60s limits.\n\n💡 **Suggestions:**\n• Use GPT-4o for faster responses on Render\n• For full GPT-5 experience, deploy locally or use other hosting\n• Try shorter, more specific prompts",
+                    error=True,
+                    meta={"provider": ModelProvider.OPENAI, "model": model, "timeout": True, "render_limitation": True}
+                )
+            else:
+                yield ChatResponse(
+                    error="Request timed out",
+                    meta={"provider": ModelProvider.OPENAI, "model": model}
+                )
+        except aiohttp.ServerTimeoutError:
+            self.logger.error(f"Server timeout for OpenAI API after {timeout_seconds}s")
+            if is_gpt5:
+                yield ChatResponse(
+                    content=f"⚠️ **GPT-5 server timeout** - The model is taking longer than {timeout_seconds}s to respond.\n\n💡 **Suggestions:**\n• Use GPT-4o for faster responses\n• Try shorter prompts\n• For complex tasks, consider local deployment",
+                    error=True,
+                    meta={"provider": ModelProvider.OPENAI, "model": model, "timeout": True}
+                )
+            else:
+                yield ChatResponse(
+                    error="Server timeout",
+                    meta={"provider": ModelProvider.OPENAI, "model": model}
+                )
         except Exception as e:
             self.logger.error(f"Error in OpenAI API call: {e}")
             yield ChatResponse(
