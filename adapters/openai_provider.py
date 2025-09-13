@@ -413,7 +413,7 @@ class OpenAIAdapter(BaseAdapter):
                     responses_payload["system"] = context
                 
                 if params.max_tokens:
-                    responses_payload["max_completion_tokens"] = params.max_tokens
+                    responses_payload["max_output_tokens"] = params.max_tokens  # Fixed parameter name for /responses endpoint
                 if params.temperature is not None:
                     responses_payload["temperature"] = params.temperature
                     
@@ -637,20 +637,6 @@ class OpenAIAdapter(BaseAdapter):
                         except json.JSONDecodeError as e:
                             self.logger.warning(f"🔍 [OpenAI] JSON decode error: {e}")
                             continue
-                
-                # Send final completion signal for GPT-5
-                if is_gpt5:
-                    yield ChatResponse(
-                        content="",
-                        done=True,
-                        meta={
-                            "provider": ModelProvider.OPENAI,
-                            "model": model,
-                            "openai_completion": True,
-                            "total_tokens": input_tokens + output_tokens
-                        }
-                    )
-
         except asyncio.TimeoutError:
             self.logger.error("Request to OpenAI API timed out")
             yield ChatResponse(
@@ -664,20 +650,26 @@ class OpenAIAdapter(BaseAdapter):
                 meta={"provider": ModelProvider.OPENAI, "model": model}
             )
 
-        # Final response with complete usage
+        # Final response with complete usage for ALL models (including GPT-5)
         final_output_tokens = self.estimate_tokens(accumulated_content) if accumulated_content else output_tokens
+        
+        final_meta = {
+            "tokens_in": input_tokens,
+            "tokens_out": final_output_tokens,
+            "total_tokens": input_tokens + final_output_tokens,
+            "provider": ModelProvider.OPENAI,
+            "model": model,
+            "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model)
+        }
+        
+        # Add GPT-5 specific completion flag
+        if is_gpt5:
+            final_meta["openai_completion"] = True
         
         yield ChatResponse(
             content="",  # Empty content for final usage update
             done=True,
-            meta={
-                "tokens_in": input_tokens,
-                "tokens_out": final_output_tokens,
-                "total_tokens": input_tokens + final_output_tokens,
-                "provider": ModelProvider.OPENAI,
-                "model": model,
-                "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model)
-            }
+            meta=final_meta
         )
 
     def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
