@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -126,10 +126,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files (frontend)
-frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
-if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
+# Create API router with /api prefix
+api_router = APIRouter(prefix="/api")
 
 # Pydantic models
 class ChatRequest(BaseModel):
@@ -164,7 +162,7 @@ conversation_store = None
 prompt_builder = None
 app_config = None
 
-@app.get("/health")
+@api_router.get("/health")
 async def health_check():
     """Health check endpoint."""
     provider_status = {}
@@ -179,7 +177,7 @@ async def health_check():
         "timestamp": datetime.now().isoformat()
     }
 
-@app.get("/providers")
+@api_router.get("/providers")
 async def get_providers():
     """Get all providers and their status."""
     providers = []
@@ -197,7 +195,7 @@ async def get_providers():
         })
     return {"providers": providers}
 
-@app.post("/providers/{provider_id}/toggle")
+@api_router.post("/providers/{provider_id}/toggle")
 async def toggle_provider(provider_id: str, enabled: bool = True):
     """Enable or disable a provider."""
     try:
@@ -207,7 +205,7 @@ async def toggle_provider(provider_id: str, enabled: bool = True):
         logger.error(f"Failed to toggle provider {provider_id}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.put("/providers/{provider_id}/config")
+@api_router.put("/providers/{provider_id}/config")
 async def update_provider_config(provider_id: str, config_update: ProviderConfigUpdate):
     """Update provider configuration."""
     try:
@@ -231,7 +229,7 @@ async def update_provider_config(provider_id: str, config_update: ProviderConfig
         logger.error(f"Failed to update provider config {provider_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/providers/{provider_id}/models/refresh")
+@api_router.post("/providers/{provider_id}/models/refresh")
 async def refresh_provider_models(provider_id: str):
     """Refresh models for a specific provider."""
     try:
@@ -289,7 +287,7 @@ async def refresh_provider_models(provider_id: str):
             
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/providers/{provider_id}/test")
+@api_router.post("/providers/{provider_id}/test")
 async def test_provider_connection(provider_id: str):
     """Test connection to a specific provider."""
     try:
@@ -344,7 +342,7 @@ async def test_provider_connection(provider_id: str):
             "connected": False
         }
 
-@app.get("/history")
+@api_router.get("/history")
 async def get_history():
     """Get chat history."""
     try:
@@ -366,7 +364,7 @@ async def get_history():
         raise HTTPException(status_code=500, detail="Failed to retrieve history")
 
 
-@app.post("/chat/send")
+@api_router.post("/chat/send")
 async def send_message(request: ChatRequest, http_request: Request):
     """Send a chat message and get streaming response."""
     
@@ -585,7 +583,7 @@ async def send_message(request: ChatRequest, http_request: Request):
             headers={"X-Error-Type": "INTERNAL_ERROR"}
         )
 
-@app.delete("/history")
+@api_router.delete("/history")
 async def clear_history():
     """Clear chat history."""
     try:
@@ -596,7 +594,7 @@ async def clear_history():
         raise HTTPException(status_code=500, detail="Failed to clear history")
 
 
-@app.get("/models")
+@api_router.get("/models")
 async def get_all_models():
     """Get all available models from all providers."""
     try:
@@ -623,7 +621,7 @@ async def get_all_models():
         logger.error(f"Failed to get models: {e}")
         raise HTTPException(status_code=500, detail="Failed to get models")
 
-@app.get("/models/{provider_id}")
+@api_router.get("/models/{provider_id}")
 async def get_provider_models(provider_id: str):
     """Get models for specific provider."""
     try:
@@ -657,7 +655,7 @@ async def get_provider_models(provider_id: str):
         logger.error(f"Failed to get models for provider {provider_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to get provider models")
 
-@app.post("/config")
+@api_router.post("/config")
 async def update_config(config_data: dict):
     """Update application configuration."""
     try:
@@ -683,7 +681,7 @@ async def update_config(config_data: dict):
         logger.error(f"Failed to update config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/config")
+@api_router.get("/config")
 async def get_config():
     """Get current application configuration."""
     try:
@@ -777,7 +775,7 @@ async def get_config():
         logger.error(f"Failed to get config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/conversations")
+@api_router.get("/conversations")
 async def get_conversations():
     """Get list of all conversations."""
     try:
@@ -787,7 +785,7 @@ async def get_conversations():
         logger.error(f"Failed to get conversations: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve conversations")
 
-@app.post("/conversations")
+@api_router.post("/conversations")
 async def create_conversation(conversation_data: dict):
     """Create a new conversation."""
     try:
@@ -803,7 +801,7 @@ async def create_conversation(conversation_data: dict):
         logger.error(f"Failed to create conversation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/history/{conversation_id}")
+@api_router.get("/history/{conversation_id}")
 async def get_conversation_history(conversation_id: str):
     """Get chat history for a specific conversation."""
     try:
@@ -829,7 +827,7 @@ async def get_conversation_history(conversation_id: str):
         logger.error(f"Failed to get conversation history {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve conversation history")
 
-@app.delete("/history/{conversation_id}")
+@api_router.delete("/history/{conversation_id}")
 async def clear_conversation_history(conversation_id: str):
     """Clear chat history for a specific conversation."""
     try:
@@ -839,7 +837,7 @@ async def clear_conversation_history(conversation_id: str):
         logger.error(f"Failed to clear conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to clear conversation history")
 
-@app.put("/conversations/{conversation_id}/title")
+@api_router.put("/conversations/{conversation_id}/title")
 async def update_conversation_title(conversation_id: str, title_data: dict):
     """Update conversation title."""
     try:
@@ -853,7 +851,7 @@ async def update_conversation_title(conversation_id: str, title_data: dict):
         logger.error(f"Failed to update conversation title {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/config/generation")
+@api_router.put("/config/generation")
 async def update_generation_config(generation_config: dict):
     """Update generation configuration."""
     try:
@@ -901,7 +899,7 @@ async def update_generation_config(generation_config: dict):
         logger.error(f"Failed to update generation config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/conversations/{conversation_id}")
+@api_router.delete("/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str):
     """Delete a conversation and all its messages."""
     try:
@@ -912,6 +910,14 @@ async def delete_conversation(conversation_id: str):
     except Exception as e:
         logger.error(f"Failed to delete conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {str(e)}")
+
+# Register API router
+app.include_router(api_router)
+
+# Serve static files (frontend) at root - AFTER API router registration
+frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn
