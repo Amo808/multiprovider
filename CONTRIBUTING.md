@@ -1,14 +1,14 @@
 # Contributing Guide
 
-Thank you for considering contributing to AI Chat! This guide will help you get started.
+Thank you for considering contributing to AI Chat Multi-Provider! This guide will help you get started.
 
 ## Development Setup
 
 1. **Fork the repository**
 2. **Clone your fork:**
    ```bash
-   git clone https://github.com/your-username/ai-chat.git
-   cd ai-chat
+   git clone https://github.com/your-username/multiprovider.git
+   cd multiprovider
    ```
 
 3. **Follow the development setup** in [RUN_INSTRUCTIONS.md](RUN_INSTRUCTIONS.md)
@@ -16,7 +16,7 @@ Thank you for considering contributing to AI Chat! This guide will help you get 
 ## Project Structure
 
 ```
-ai-chat/
+multiprovider/
 ├── backend/              # Python FastAPI backend
 │   ├── main.py          # Main application entry
 │   ├── requirements.txt # Python dependencies

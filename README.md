@@ -1,5 +1,9 @@
 # AI Chat - Multi-Provider Assistant
 
+[![GitHub stars](https://img.shields.io/github/stars/Amo808/multiprovider?style=social)](https://github.com/Amo808/multiprovider)
+[![Deploy to Render](https://img.shields.io/badge/Deploy%20to-Render-46E3B7.svg)](https://render.com/deploy?repo=https://github.com/Amo808/multiprovider)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Professional AI chat application with support for multiple providers (OpenAI, DeepSeek, Anthropic, Gemini).
 
 ## 🚀 Quick Start
@@ -67,6 +71,9 @@ docker run -p 3000:3000 -p 8000:8000 ai-chat
 ### Cloud Platforms
 
 **Render.com** (Free tier available):
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Amo808/multiprovider)
+
 1. Connect your GitHub repository
 2. Render will auto-detect Dockerfile
 3. Add environment variables for API keys
