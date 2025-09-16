@@ -47,9 +47,15 @@ class DatabaseConversationStore:
         if db_path:
             self.db_path = Path(db_path)
         else:
-            # Default path
-            storage_dir = Path(__file__).parent.parent / "data"
-            storage_dir.mkdir(exist_ok=True)
+            # Определяем путь к файлу данных
+            if os.path.exists('/app'):
+                # В контейнере используем /app/data
+                storage_dir = Path('/app/data')
+            else:
+                # Локальная разработка - используем data в корне проекта
+                storage_dir = Path(__file__).parent.parent / "data"
+                
+            storage_dir.mkdir(parents=True, exist_ok=True)
             self.db_path = storage_dir / "conversations.db"
         
         logger.info(f"SQLite database path: {self.db_path}")

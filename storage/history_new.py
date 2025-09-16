@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -14,12 +15,22 @@ logger = logging.getLogger(__name__)
 class ConversationStore:
     """Manages conversation history storage with conversation isolation."""
 
-    def __init__(self, storage_dir: str = "data"):
+    def __init__(self, storage_dir: str = None):
+        # Определяем путь к директории данных
+        if storage_dir is None:
+            if os.path.exists('/app'):
+                # В контейнере используем /app/data
+                storage_dir = '/app/data'
+            else:
+                # Локальная разработка - используем data в корне проекта
+                project_root = Path(__file__).parent.parent
+                storage_dir = str(project_root / 'data')
+        
         self.storage_dir = Path(storage_dir)
-        self.storage_dir.mkdir(exist_ok=True)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.conversations_file = self.storage_dir / "conversations.json"
         self.messages_dir = self.storage_dir / "conversations"
-        self.messages_dir.mkdir(exist_ok=True)
+        self.messages_dir.mkdir(parents=True, exist_ok=True)
         
         # Thread safety
         self._lock = threading.RLock()
@@ -254,7 +265,7 @@ class ConversationStore:
 class HistoryStore:
     """Legacy history store - redirects to conversation store."""
     
-    def __init__(self, history_file: str = "../data/history.jsonl"):
+    def __init__(self, history_file: str = None):
         # Use default conversation for legacy compatibility
         self._conversation_store = ConversationStore()
         self._default_conversation_id = "default"

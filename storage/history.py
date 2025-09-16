@@ -1,5 +1,6 @@
 import json
 import uuid
+import os
 from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
@@ -15,9 +16,21 @@ logger = logging.getLogger(__name__)
 class HistoryStore:
     """Manages chat history storage in JSONL format."""
 
-    def __init__(self, history_file: str = "../data/history.jsonl"):
+    def __init__(self, history_file: str = None):
+        # Определяем путь к файлу данных
+        if history_file is None:
+            if os.path.exists('/app'):
+                # В контейнере используем /app/data
+                data_dir = Path('/app/data')
+            else:
+                # Локальная разработка - используем data в корне проекта
+                project_root = Path(__file__).parent.parent
+                data_dir = project_root / 'data'
+            
+            history_file = str(data_dir / 'history.jsonl')
+        
         self.history_file = Path(history_file)
-        self.history_file.parent.mkdir(exist_ok=True)
+        self.history_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Ensure file exists
         if not self.history_file.exists():

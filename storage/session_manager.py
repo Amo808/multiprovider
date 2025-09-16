@@ -1,5 +1,6 @@
 import json
 import uuid
+import os
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
@@ -91,9 +92,21 @@ class Session:
 class SessionManager:
     """Manages multiple chat sessions (Lobe Chat style)."""
 
-    def __init__(self, sessions_file: str = "../data/sessions.json"):
+    def __init__(self, sessions_file: str = None):
+        # Определяем путь к файлу данных
+        if sessions_file is None:
+            # В контейнере используем /app/data, локально - data рядом с проектом
+            if os.path.exists('/app'):
+                data_dir = Path('/app/data')
+            else:
+                # Локальная разработка - используем data в корне проекта
+                project_root = Path(__file__).parent.parent
+                data_dir = project_root / 'data'
+            
+            sessions_file = str(data_dir / 'sessions.json')
+        
         self.sessions_file = Path(sessions_file)
-        self.sessions_file.parent.mkdir(exist_ok=True)
+        self.sessions_file.parent.mkdir(parents=True, exist_ok=True)
         
         self._sessions: Dict[str, Session] = {}
         self._current_session_id: Optional[str] = None

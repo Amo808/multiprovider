@@ -42,7 +42,17 @@ class ProviderManager:
     """Manages all AI providers and their configurations"""
     
     def __init__(self, config_path: Optional[str] = None):
-        self.config_path = config_path or "data/providers_config.json"
+        if config_path is None:
+            # Определяем путь к файлу конфигурации
+            if os.path.exists('/app'):
+                # В контейнере используем /app/data
+                config_path = '/app/data/providers_config.json'
+            else:
+                # Локальная разработка - используем data в корне проекта
+                project_root = Path(__file__).parent.parent
+                config_path = str(project_root / 'data' / 'providers_config.json')
+        
+        self.config_path = config_path
         self.registry = registry
         self.provider_configs: Dict[ModelProvider, ProviderConfig] = {}
         self.provider_status: Dict[ModelProvider, ProviderStatus] = {}
