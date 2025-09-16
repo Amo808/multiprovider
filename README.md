@@ -13,8 +13,8 @@ Professional AI chat application with support for multiple providers (OpenAI, De
 
 1. **Clone & Setup**
    ```bash
-   git clone <your-repository-url>
-   cd ai-chat
+   git clone https://github.com/Amo808/multiprovider.git
+   cd multiprovider
    ```
 
 2. **Backend Setup**
@@ -84,8 +84,8 @@ docker run -p 3000:3000 -p 8000:8000 ai-chat
 ### VPS Deployment
 ```bash
 # Clone repository
-git clone <your-repo-url>
-cd ai-chat
+git clone https://github.com/Amo808/multiprovider.git
+cd multiprovider
 
 # Run installation script
 chmod +x deploy.sh
@@ -118,7 +118,7 @@ CORS_ORIGINS=http://localhost:3000
 ## Documentation
 
 - **Development**: See [RUN_INSTRUCTIONS.md](RUN_INSTRUCTIONS.md)
-- **Deployment**: Check deployment guides in `/docs`
+- **Deployment**: See [DEPLOYMENT.md](DEPLOYMENT.md)
 - **API**: Visit `/docs` endpoint when running
 
 ## Support

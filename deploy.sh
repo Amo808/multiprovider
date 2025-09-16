@@ -38,12 +38,12 @@ if ! command -v docker-compose &> /dev/null; then
 fi
 
 # Clone repository (if not already cloned)
-if [ ! -d "ai-chat" ]; then
+if [ ! -d "multiprovider" ]; then
     echo "📥 Cloning repository..."
-    git clone <your-repository-url> ai-chat
+    git clone https://github.com/Amo808/multiprovider.git multiprovider
 fi
 
-cd ai-chat
+cd multiprovider
 
 # Create environment file
 if [ ! -f ".env" ]; then
