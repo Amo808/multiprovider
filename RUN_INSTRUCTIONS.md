@@ -1,200 +1,189 @@
-# Инструкции по запуску AI Chat
+# Development Guide
 
-## Структура проекта
+## Prerequisites
+
+- **Python**: 3.8 or higher
+- **Node.js**: 16.0 or higher  
+- **Package Manager**: npm, yarn, or pnpm
+
+## Project Structure
+
 ```
 ai-chat/
-├── backend/           # Python FastAPI backend
-├── frontend/          # React + TypeScript frontend
-├── adapters/          # AI provider adapters (OpenAI, DeepSeek, etc.)
-├── data/             # Конфигурационные файлы
-└── logs/             # Логи приложения
+├── backend/          # Python FastAPI API server
+├── frontend/         # React + TypeScript web interface  
+├── adapters/         # AI provider adapters
+├── storage/          # Session and conversation management
+├── data/            # Configuration and database
+└── logs/            # Application logs (auto-created)
 ```
 
-## Предварительные требования
-- Python 3.8+
-- Node.js 16+
-- npm или pnpm
+## Development Setup
 
-## Запуск Backend
+### 1. Environment Setup
 
-### PowerShell команда (рекомендуемый способ):
-```powershell
-cd "c:\Users\Amo\Desktop\mulit\backend"; python main.py
+Create environment file:
+```bash
+# Copy example
+cp .env.example .env
+
+# Edit with your API keys
+nano .env
 ```
 
-### Пошаговый запуск:
-1. **Переход в директорию backend**
-   ```powershell
-   cd "c:\Users\Amo\Desktop\mulit\backend"
-   ```
+Required environment variables:
+```bash
+# At least one API key required
+OPENAI_API_KEY=your_openai_key_here
+DEEPSEEK_API_KEY=your_deepseek_key_here  
+ANTHROPIC_API_KEY=your_anthropic_key_here
+GOOGLE_API_KEY=your_google_key_here
 
-2. **Активация виртуального окружения (если нужно)**
-   ```powershell
-   # Если окружение уже создано:
-   .venv\Scripts\activate
-
-   # Если окружение не создано:
-   python -m venv .venv
-   .venv\Scripts\activate
-   ```
-
-3. **Установка зависимостей (если нужно)**
-   ```powershell
-   pip install -r requirements.txt
-   ```
-
-4. **Запуск сервера**
-   ```powershell
-   python main.py
-   ```
-Сервер запустится на `http://localhost:8000`
-
-## Запуск Frontend
-
-### PowerShell команда (рекомендуемый способ):
-```powershell
-cd "c:\Users\Amo\Desktop\mulit\frontend"; npm run dev
+# Optional settings
+PORT=8000
+NODE_ENV=development
+LOG_LEVEL=INFO
 ```
 
-### Пошаговый запуск:
-1. **Переход в директорию frontend**
-   ```powershell
-   cd "c:\Users\Amo\Desktop\mulit\frontend"
-   ```
+### 2. Backend Setup
 
-2. **Установка зависимостей (если нужно)**
-   ```powershell
-   npm install
-   ```
+```bash
+cd backend
 
-3. **Запуск dev сервера**
-   ```powershell
-   npm run dev
-   ```
-Frontend запустится на `http://localhost:5173`
+# Create virtual environment
+python -m venv .venv
 
-## Полный запуск (оба сервиса)
+# Activate virtual environment
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
 
-### Вариант 1: PowerShell команды (рекомендуемый)
-**Backend (терминал 1):**
-```powershell
-cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"; python main.py
+# Install dependencies
+pip install -r requirements.txt
+
+# Start server
+python main.py
 ```
 
-**Frontend (терминал 2):**
-```powershell
-cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"; npm run dev
+Backend will start on: `http://localhost:8000`
+
+### 3. Frontend Setup
+
+Open new terminal:
+```bash
+cd frontend
+
+# Install dependencies  
+npm install
+
+# Start development server
+npm run dev
 ```
 
-### Вариант 2: Пошагово в двух терминалах
-1. **Терминал 1 (Backend):**
-   ```powershell
-   cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"
-   .venv\Scripts\activate
-   python main.py
-   ```
+Frontend will start on: `http://localhost:3000`
 
-2. **Терминал 2 (Frontend):**
-   ```powershell
-   cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"
-   npm run dev
-   ```
+## Access Points
 
-### Вариант 3: Использование start.bat (если создан)
-```powershell
-cd "c:\Users\Amo\Desktop\lobecopy\ai-chat"
-start.bat
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8000  
+- **API Documentation**: http://localhost:8000/docs
+
+## Provider Configuration
+
+1. Open application in browser
+2. Click "Provider Settings" button
+3. Add API keys for desired providers
+4. Click "Test Connection" to verify
+5. Use "Refresh Models" to update available models
+
+## Troubleshooting
+
+### Backend Issues
+
+**Server won't start:**
+- Ensure virtual environment is activated
+- Check all dependencies are installed: `pip install -r requirements.txt`
+- Verify port 8000 is available
+
+**Provider errors:**
+- Check API keys are valid
+- Test connections in Provider Settings
+- Check logs in `/logs/app.log`
+
+### Frontend Issues
+
+**Development server won't start:**
+- Ensure Node.js is installed: `node --version`
+- Install dependencies: `npm install`
+- Check port 3000 is available
+
+**"Loading configuration..." stuck:**
+- Verify backend is running on port 8000
+- Check browser console for errors
+- Ensure CORS is configured correctly
+
+### Network Issues
+
+**API requests failing:**
+- Check if backend is accessible: `curl http://localhost:8000/health`
+- Verify Vite proxy configuration in `vite.config.ts`
+- Check firewall settings
+
+## Development Commands
+
+### Backend
+```bash
+# Run with auto-reload
+python main.py
+
+# Run tests
+python -m pytest
+
+# Check code style
+black . && isort .
 ```
 
-## Быстрый запуск (одна команда)
+### Frontend  
+```bash
+# Development server
+npm run dev
 
-Если у вас уже всё настроено, можете запустить оба сервера одной командой PowerShell с разделением процессов:
+# Build for production
+npm run build
 
-```powershell
-# Запустить Backend в фоне и сразу Frontend
-Start-Process powershell -ArgumentList '-NoExit', '-Command', 'cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"; python main.py'; cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"; npm run dev
+# Preview production build
+npm run preview
+
+# Type checking
+npm run type-check
+
+# Linting
+npm run lint
 ```
 
-Или откройте два окна PowerShell и выполните команды параллельно:
-1. **Окно 1**: `cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\backend"; python main.py`
-2. **Окно 2**: `cd "c:\Users\Amo\Desktop\lobecopy\ai-chat\frontend"; npm run dev`
+## Platform-Specific Notes
 
-## Доступ к приложению
+### Windows
+- Use `py` instead of `python` if Python launcher is installed
+- Use PowerShell or Command Prompt
+- Paths use backslashes: `backend\main.py`
 
-- **Frontend**: http://localhost:5173 (или другой порт, если 5173 занят - Vite автоматически найдет свободный)
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+### macOS/Linux
+- Use `python3` if multiple Python versions installed
+- Use forward slashes: `backend/main.py`
+- May need `sudo` for some installations
 
-> **Примечание**: Если порт 5173 занят, Vite автоматически выберет следующий доступный порт (3000, 3001, 3002, и т.д.). Проверьте вывод команды `npm run dev` для точного адреса.
+### Docker
+```bash
+# Build and run entire application
+docker-compose up --build
 
-## Настройка провайдеров
+# Run only backend
+docker-compose up backend
 
-1. Откройте приложение в браузере
-2. Нажмите кнопку "Provider Settings" 
-3. Настройте API ключи для нужных провайдеров:
-   - OpenAI: Нужен API ключ от OpenAI
-   - DeepSeek: Нужен API ключ от DeepSeek
-   - Anthropic: Нужен API ключ от Anthropic
-
-## Решение проблем
-
-### Backend не запускается
-- Проверьте, что виртуальное окружение активировано
-- Убедитесь, что все зависимости установлены
-- Проверьте, что порт 8000 свободен
-
-### Frontend не запускается
-- Убедитесь, что Node.js установлен
-- Проверьте, что зависимости установлены (`npm install`)
-- Проверьте, что порт 5173 свободен
-
-### Провайдер показывает "Connected" но не работает
-- Проверьте правильность API ключа
-- Нажмите "Test Connection" для проверки
-- Обновите модели кнопкой "Refresh Models"
-
-## Последние изменения (20.08.2025)
-
-### Исправлены проблемы с OpenAI провайдером:
-- ✅ Исправлена валидация OpenAI провайдера - больше не показывает "Connected" при неправильном API ключе
-- ✅ Добавлены эндпоинты для тестирования и обновления моделей:
-  - `POST /providers/{provider_id}/test` - тест соединения
-  - `POST /providers/{provider_id}/models/refresh` - обновление списка моделей
-- ✅ Улучшена обработка ошибок в UI - теперь показываются уведомления вместо alert()
-- ✅ Добавлена правильная индикация статуса API ключей (красный/зеленый индикатор)
-- ✅ Кнопки "Refresh Models" и "Test Connection" теперь показывают результат и состояние загрузки
-
-### Исправлена валидация подключений:
-- OpenAI провайдер теперь правильно обрабатывает ошибки 401/403
-- Улучшена проверка placeholder API ключей (your_api_key_here, sk-test-, etc.)
-- Добавлена проверка наличия API ключа перед попытками подключения
-
-### Обновлены PowerShell команды:
-- Добавлены правильные команды для Windows PowerShell с кавычками в путях
-- Команды протестированы и работают корректно
-
-## Тестирование исправлений OpenAI
-
-1. **Запустите приложение** (используя команды выше)
-2. **Откройте Provider Settings** в веб-интерфейсе
-3. **Для OpenAI провайдера**:
-   - Убедитесь, что показывается красный индикатор API key (если ключ не настроен)
-   - Попробуйте нажать "Test Connection" - должно показать ошибку о неправильном ключе
-   - Нажмите "Refresh Models" - должно показать ошибку
-   - Добавьте правильный API ключ через кнопку "API Key"
-   - После добавления ключа статус должен поменяться на зеленый
-   - "Test Connection" должен показать успех
-   - "Refresh Models" должен загрузить список моделей
-
-## Быстрая диагностика проблем
-
-```powershell
-# Проверить статус backend
-Invoke-WebRequest -Uri "http://localhost:8000/health" -Method GET
-
-# Проверить провайдеры
-Invoke-WebRequest -Uri "http://localhost:8000/providers" -Method GET
-
-# Проверить доступность frontend
-Invoke-WebRequest -Uri "http://localhost:3002" -Method GET
+# Run only frontend  
+docker-compose up frontend
 ```
+
+
