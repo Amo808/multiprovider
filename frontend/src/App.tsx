@@ -6,6 +6,7 @@ import {
   GenerationSettings, 
   ProviderManager,
   UnlockModal,
+  LoginModal,
   ConversationHistory,
   useConfig,
   useHealth,
@@ -38,12 +39,30 @@ function App() {
   });
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string>('');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginError, setLoginError] = useState<string>('');
 
   // API hooks
-  const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig } = useConfig();
+  const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig, fetchConfig } = useConfig();
   const { health } = useHealth();
   const { deleteConversation: deleteConversationMessages } = useConversations();
   const { deleteConversation: deleteConversationFromServer } = useApiConversations();
+
+  // Restore authentication on first mount
+  useEffect(() => {
+    try {
+      const storedPassword = localStorage.getItem('access_password');
+      if (storedPassword) {
+        apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${storedPassword}` }));
+        setIsAuthenticated(true);
+        fetchConfig();
+      } else {
+        // login modal shown automatically by !isAuthenticated conditional render
+      }
+    } catch {
+      // login modal shown automatically by !isAuthenticated conditional render
+    }
+  }, [fetchConfig]);
 
   // Initialize app
   useEffect(() => {
@@ -75,7 +94,12 @@ function App() {
   useEffect(() => {
     const loadConversations = async () => {
       try {
-        const response = await fetch('/api/conversations');
+        const response = await fetch('/api/conversations', { headers: apiClient['getHeaders'] ? (apiClient as any).getHeaders() : {} });
+        // Fallback: if 401, show login modal
+        if (response.status === 401) {
+          setIsAuthenticated(false);
+          return;
+        }
         const data = await response.json();
         const { conversations: backendConversations } = data;
         
@@ -118,8 +142,10 @@ function App() {
       }
     };
 
-    loadConversations();
-  }, []); // Run once on app start
+    if (isAuthenticated) {
+      loadConversations();
+    }
+  }, [isAuthenticated]); // Run once on app start
 
   // Set default model when config loads
   useEffect(() => {
@@ -435,6 +461,37 @@ function App() {
       default: return <Monitor size={16} />;
     }
   };
+
+  // Authentication handlers
+  const handleLogin = async (password: string) => {
+    try {
+      const response = await apiClient.post('/auth/login', { password });
+      if (response.data.success) {
+        localStorage.setItem('access_password', password);
+        apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${password}` }));
+        setIsAuthenticated(true);
+        // no need to hide modal explicitly; render path changes
+        setLoginError('');
+        await fetchConfig();
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.detail || 'Invalid password';
+      setLoginError(errorMessage);
+      throw new Error(errorMessage);
+    }
+  };
+
+  // Show login modal if not authenticated (force it open to avoid blank screen)
+  if (!isAuthenticated) {
+    return (
+      <LoginModal
+        isOpen={true}
+        onClose={() => { /* prevent closing without auth */ }}
+        onSuccess={handleLogin}
+        error={loginError}
+      />
+    );
+  }
 
   if (configLoading || !config) {
     return (

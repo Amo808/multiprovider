@@ -21,6 +21,8 @@ services:
         value: "False"
       - key: HOST
         value: "0.0.0.0"
+      - key: ACCESS_PASSWORD
+        sync: false
     buildCommand: ""
     startCommand: ""
     healthCheckPath: "/health"

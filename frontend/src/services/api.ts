@@ -18,9 +18,42 @@ const API_BASE_URL = '/api';
 export class ApiClient {
   private baseUrl: string;
   private activeRequests: Map<string, AbortController> = new Map();
+  private getAuthHeaders: (() => Record<string, string>) | null = null;
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
+  }
+
+  setAuthHeadersProvider(provider: () => Record<string, string>) {
+    this.getAuthHeaders = provider;
+  }
+
+  private getHeaders(): Record<string, string> {
+    const baseHeaders = { 'Content-Type': 'application/json' };
+    const authHeaders = this.getAuthHeaders?.() || {};
+    return { ...baseHeaders, ...authHeaders };
+  }
+
+  // Authentication method
+  async post(endpoint: string, data: any): Promise<{ data: any }> {
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw {
+        response: {
+          status: response.status,
+          data: errorData
+        }
+      };
+    }
+
+    const result = await response.json();
+    return { data: result };
   }
 
   // Chat Methods
@@ -42,9 +75,7 @@ export class ApiClient {
     try {
       const response = await fetch(`${this.baseUrl}/chat/send`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getHeaders(),
         body: JSON.stringify({
           ...request,
           stream: true
@@ -144,7 +175,9 @@ export class ApiClient {
 
   // Provider Management
   async getProviders(): Promise<ProviderListResponse> {
-    const response = await fetch(`${this.baseUrl}/providers`);
+    const response = await fetch(`${this.baseUrl}/providers`, {
+      headers: this.getHeaders()
+    });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -156,9 +189,7 @@ export class ApiClient {
   async toggleProvider(providerId: ModelProvider, enabled: boolean): Promise<ProviderStatus> {
     const response = await fetch(`${this.baseUrl}/providers/${providerId}/toggle`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({ enabled })
     });
 
@@ -177,9 +208,7 @@ export class ApiClient {
     console.log('API: Updating provider config for', providerId, config);
     const response = await fetch(`${this.baseUrl}/providers/${providerId}/config`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(config)
     });
 
@@ -235,9 +264,7 @@ export class ApiClient {
   async toggleModel(providerId: ModelProvider, modelId: string, enabled: boolean): Promise<ModelInfo> {
     const response = await fetch(`${this.baseUrl}/models/${providerId}/${modelId}/toggle`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({ enabled })
     });
 
@@ -282,7 +309,7 @@ export class ApiClient {
   }
 
   async getConversations(): Promise<any[]> {
-    const response = await fetch(`${this.baseUrl}/conversations`);
+    const response = await fetch(`${this.baseUrl}/conversations`, { headers: this.getHeaders() });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -315,9 +342,7 @@ export class ApiClient {
   async renameConversation(conversationId: string, title: string): Promise<any> {
     const response = await fetch(`${this.baseUrl}/conversations/${conversationId}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({ title })
     });
 
@@ -331,7 +356,7 @@ export class ApiClient {
   // Configuration Management
   async getConfig(): Promise<AppConfig> {
     console.log('API: Fetching config from', `${this.baseUrl}/config`);
-    const response = await fetch(`${this.baseUrl}/config`);
+    const response = await fetch(`${this.baseUrl}/config`, { headers: this.getHeaders() });
     
     if (!response.ok) {
       console.error('API: Config request failed:', response.status, response.statusText);
@@ -346,9 +371,7 @@ export class ApiClient {
   async updateConfig(config: Partial<AppConfig>): Promise<AppConfig> {
     const response = await fetch(`${this.baseUrl}/config`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(config)
     });
 
@@ -364,9 +387,7 @@ export class ApiClient {
   async updateGenerationConfig(config: Partial<GenerationConfig>): Promise<GenerationConfig> {
     const response = await fetch(`${this.baseUrl}/config/generation`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(config)
     });
 
@@ -447,9 +468,7 @@ export class ApiClient {
   async validateApiKey(providerId: ModelProvider, apiKey: string): Promise<{ valid: boolean; error?: string }> {
     const response = await fetch(`${this.baseUrl}/providers/${providerId}/validate-key`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({ api_key: apiKey })
     });
 

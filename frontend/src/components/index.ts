@@ -4,6 +4,7 @@ export { ChatInterface } from './ChatInterface';
 export { GenerationSettings } from './GenerationSettings';
 export { ProviderManager } from './ProviderManager';
 export { UnlockModal } from './UnlockModal';
+export { LoginModal } from './LoginModal';
 export { ConversationHistory } from './ConversationHistory';
 export { ContextViewer } from './ContextViewer';
 export { default as TokenCounter } from './TokenCounter';

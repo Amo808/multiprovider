@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, APIRouter
+from fastapi import FastAPI, HTTPException, Request, APIRouter, Depends, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +41,36 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Authentication setup
+ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "ai-chat-2024")
+
+def verify_auth_header(authorization: str = Header(None)):
+    """Verify authorization header for application access."""
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header required"
+        )
+    
+    # Check if it's Bearer token format
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization format. Use: Bearer <password>"
+        )
+    
+    # Extract password from Bearer token
+    password = authorization.replace("Bearer ", "")
+    if password != ACCESS_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access password"
+        )
+    return True
+
+class AuthRequest(BaseModel):
+    password: str
 
 # Global variables
 conversation_store = None
@@ -162,6 +192,21 @@ conversation_store = None
 prompt_builder = None
 app_config = None
 
+@api_router.post("/auth/login")
+async def authenticate(auth_request: AuthRequest):
+    """Authenticate user with password."""
+    if auth_request.password != ACCESS_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid password"
+        )
+    
+    return {
+        "success": True,
+        "message": "Authentication successful",
+        "token": "authenticated"  # Simple token for demo
+    }
+
 @api_router.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -178,7 +223,7 @@ async def health_check():
     }
 
 @api_router.get("/providers")
-async def get_providers():
+async def get_providers(_: bool = Depends(verify_auth_header)):
     """Get all providers and their status."""
     providers = []
     for status in provider_manager.provider_status.values():
@@ -365,7 +410,7 @@ async def get_history():
 
 
 @api_router.post("/chat/send")
-async def send_message(request: ChatRequest, http_request: Request):
+async def send_message(request: ChatRequest, http_request: Request, _: bool = Depends(verify_auth_header)):
     """Send a chat message and get streaming response."""
     
     def generate_error_stream(error_message: str, error_type: str = "error"):
@@ -682,7 +727,7 @@ async def update_config(config_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/config")
-async def get_config():
+async def get_config(_: bool = Depends(verify_auth_header)):
     """Get current application configuration."""
     try:
         # Load fresh config from file
@@ -776,7 +821,7 @@ async def get_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/conversations")
-async def get_conversations():
+async def get_conversations(_: bool = Depends(verify_auth_header)):
     """Get list of all conversations."""
     try:
         conversations = conversation_store.get_conversations()
