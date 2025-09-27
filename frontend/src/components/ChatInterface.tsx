@@ -3,6 +3,7 @@ import { Send, Bot, User, Copy, RefreshCw, AlertCircle, Zap, Square, Brain } fro
 import { Message, ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversations } from '../hooks/useConversations';
 import { ContextViewer } from './ContextViewer';
+import { Button } from './ui/button';
 
 interface ChatInterfaceProps {
   selectedModel?: ModelInfo;
@@ -462,36 +463,36 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             />
             
             {messages.length > 0 && (
-              <button
+              <Button
                 type="button"
                 onClick={handleClearHistory}
                 disabled={isStreaming}
-                className="px-4 py-3 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                variant="ghost"
                 title="Clear conversation"
               >
                 <RefreshCw size={20} />
-              </button>
+              </Button>
             )}
             
-            
             {isStreaming ? (
-              <button
+              <Button
                 type="button"
                 onClick={() => stopStreaming(conversationId)}
-                className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors flex items-center space-x-2"
+                variant="destructive"
                 title="Stop generation"
+                className="px-6"
               >
                 <Square size={20} />
-                <span className="text-sm">Stop</span>
-              </button>
+                <span className="text-sm ml-2">Stop</span>
+              </Button>
             ) : (
-              <button
+              <Button
                 type="submit"
                 disabled={!canSend}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+                className="px-6"
               >
                 <Send size={20} />
-              </button>
+              </Button>
             )}
           </div>
         </form>
