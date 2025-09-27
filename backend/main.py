@@ -681,6 +681,153 @@ async def delete_conversation(conversation_id: str, user_email: str = Depends(ge
         logger.error(f"Failed to delete conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {str(e)}")
 
+@api_router.get("/models")
+async def get_all_models(_: str = Depends(get_current_user)):
+    """Get all available models from all providers."""
+    try:
+        all_models = provider_manager.get_all_models()
+        return {
+            "models": [
+                {
+                    "id": model.id,
+                    "name": model.name,
+                    "display_name": model.display_name,
+                    "provider": model.provider.value,
+                    "context_length": model.context_length,
+                    "supports_streaming": model.supports_streaming,
+                    "supports_functions": model.supports_functions,
+                    "supports_vision": model.supports_vision,
+                    "type": model.type.value,
+                    "enabled": model.enabled,
+                    "pricing": model.pricing
+                }
+                for model in all_models
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Failed to get models: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get models")
+
+@api_router.get("/config")
+async def get_config(_: str = Depends(get_current_user)):
+    """Get current application configuration."""
+    try:
+        # Load fresh config from file
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                current_app_config = json.load(f)
+        else:
+            current_app_config = {}
+            
+        # Get enabled providers from provider manager
+        enabled_providers = provider_manager.get_enabled_providers()
+        
+        # Build full provider configs with models
+        provider_configs = {}
+        for status in enabled_providers:
+            provider_id = status.id.value  # Convert enum to string
+            
+            # Get models for this provider
+            models = provider_manager.get_models_by_provider(status.id)
+            
+            provider_configs[provider_id] = {
+                "id": provider_id,
+                "name": status.name,
+                "enabled": status.enabled,
+                "logo": f"/logos/{provider_id}.png",
+                "description": f"{status.name} AI models",
+                "keyVaults": {
+                    "apiKey": None  # Don't expose actual keys
+                },
+                "settings": {
+                    "showApiKey": True,
+                    "showModelFetcher": True,
+                    "disableBrowserRequest": False,
+                    "supportResponsesApi": True
+                },
+                "fetchOnClient": False,
+                "models": [
+                    {
+                        "id": model.id,
+                        "name": model.name,
+                        "display_name": model.display_name,
+                        "provider": provider_id,
+                        "context_length": model.context_length,
+                        "supports_streaming": model.supports_streaming,
+                        "supports_functions": model.supports_functions,
+                        "supports_vision": model.supports_vision,
+                        "type": model.type.value,
+                        "enabled": model.enabled,
+                        "pricing": model.pricing
+                    }
+                    for model in models
+                ]
+            }
+        
+        # Build complete config
+        full_config = {
+            "activeProvider": current_app_config.get("activeProvider", "deepseek"),
+            "activeModel": current_app_config.get("activeModel", "deepseek-chat"),
+            "providers": provider_configs,
+            "generation": {
+                **{  # Default values first
+                    "temperature": 0.7,
+                    "max_tokens": 8192,  # Default for DeepSeek  
+                    "top_p": 0.9,
+                    "frequency_penalty": 0.0,
+                    "presence_penalty": 0.0,
+                    "stream": True,
+                },
+                **current_app_config.get("generation", {})  # Override with saved values
+            },
+            "ui": current_app_config.get("ui", {
+                "theme": "light",
+                "fontSize": 14,
+                "language": "en",
+                "enableMarkdown": True,
+                "enableLatex": True,
+                "compactMode": False
+            }),
+            "system": current_app_config.get("system", {
+                "system_prompt": "You are a helpful AI assistant.",
+                "max_context_tokens": 32768,  # Increased to 32K tokens
+                "auto_save": True,
+                "conversations_limit": 100
+            })
+        }
+        
+        return {"config": full_config}
+    except Exception as e:
+        logger.error(f"Failed to get config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/config")
+async def update_config(config_data: dict, _: str = Depends(get_current_user)):
+    """Update application configuration."""
+    try:
+        global app_config
+        
+        # Update configuration
+        for key, value in config_data.items():
+            if key in app_config:
+                if isinstance(app_config[key], dict) and isinstance(value, dict):
+                    app_config[key].update(value)
+                else:
+                    app_config[key] = value
+        
+        # Save updated config to file
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump(app_config, f, indent=2)
+        
+        return {"message": "Configuration updated successfully", "config": app_config}
+        
+    except Exception as e:
+        logger.error(f"Failed to update config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Register API router
 app.include_router(api_router)
 app.include_router(google_auth_router)

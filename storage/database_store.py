@@ -148,6 +148,40 @@ class DatabaseConversationStore:
                         ON messages(conversation_id, created_at)
                     ''')
                 
+                # --- BEGIN USER MULTI-TENANCY EXTENSION ---
+                try:
+                    if self.db_type == 'postgresql':
+                        # Add user_email column if not exists
+                        cursor.execute("""
+                            DO $$
+                            BEGIN
+                                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                    WHERE table_name='conversations' AND column_name='user_email') THEN
+                                    ALTER TABLE conversations ADD COLUMN user_email VARCHAR(320);
+                                END IF;
+                                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                    WHERE table_name='messages' AND column_name='user_email') THEN
+                                    ALTER TABLE messages ADD COLUMN user_email VARCHAR(320);
+                                END IF;
+                            END;$$;""")
+                        cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_user_email ON conversations(user_email);")
+                        cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_user_email_conv ON messages(user_email, conversation_id);")
+                    else:
+                        # SQLite: detect and add columns
+                        cursor.execute("PRAGMA table_info(conversations);")
+                        conv_cols = [r[1] for r in cursor.fetchall()]
+                        if 'user_email' not in conv_cols:
+                            cursor.execute("ALTER TABLE conversations ADD COLUMN user_email TEXT")
+                        cursor.execute("PRAGMA table_info(messages);")
+                        msg_cols = [r[1] for r in cursor.fetchall()]
+                        if 'user_email' not in msg_cols:
+                            cursor.execute("ALTER TABLE messages ADD COLUMN user_email TEXT")
+                        cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_user_email ON conversations(user_email);")
+                        cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_user_email_conv ON messages(user_email, conversation_id);")
+                except Exception as e:
+                    logger.warning(f"[MultiTenant] Failed to ensure user_email columns/indexes: {e}")
+                # --- END USER MULTI-TENANCY EXTENSION ---
+                
                 conn.commit()
                 logger.info("Database tables initialized successfully")
                 
@@ -158,8 +192,8 @@ class DatabaseConversationStore:
             finally:
                 conn.close()
 
-    def create_conversation(self, conversation_id: str, title: str = None) -> None:
-        """Create a new conversation."""
+    def create_conversation(self, conversation_id: str, title: str = None, user_email: Optional[str] = None) -> None:
+        """Create a new conversation scoped to user (if provided)."""
         with self._lock:
             conn = self._get_connection()
             try:
@@ -168,17 +202,29 @@ class DatabaseConversationStore:
                 title = title or f"Conversation {conversation_id[:8]}"
                 now = datetime.now().isoformat()
                 
+                # Prevent duplicate for same user
                 if self.db_type == 'postgresql':
-                    cursor.execute('''
-                        INSERT INTO conversations (id, title, created_at, updated_at, message_count)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (id) DO NOTHING
-                    ''', (conversation_id, title, now, now, 0))
+                    if user_email:
+                        cursor.execute("SELECT 1 FROM conversations WHERE id=%s AND user_email=%s", (conversation_id, user_email))
+                    else:
+                        cursor.execute("SELECT 1 FROM conversations WHERE id=%s AND user_email IS NULL", (conversation_id,))
+                    if cursor.fetchone():
+                        return
+                    cursor.execute(
+                        'INSERT INTO conversations (id, title, created_at, updated_at, message_count, user_email) VALUES (%s,%s,%s,%s,%s,%s)',
+                        (conversation_id, title, now, now, 0, user_email)
+                    )
                 else:
-                    cursor.execute('''
-                        INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, message_count)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (conversation_id, title, now, now, 0))
+                    if user_email:
+                        cursor.execute('SELECT 1 FROM conversations WHERE id=? AND user_email=?', (conversation_id, user_email))
+                    else:
+                        cursor.execute('SELECT 1 FROM conversations WHERE id=? AND (user_email IS NULL OR user_email="")', (conversation_id,))
+                    if cursor.fetchone():
+                        return
+                    cursor.execute(
+                        'INSERT INTO conversations (id, title, created_at, updated_at, message_count, user_email) VALUES (?,?,?,?,?,?)',
+                        (conversation_id, title, now, now, 0, user_email)
+                    )
                 
                 conn.commit()
                 logger.info(f"[DatabaseStore] Created conversation: {conversation_id}")
@@ -190,54 +236,36 @@ class DatabaseConversationStore:
             finally:
                 conn.close()
 
-    def save_message(self, conversation_id: str, message: Message) -> None:
-        """Save a message to specific conversation."""
+    def save_message(self, conversation_id: str, message: Message, user_email: Optional[str] = None) -> None:
+        """Save a message to specific conversation for user."""
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
                 
                 # Ensure conversation exists
-                self.create_conversation(conversation_id)
+                self.create_conversation(conversation_id, user_email=user_email)
                 
                 # Prepare message data
                 if not message.meta:
                     message.meta = {}
                 message.meta["conversation_id"] = conversation_id
+                if user_email:
+                    message.meta["user_email"] = user_email
                 
                 timestamp = message.timestamp.isoformat() if hasattr(message.timestamp, 'isoformat') else str(message.timestamp)
                 meta_json = json.dumps(message.meta) if message.meta else None
                 
-                # Insert message
                 if self.db_type == 'postgresql':
-                    cursor.execute('''
-                        INSERT INTO messages (id, conversation_id, role, content, timestamp, meta)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    ''', (message.id, conversation_id, message.role, message.content, timestamp, meta_json))
+                    cursor.execute('''INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, user_email) VALUES (%s,%s,%s,%s,%s,%s,%s)''',
+                                   (message.id, conversation_id, message.role, message.content, timestamp, meta_json, user_email))
+                    cursor.execute('''UPDATE conversations SET message_count=(SELECT COUNT(*) FROM messages WHERE conversation_id=%s AND (user_email=%s OR (%s IS NULL AND user_email IS NULL))), updated_at=%s WHERE id=%s AND (user_email=%s OR (%s IS NULL AND user_email IS NULL))''',
+                                   (conversation_id, user_email, user_email, datetime.now().isoformat(), conversation_id, user_email, user_email))
                 else:
-                    cursor.execute('''
-                        INSERT INTO messages (id, conversation_id, role, content, timestamp, meta)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (message.id, conversation_id, message.role, message.content, timestamp, meta_json))
-                
-                # Update conversation stats
-                now = datetime.now().isoformat()
-                if self.db_type == 'postgresql':
-                    cursor.execute('''
-                        UPDATE conversations 
-                        SET message_count = (
-                            SELECT COUNT(*) FROM messages WHERE conversation_id = %s
-                        ), updated_at = %s
-                        WHERE id = %s
-                    ''', (conversation_id, now, conversation_id))
-                else:
-                    cursor.execute('''
-                        UPDATE conversations 
-                        SET message_count = (
-                            SELECT COUNT(*) FROM messages WHERE conversation_id = ?
-                        ), updated_at = ?
-                        WHERE id = ?
-                    ''', (conversation_id, now, conversation_id))
+                    cursor.execute('''INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, user_email) VALUES (?,?,?,?,?,?,?)''',
+                                   (message.id, conversation_id, message.role, message.content, timestamp, meta_json, user_email))
+                    cursor.execute('''UPDATE conversations SET message_count=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND (user_email=? OR (? IS NULL AND (user_email IS NULL OR user_email="")))), updated_at=? WHERE id=? AND (user_email=? OR (? IS NULL AND (user_email IS NULL OR user_email="")))''',
+                                   (conversation_id, user_email, user_email, datetime.now().isoformat(), conversation_id, user_email, user_email))
                 
                 conn.commit()
                 logger.info(f"[DatabaseStore] Saved message to conversation: {conversation_id}")
@@ -249,70 +277,46 @@ class DatabaseConversationStore:
             finally:
                 conn.close()
 
-    def load_conversation_history(self, conversation_id: str, limit: Optional[int] = None) -> List[Message]:
-        """Load chat history for specific conversation."""
+    def load_conversation_history(self, conversation_id: str, limit: Optional[int] = None, user_email: Optional[str] = None) -> List[Message]:
+        """Load chat history for a conversation (scoped by user)."""
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                
+                params = [conversation_id]
+                clause = "conversation_id = ?"
+                if self.db_type == 'postgresql':
+                    clause = "conversation_id = %s"
+                if user_email:
+                    clause += " AND user_email = %s" if self.db_type == 'postgresql' else " AND user_email = ?"
+                    params.append(user_email)
+                else:
+                    clause += " AND (user_email IS NULL OR user_email='' )"
                 if limit:
                     if self.db_type == 'postgresql':
-                        cursor.execute('''
-                            SELECT id, role, content, timestamp, meta
-                            FROM messages 
-                            WHERE conversation_id = %s
-                            ORDER BY created_at ASC
-                            LIMIT %s
-                        ''', (conversation_id, limit))
+                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC LIMIT %s''', (*params, limit))
                     else:
-                        cursor.execute('''
-                            SELECT id, role, content, timestamp, meta
-                            FROM messages 
-                            WHERE conversation_id = ?
-                            ORDER BY created_at ASC
-                            LIMIT ?
-                        ''', (conversation_id, limit))
+                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC LIMIT ?''', (*params, limit))
                 else:
-                    param = (conversation_id,)
                     if self.db_type == 'postgresql':
-                        cursor.execute('''
-                            SELECT id, role, content, timestamp, meta
-                            FROM messages 
-                            WHERE conversation_id = %s
-                            ORDER BY created_at ASC
-                        ''', param)
+                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC''', params)
                     else:
-                        cursor.execute('''
-                            SELECT id, role, content, timestamp, meta
-                            FROM messages 
-                            WHERE conversation_id = ?
-                            ORDER BY created_at ASC
-                        ''', param)
-                
+                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC''', params)
                 rows = cursor.fetchall()
-                messages = []
-                
+                messages: List[Message] = []
                 for row in rows:
                     msg_id, role, content, timestamp_str, meta_json = row
                     
                     # Parse timestamp
                     try:
                         timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                    except (ValueError, AttributeError):
+                    except Exception:
                         timestamp = datetime.now()
                     
                     # Parse meta
                     meta = json.loads(meta_json) if meta_json else {}
                     
-                    message = Message(
-                        id=msg_id,
-                        role=role,
-                        content=content,
-                        timestamp=timestamp,
-                        meta=meta
-                    )
-                    messages.append(message)
+                    messages.append(Message(id=msg_id, role=role, content=content, timestamp=timestamp, meta=meta))
                 
                 logger.info(f"[DatabaseStore] Loaded {len(messages)} messages for {conversation_id}")
                 return messages
@@ -323,41 +327,33 @@ class DatabaseConversationStore:
             finally:
                 conn.close()
 
-    def get_conversations(self) -> List[dict]:
-        """Get list of all conversations."""
+    def get_conversations(self, user_email: Optional[str]) -> List[dict]:
+        """List conversations for a user."""
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
                 
-                cursor.execute('''
-                    SELECT id, title, created_at, updated_at, message_count
-                    FROM conversations
-                    ORDER BY updated_at DESC
-                ''')
+                if user_email:
+                    if self.db_type == 'postgresql':
+                        cursor.execute('''SELECT id, title, created_at, updated_at, message_count FROM conversations WHERE user_email=%s ORDER BY updated_at DESC''', (user_email,))
+                    else:
+                        cursor.execute('''SELECT id, title, created_at, updated_at, message_count FROM conversations WHERE user_email=? ORDER BY updated_at DESC''', (user_email,))
+                else:
+                    # Legacy anonymous (should be none once all users have email)
+                    cursor.execute('''SELECT id, title, created_at, updated_at, message_count FROM conversations WHERE user_email IS NULL OR user_email='' ORDER BY updated_at DESC''')
                 
                 rows = cursor.fetchall()
-                conversations = []
-                
-                for row in rows:
-                    conv_id, title, created_at, updated_at, message_count = row
-                    conversations.append({
-                        "id": conv_id,
-                        "title": title,
-                        "created_at": created_at,
-                        "updated_at": updated_at,
-                        "message_count": message_count
-                    })
-                
-                return conversations
-                
+                return [
+                    {"id": r[0], "title": r[1], "created_at": r[2], "updated_at": r[3], "message_count": r[4]} for r in rows
+                ]
             except Exception as e:
                 logger.error(f"Failed to get conversations: {e}")
                 return []
             finally:
                 conn.close()
 
-    def clear_conversation(self, conversation_id: str) -> None:
+    def clear_conversation(self, conversation_id: str, user_email: Optional[str]) -> None:
         """Clear specific conversation history."""
         with self._lock:
             conn = self._get_connection()
@@ -366,19 +362,11 @@ class DatabaseConversationStore:
                 
                 # Delete messages
                 if self.db_type == 'postgresql':
-                    cursor.execute('DELETE FROM messages WHERE conversation_id = %s', (conversation_id,))
-                    cursor.execute('''
-                        UPDATE conversations 
-                        SET message_count = 0, updated_at = %s 
-                        WHERE id = %s
-                    ''', (datetime.now().isoformat(), conversation_id))
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=%s AND user_email=%s', (conversation_id, user_email))
+                    cursor.execute('UPDATE conversations SET message_count=0, updated_at=%s WHERE id=%s AND user_email=%s', (datetime.now().isoformat(), conversation_id, user_email))
                 else:
-                    cursor.execute('DELETE FROM messages WHERE conversation_id = ?', (conversation_id,))
-                    cursor.execute('''
-                        UPDATE conversations 
-                        SET message_count = 0, updated_at = ? 
-                        WHERE id = ?
-                    ''', (datetime.now().isoformat(), conversation_id))
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=? AND user_email=?', (conversation_id, user_email))
+                    cursor.execute('UPDATE conversations SET message_count=0, updated_at=? WHERE id=? AND user_email=?', (datetime.now().isoformat(), conversation_id, user_email))
                 
                 conn.commit()
                 logger.info(f"[DatabaseStore] Cleared conversation: {conversation_id}")
@@ -390,7 +378,7 @@ class DatabaseConversationStore:
             finally:
                 conn.close()
 
-    def delete_conversation(self, conversation_id: str) -> None:
+    def delete_conversation(self, conversation_id: str, user_email: Optional[str]) -> None:
         """Delete entire conversation."""
         with self._lock:
             conn = self._get_connection()
@@ -399,11 +387,11 @@ class DatabaseConversationStore:
                 
                 # Delete messages first (foreign key constraint)
                 if self.db_type == 'postgresql':
-                    cursor.execute('DELETE FROM messages WHERE conversation_id = %s', (conversation_id,))
-                    cursor.execute('DELETE FROM conversations WHERE id = %s', (conversation_id,))
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=%s AND user_email=%s', (conversation_id, user_email))
+                    cursor.execute('DELETE FROM conversations WHERE id=%s AND user_email=%s', (conversation_id, user_email))
                 else:
-                    cursor.execute('DELETE FROM messages WHERE conversation_id = ?', (conversation_id,))
-                    cursor.execute('DELETE FROM conversations WHERE id = ?', (conversation_id,))
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=? AND user_email=?', (conversation_id, user_email))
+                    cursor.execute('DELETE FROM conversations WHERE id=? AND user_email=?', (conversation_id, user_email))
                 
                 conn.commit()
                 logger.info(f"[DatabaseStore] Deleted conversation: {conversation_id}")
@@ -415,7 +403,7 @@ class DatabaseConversationStore:
             finally:
                 conn.close()
 
-    def update_conversation_title(self, conversation_id: str, title: str) -> None:
+    def update_conversation_title(self, conversation_id: str, title: str, user_email: Optional[str]) -> None:
         """Update conversation title."""
         with self._lock:
             conn = self._get_connection()
@@ -424,17 +412,9 @@ class DatabaseConversationStore:
                 
                 now = datetime.now().isoformat()
                 if self.db_type == 'postgresql':
-                    cursor.execute('''
-                        UPDATE conversations 
-                        SET title = %s, updated_at = %s 
-                        WHERE id = %s
-                    ''', (title, now, conversation_id))
+                    cursor.execute('UPDATE conversations SET title=%s, updated_at=%s WHERE id=%s AND user_email=%s', (title, now, conversation_id, user_email))
                 else:
-                    cursor.execute('''
-                        UPDATE conversations 
-                        SET title = ?, updated_at = ? 
-                        WHERE id = ?
-                    ''', (title, now, conversation_id))
+                    cursor.execute('UPDATE conversations SET title=?, updated_at=? WHERE id=? AND user_email=?', (title, now, conversation_id, user_email))
                 
                 conn.commit()
                 logger.info(f"[DatabaseStore] Updated title for {conversation_id}")
