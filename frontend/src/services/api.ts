@@ -224,7 +224,8 @@ export class ApiClient {
 
   async refreshProviderModels(providerId: ModelProvider): Promise<ModelsResponse> {
     const response = await fetch(`${this.baseUrl}/providers/${providerId}/models/refresh`, {
-      method: 'POST'
+      method: 'POST',
+      headers: this.getHeaders()
     });
 
     if (!response.ok) {
@@ -241,7 +242,7 @@ export class ApiClient {
       ? `${this.baseUrl}/models?provider=${providerId}`
       : `${this.baseUrl}/models`;
     
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: this.getHeaders() });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -252,7 +253,7 @@ export class ApiClient {
   }
 
   async getModel(providerId: ModelProvider, modelId: string): Promise<ModelInfo> {
-    const response = await fetch(`${this.baseUrl}/models/${providerId}/${modelId}`);
+    const response = await fetch(`${this.baseUrl}/models/${providerId}/${modelId}`, { headers: this.getHeaders() });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -282,7 +283,7 @@ export class ApiClient {
       ? `${this.baseUrl}/history/${conversationId}`
       : `${this.baseUrl}/history`;
     
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: this.getHeaders() });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -292,13 +293,14 @@ export class ApiClient {
     return data.messages || data;
   }
 
-  async clearHistory(conversationId?: string): Promise<{ success: boolean }> {
+  async clearHistory(conversationId?: string): Promise<{ success: boolean } | { message: string }> {
     const url = conversationId 
       ? `${this.baseUrl}/history/${conversationId}`
       : `${this.baseUrl}/history`;
     
     const response = await fetch(url, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: this.getHeaders()
     });
     
     if (!response.ok) {
@@ -327,9 +329,23 @@ export class ApiClient {
     }
   }
 
+  async createConversation(conversationId: string, title: string): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/conversations`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ id: conversationId, title })
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
   async deleteConversation(conversationId: string): Promise<{ success: boolean }> {
     const response = await fetch(`${this.baseUrl}/conversations/${conversationId}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: this.getHeaders()
     });
 
     if (!response.ok) {
@@ -340,7 +356,7 @@ export class ApiClient {
   }
 
   async renameConversation(conversationId: string, title: string): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/conversations/${conversationId}`, {
+    const response = await fetch(`${this.baseUrl}/conversations/${conversationId}/title`, {
       method: 'PUT',
       headers: this.getHeaders(),
       body: JSON.stringify({ title })
@@ -401,7 +417,8 @@ export class ApiClient {
 
   async resetConfig(): Promise<AppConfig> {
     const response = await fetch(`${this.baseUrl}/config/reset`, {
-      method: 'POST'
+      method: 'POST',
+      headers: this.getHeaders()
     });
 
     if (!response.ok) {
@@ -414,6 +431,7 @@ export class ApiClient {
 
   // System and Health
   async healthCheck(): Promise<HealthResponse> {
+    // Health can remain unauthenticated if desired, leave without auth headers
     const response = await fetch(`${this.baseUrl}/health`);
     
     if (!response.ok) {
@@ -425,7 +443,8 @@ export class ApiClient {
 
   async testProvider(providerId: ModelProvider): Promise<{ success: boolean; error?: string }> {
     const response = await fetch(`${this.baseUrl}/providers/${providerId}/test`, {
-      method: 'POST'
+      method: 'POST',
+      headers: this.getHeaders()
     });
 
     if (!response.ok) {
@@ -438,7 +457,7 @@ export class ApiClient {
 
   // Import/Export
   async exportConversations(): Promise<Blob> {
-    const response = await fetch(`${this.baseUrl}/export/conversations`);
+    const response = await fetch(`${this.baseUrl}/export/conversations`, { headers: this.getHeaders() });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -451,8 +470,11 @@ export class ApiClient {
     const formData = new FormData();
     formData.append('file', file);
 
+    const authHeaders = this.getAuthHeaders?.() || {};
+
     const response = await fetch(`${this.baseUrl}/import/conversations`, {
       method: 'POST',
+      headers: authHeaders, // Let browser set multipart boundary; don't include Content-Type manually
       body: formData
     });
 
@@ -493,7 +515,7 @@ export class ApiClient {
   }
 
   async getUsageStats(): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/stats/usage`);
+    const response = await fetch(`${this.baseUrl}/stats/usage`, { headers: this.getHeaders() });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);

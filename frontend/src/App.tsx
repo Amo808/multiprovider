@@ -42,6 +42,12 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
+  // Helper to get auth headers (avoid TypeScript private access)
+  const getAuthHeaders = () => {
+    // @ts-ignore accessing internal for convenience
+    return apiClient['getHeaders'] ? (apiClient as any).getHeaders() : {};
+  };
+
   // ========================= Hooks =========================
   const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig, fetchConfig } = useConfig();
   const { health } = useHealth();
@@ -94,7 +100,7 @@ function App() {
   useEffect(() => {
     const loadConversations = async () => {
       try {
-        const response = await fetch('/api/conversations', { headers: apiClient['getHeaders'] ? (apiClient as any).getHeaders() : {} });
+        const response = await fetch('/api/conversations', { headers: getAuthHeaders() });
         // Fallback: if 401, show login modal
         if (response.status === 401) {
           setIsAuthenticated(false);
@@ -105,7 +111,7 @@ function App() {
         
         if (backendConversations && backendConversations.length > 0) {
           // Transform backend data to frontend format
-          const transformedConversations = backendConversations.map((conv: any) => ({
+            const transformedConversations = backendConversations.map((conv: any) => ({
             id: conv.id,
             title: conv.title || 'Untitled Conversation',
             updatedAt: conv.updated_at || new Date().toISOString()
@@ -292,22 +298,19 @@ function App() {
     };
     
     try {
-      // Create conversation in backend
       await fetch('/api/conversations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           id: newId,
           title: 'New Conversation'
         })
       });
       
-      // Update local state
       setConversations(prev => [newConversation, ...prev]);
       setCurrentConversationId(newId);
     } catch (error) {
       console.error('Failed to create conversation:', error);
-      // Still update local state for offline functionality
       setConversations(prev => [newConversation, ...prev]);
       setCurrentConversationId(newId);
     }
@@ -319,14 +322,12 @@ function App() {
 
   const handleRenameConversation = async (conversationId: string, newTitle: string) => {
     try {
-      // Update in backend
       await fetch(`/api/conversations/${conversationId}/title`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ title: newTitle })
       });
       
-      // Update local state
       setConversations(prev => 
         prev.map(conv => 
           conv.id === conversationId 
@@ -336,7 +337,6 @@ function App() {
       );
     } catch (error) {
       console.error('Failed to update conversation title:', error);
-      // Still update local state for offline functionality  
       setConversations(prev => 
         prev.map(conv => 
           conv.id === conversationId 
@@ -348,29 +348,27 @@ function App() {
   };
 
   const handleDeleteConversation = async (conversationId: string) => {
-    if (conversations.length <= 1) return; // Keep at least one conversation
+    if (conversations.length <= 1) return; 
     
     try {
       console.log('Deleting conversation:', conversationId);
       console.log('Current conversations:', conversations);
       console.log('Current conversation ID:', currentConversationId);
       
-      // Delete conversation on server first
-      await deleteConversationFromServer(conversationId);
+      await fetch(`/api/conversations/${conversationId}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
       
-      // Calculate remaining conversations after deletion
       const remaining = conversations.filter(conv => conv.id !== conversationId);
       console.log('Remaining conversations after deletion:', remaining);
       
-      // If we're deleting the current conversation, switch to another one first
       if (currentConversationId === conversationId) {
         if (remaining.length > 0) {
           console.log('Switching to conversation:', remaining[0].id);
           setCurrentConversationId(remaining[0].id);
-          // Update conversations state after switching conversation
           setConversations(remaining);
         } else {
-          // If no conversations left, create a new one
           console.log('No conversations left, creating new one');
           const newId = `conv_${Date.now()}`;
           const newConversation = {
@@ -380,10 +378,9 @@ function App() {
           };
           
           try {
-            // Create conversation in backend
             await fetch('/api/conversations', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
               body: JSON.stringify({
                 id: newId,
                 title: 'New Conversation'
@@ -393,45 +390,37 @@ function App() {
             console.error('Failed to create new conversation:', error);
           }
           
-          // Switch to new conversation and update state atomically
           setCurrentConversationId(newId);
           setConversations([newConversation]);
         }
       } else {
-        // Just update conversations state if not deleting current conversation
         setConversations(remaining);
       }
       
-      // Delete conversation messages from local cache as well
       deleteConversationMessages(conversationId);
       
       console.log('Conversation deletion completed');
       
     } catch (error) {
       console.error('Failed to delete conversation:', error);
-      // Optionally show error to user
     }
   };
 
-  // Update conversation title when first message is sent
   const handleUpdateConversationTitle = async (conversationId: string, message: string) => {
     const conversation = conversations.find(conv => conv.id === conversationId);
     if (conversation && conversation.title === 'New Conversation') {
-      // Generate title from first message (first 50 characters)
       const newTitle = message.length > 50 ? message.substring(0, 50) + '...' : message;
       
       try {
-        // Update in backend
         await fetch(`/api/conversations/${conversationId}/title`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ title: newTitle })
         });
       } catch (error) {
         console.error('Failed to update conversation title in backend:', error);
       }
       
-      // Update local state
       setConversations(prev => 
         prev.map(conv => 
           conv.id === conversationId 
@@ -440,7 +429,6 @@ function App() {
         )
       );
     } else if (conversation) {
-      // Just update the timestamp locally 
       setConversations(prev => 
         prev.map(conv => 
           conv.id === conversationId 
@@ -473,7 +461,6 @@ function App() {
       localStorage.setItem('jwt_token', token);
       apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${token}` }));
       setIsAuthenticated(true);
-      // fetch user email
       fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` }})
         .then(r => r.ok ? r.json() : null)
         .then(d => setUserEmail(d?.email || null))
