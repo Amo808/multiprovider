@@ -178,6 +178,18 @@ async def health_check():
         "timestamp": datetime.now().isoformat()
     }
 
+@api_router.get("/debug/auth")
+async def debug_auth():
+    """Debug endpoint to check auth configuration."""
+    import os
+    return {
+        "google_client_id_set": bool(os.getenv("GOOGLE_CLIENT_ID")),
+        "google_client_id_length": len(os.getenv("GOOGLE_CLIENT_ID", "")),
+        "jwt_secret_set": bool(os.getenv("JWT_SECRET")),
+        "cors_origins": os.getenv("CORS_ORIGINS", "default"),
+        "environment": os.getenv("RENDER") or "local"
+    }
+
 @api_router.get("/providers")
 async def get_providers(_: str = Depends(get_current_user)):
     """Get all providers and their status."""
