@@ -40,7 +40,6 @@ function App() {
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loginError, setLoginError] = useState<string>('');
 
   // API hooks
   const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig, fetchConfig } = useConfig();
@@ -51,16 +50,14 @@ function App() {
   // Restore authentication on first mount
   useEffect(() => {
     try {
-      const storedPassword = localStorage.getItem('access_password');
-      if (storedPassword) {
-        apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${storedPassword}` }));
+      const jwt = localStorage.getItem('jwt_token');
+      if (jwt) {
+        apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${jwt}` }));
         setIsAuthenticated(true);
         fetchConfig();
-      } else {
-        // login modal shown automatically by !isAuthenticated conditional render
       }
     } catch {
-      // login modal shown automatically by !isAuthenticated conditional render
+      // ignore
     }
   }, [fetchConfig]);
 
@@ -463,32 +460,39 @@ function App() {
   };
 
   // Authentication handlers
-  const handleLogin = async (password: string) => {
-    try {
-      const response = await apiClient.post('/auth/login', { password });
-      if (response.data.success) {
-        localStorage.setItem('access_password', password);
-        apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${password}` }));
-        setIsAuthenticated(true);
-        // no need to hide modal explicitly; render path changes
-        setLoginError('');
-        await fetchConfig();
-      }
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.detail || 'Invalid password';
-      setLoginError(errorMessage);
-      throw new Error(errorMessage);
-    }
+  const handleLogin = async (_password: string) => {
+    // Legacy password flow removed
+    throw new Error('Password login disabled. Use Google sign-in.');
   };
+
+  const handleGoogleCredential = useCallback(async (resp: any) => {
+    try {
+      const r = await fetch('/auth/google', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id_token: resp.credential }) });
+      if (!r.ok) { throw new Error('Google auth failed'); }
+      const data = await r.json();
+      const token = data.access_token;
+      localStorage.setItem('jwt_token', token);
+      apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${token}` }));
+      setIsAuthenticated(true);
+      await fetchConfig();
+    } catch (e) {
+      console.error('Google login error', e);
+    }
+  }, [fetchConfig]);
+
+  useEffect(() => {
+    (window as any).handleGoogleCredential = handleGoogleCredential;
+  }, [handleGoogleCredential]);
 
   // Show login modal if not authenticated (force it open to avoid blank screen)
   if (!isAuthenticated) {
     return (
       <LoginModal
         isOpen={true}
-        onClose={() => { /* prevent closing without auth */ }}
+        onClose={() => {}}
         onSuccess={handleLogin}
-        error={loginError}
+        onGoogleLogin={async () => {}}
+        error={undefined}
       />
     );
   }

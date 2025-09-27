@@ -26,23 +26,28 @@ Create environment file:
 ```bash
 # Copy example
 cp .env.example .env
-
-# Edit with your API keys
-nano .env
 ```
 
-Required environment variables:
+Add required variables:
 ```bash
-# At least one API key required
+# Provider API keys (add the ones you use)
 OPENAI_API_KEY=your_openai_key_here
 DEEPSEEK_API_KEY=your_deepseek_key_here  
 ANTHROPIC_API_KEY=your_anthropic_key_here
-GOOGLE_API_KEY=your_google_key_here
 
-# Optional settings
+# Google OAuth + JWT auth
+GOOGLE_CLIENT_ID=your_google_client_id
+JWT_SECRET=your_long_random_secret  # e.g. openssl rand -hex 32
+JWT_EXPIRES=60                      # minutes (optional)
+
+# App
 PORT=8000
-NODE_ENV=development
-LOG_LEVEL=INFO
+CORS_ORIGINS=http://localhost:3000
+```
+
+Frontend `.env.local`:
+```bash
+VITE_GOOGLE_CLIENT_ID=your_google_client_id
 ```
 
 ### 2. Backend Setup
@@ -66,8 +71,6 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Backend will start on: `http://localhost:8000`
-
 ### 3. Frontend Setup
 
 Open new terminal:
@@ -81,109 +84,58 @@ npm install
 npm run dev
 ```
 
-Frontend will start on: `http://localhost:3000`
+### 4. Login Flow
+1. Open http://localhost:3000
+2. Click "Sign in with Google"
+3. After successful Google auth the backend returns a JWT
+4. JWT stored in `localStorage` as `jwt_token` and sent with all API requests
 
 ## Access Points
 
 - **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000  
-- **API Documentation**: http://localhost:8000/docs
+- **Backend**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
 
 ## Provider Configuration
 
-1. Open application in browser
-2. Click "Provider Settings" button
-3. Add API keys for desired providers
-4. Click "Test Connection" to verify
-5. Use "Refresh Models" to update available models
+1. After login open Provider Settings
+2. Enter API keys
+3. Test connection / Refresh models
+4. Select model and start chatting
 
 ## Troubleshooting
 
-### Backend Issues
-
-**Server won't start:**
-- Ensure virtual environment is activated
-- Check all dependencies are installed: `pip install -r requirements.txt`
-- Verify port 8000 is available
-
-**Provider errors:**
-- Check API keys are valid
-- Test connections in Provider Settings
-- Check logs in `/logs/app.log`
-
-### Frontend Issues
-
-**Development server won't start:**
-- Ensure Node.js is installed: `node --version`
-- Install dependencies: `npm install`
-- Check port 3000 is available
-
-**"Loading configuration..." stuck:**
-- Verify backend is running on port 8000
-- Check browser console for errors
-- Ensure CORS is configured correctly
-
-### Network Issues
-
-**API requests failing:**
-- Check if backend is accessible: `curl http://localhost:8000/health`
-- Verify Vite proxy configuration in `vite.config.ts`
-- Check firewall settings
-
-## Development Commands
+### Authentication
+- 401 errors: check JWT present in devtools request headers
+- Invalid Google token: verify correct GOOGLE_CLIENT_ID matches the one configured in Google Cloud Console
+- Token expired: re-login (token lifetime controlled by JWT_EXPIRES)
 
 ### Backend
+- Ensure environment variables loaded (`printenv` / `.env` present)
+- Check logs: `logs/app.log`
+
+### Frontend
+- Missing Google button: ensure script tag in `index.html` or correct VITE_GOOGLE_CLIENT_ID
+- CORS issues: ensure backend CORS_ORIGINS includes frontend origin
+
+## Docker
 ```bash
-# Run with auto-reload
-python main.py
-
-# Run tests
-python -m pytest
-
-# Check code style
-black . && isort .
-```
-
-### Frontend  
-```bash
-# Development server
-npm run dev
-
-# Build for production
-npm run build
-
-# Preview production build
-npm run preview
-
-# Type checking
-npm run type-check
-
-# Linting
-npm run lint
-```
-
-## Platform-Specific Notes
-
-### Windows
-- Use `py` instead of `python` if Python launcher is installed
-- Use PowerShell or Command Prompt
-- Paths use backslashes: `backend\main.py`
-
-### macOS/Linux
-- Use `python3` if multiple Python versions installed
-- Use forward slashes: `backend/main.py`
-- May need `sudo` for some installations
-
-### Docker
-```bash
-# Build and run entire application
 docker-compose up --build
-
-# Run only backend
-docker-compose up backend
-
-# Run only frontend  
-docker-compose up frontend
 ```
+
+## Linting & Quality
+```bash
+# Backend
+black . && isort .
+
+# Frontend
+npm run lint
+npm run type-check
+```
+
+## Next (Optional)
+- Add refresh token endpoint and HttpOnly cookie
+- Store users (email, created_at) in DB
+- Add rate limiting per user
 
 

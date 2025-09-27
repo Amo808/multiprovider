@@ -6,6 +6,21 @@
 
 Professional AI chat application with support for multiple providers (OpenAI, DeepSeek, Anthropic, Gemini).
 
+## 🔐 Authentication (Google OAuth + JWT)
+The application now uses **Google OAuth 2.0** for login. After Google sign-in the backend issues a short-lived **JWT** used for all `/api/*` calls.
+
+Environment variables required:
+```
+GOOGLE_CLIENT_ID=your_google_client_id
+JWT_SECRET=strong_random_string
+JWT_EXPIRES=60   # minutes (optional)
+```
+Frontend build also needs:
+```
+VITE_GOOGLE_CLIENT_ID=your_google_client_id
+```
+Legacy password auth has been removed.
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -25,13 +40,10 @@ Professional AI chat application with support for multiple providers (OpenAI, De
    ```bash
    cd backend
    python -m venv .venv
-   
    # Windows
    .venv\Scripts\activate
-   
    # macOS/Linux  
    source .venv/bin/activate
-   
    pip install -r requirements.txt
    python main.py
    ```
@@ -40,6 +52,8 @@ Professional AI chat application with support for multiple providers (OpenAI, De
    ```bash
    cd frontend
    npm install
+   # create .env.local with VITE_GOOGLE_CLIENT_ID
+   echo "VITE_GOOGLE_CLIENT_ID=your_google_client_id" > .env.local
    npm run dev
    ```
 
@@ -50,86 +64,59 @@ Professional AI chat application with support for multiple providers (OpenAI, De
 
 ## Features
 
+✅ **Google OAuth Login**  
 ✅ **Multi-Provider Support**: OpenAI, DeepSeek, Anthropic, Gemini  
-✅ **Real-time Chat**: Streaming responses with fallback support  
-✅ **Conversation History**: Persistent chat sessions  
-✅ **Provider Management**: API key configuration and testing  
-✅ **Modern UI**: React with dark/light theme support  
-✅ **Responsive Design**: Works on desktop and mobile  
+✅ **Real-time Chat**: Streaming responses  
+✅ **Conversation History**: Persistent sessions  
+✅ **Provider Management**: API key configuration & testing  
+✅ **Modern UI**: React + Tailwind, dark/light themes  
 
 ## Deployment
 
-### Docker (Recommended)
-```bash
-# Build and run
-docker-compose up --build
-
-# Or use pre-built image
-docker run -p 3000:3000 -p 8000:8000 ai-chat
+### Render
+Add the following environment variables in the Render service:
 ```
+OPENAI_API_KEY=...
+DEEPSEEK_API_KEY=...
+ANTHROPIC_API_KEY=...
+GOOGLE_CLIENT_ID=...
+JWT_SECRET=... (generate with: openssl rand -hex 32)
+JWT_EXPIRES=60
+```
+Frontend build: ensure `VITE_GOOGLE_CLIENT_ID` is set (either baked into Docker build or passed at build time).
 
-### Cloud Platforms
-
-**Render.com** (Free tier available):
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Amo808/multiprovider)
-
-1. Connect your GitHub repository
-2. Render will auto-detect Dockerfile
-3. Add environment variables for API keys
-4. Deploy automatically
-
-**Vercel/Netlify** (Frontend):
-- Deploy frontend separately
-- Configure backend URL in environment
-
-**Railway/Fly.io** (Full-stack):
-- Deploy entire application
-- Configure environment variables
-- Auto-scaling available
-
-### VPS Deployment
+### Docker (Full Stack)
 ```bash
-# Clone repository
-git clone https://github.com/Amo808/multiprovider.git
-cd multiprovider
-
-# Run installation script
-chmod +x deploy.sh
-./deploy.sh
+docker-compose up --build
 ```
 
 ## Configuration
-
-### Environment Variables
-```bash
-# Required: At least one API key
+Environment variables (partial):
+```
 OPENAI_API_KEY=your_openai_key
-DEEPSEEK_API_KEY=your_deepseek_key  
+DEEPSEEK_API_KEY=your_deepseek_key
 ANTHROPIC_API_KEY=your_anthropic_key
-GOOGLE_API_KEY=your_google_key
-
-# Optional: Application settings
-PORT=8000
-NODE_ENV=production
+GOOGLE_CLIENT_ID=your_google_client_id
+JWT_SECRET=your_jwt_secret
 CORS_ORIGINS=http://localhost:3000
 ```
 
-### Provider Setup
-1. Open application in browser
-2. Click "Provider Settings"
-3. Add your API keys
-4. Test connections
-5. Select preferred model
+## Provider Setup
+1. Login via Google
+2. Open Provider Settings
+3. Enter API keys
+4. Test connection / Refresh models
+5. Start chatting
 
 ## Documentation
+- Development: `RUN_INSTRUCTIONS.md`
+- Deployment: `DEPLOYMENT.md`
+- Auth (legacy note): `DEPLOY_AUTH.md`
 
-- **Development**: See [RUN_INSTRUCTIONS.md](RUN_INSTRUCTIONS.md)
-- **Deployment**: See [DEPLOYMENT.md](DEPLOYMENT.md)
-- **API**: Visit `/docs` endpoint when running
+## Roadmap
+- Optional refresh tokens
+- User roles & usage limits
+- Usage analytics endpoint
 
-## Support
-
-- **Issues**: Create GitHub issue
-- **Discussions**: Use GitHub discussions
-- **Documentation**: Check `/docs` folder
+## License
+MIT

@@ -15,3 +15,7 @@ tiktoken>=0.5.2
 
 # Database (PostgreSQL optional, SQLite fallback)
 psycopg2-binary>=2.9.7
+# Google OAuth & JWT auth
+google-auth>=2.29.0
+python-jose>=3.3.0
+passlib[bcrypt]>=1.7.4

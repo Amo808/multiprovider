@@ -479,6 +479,19 @@ export class ApiClient {
     return response.json();
   }
 
+  async googleLogin(idToken: string): Promise<string> {
+    const response = await fetch(`/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: idToken })
+    });
+    if (!response.ok) {
+      throw new Error('Google authentication failed');
+    }
+    const data = await response.json();
+    return data.access_token;
+  }
+
   async getUsageStats(): Promise<any> {
     const response = await fetch(`${this.baseUrl}/stats/usage`);
 

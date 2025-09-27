@@ -13,6 +13,12 @@ services:
         sync: false
       - key: CHATGPT_PRO_API_KEY
         sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES
+        value: "60"
       - key: PORT
         value: 10000
       - key: PYTHONUNBUFFERED
@@ -21,8 +27,6 @@ services:
         value: "False"
       - key: HOST
         value: "0.0.0.0"
-      - key: ACCESS_PASSWORD
-        sync: false
     buildCommand: ""
     startCommand: ""
     healthCheckPath: "/health"

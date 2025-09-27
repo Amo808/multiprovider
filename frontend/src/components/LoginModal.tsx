@@ -1,17 +1,25 @@
 import React, { useState } from 'react';
 import { Lock, X, Eye, EyeOff } from 'lucide-react';
 
+declare global {
+  interface Window { google?: any; handleGoogleCredential?: (resp: any) => void }
+}
+
 interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (password: string) => void;
+  onGoogleLogin?: (token: string) => Promise<void>;
   error?: string;
 }
+
+const GOOGLE_CLIENT_ID: string | undefined = (window as any).__GOOGLE_CLIENT_ID__ || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID;
 
 export const LoginModal: React.FC<LoginModalProps> = ({ 
   isOpen, 
   onClose, 
   onSuccess,
+  onGoogleLogin,
   error 
 }) => {
   const [password, setPassword] = useState('');
@@ -32,6 +40,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
+  const handleGoogleClick = () => {
+    // Trigger Google One Tap or button flow
+    if (window.google && (window as any).google.accounts && GOOGLE_CLIENT_ID) {
+      (window as any).google.accounts.id.prompt();
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -48,7 +63,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 Access Required
               </h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Enter password to continue
+                Sign in with Google to continue
               </p>
             </div>
           </div>
@@ -88,7 +103,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </button>
             </div>
             <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              Enter the access password to use the AI chat application
+              Password login is disabled. Use Google sign-in below.
             </p>
           </div>
 
@@ -100,23 +115,27 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           )}
 
           {/* Action Button */}
-          <div className="pt-2">
+          <div className="pt-2 space-y-3">
             <button
               type="submit"
               disabled={!password.trim() || isSubmitting}
-              className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 
-                       text-white rounded-lg transition-colors font-medium 
-                       disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full px-4 py-3 bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-white rounded-lg font-medium"
             >
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Verifying...
-                </>
-              ) : (
-                'Access Chat'
-              )}
+              Disabled
             </button>
+            {onGoogleLogin && (
+              <div className="flex flex-col items-center gap-2">
+                <div id="g_id_onload" data-client_id={GOOGLE_CLIENT_ID || ''} data-auto_prompt="false" data-callback="handleGoogleCredential" />
+                <div className="g_id_signin" data-type="standard" data-shape="rect" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left" />
+                <button
+                  type="button"
+                  onClick={handleGoogleClick}
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg flex items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm"
+                >
+                  <span>Sign in with Google</span>
+                </button>
+              </div>
+            )}
           </div>
         </form>
       </div>

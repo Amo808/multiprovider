@@ -27,6 +27,7 @@ from adapters import (
 )
 from storage import HistoryStore, PromptBuilder
 from storage.database_store import DatabaseConversationStore
+from auth_google import router as google_auth_router, get_current_user
 
 # Load environment variables
 load_dotenv()
@@ -41,36 +42,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-# Authentication setup
-ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "ai-chat-2024")
-
-def verify_auth_header(authorization: str = Header(None)):
-    """Verify authorization header for application access."""
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header required"
-        )
-    
-    # Check if it's Bearer token format
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization format. Use: Bearer <password>"
-        )
-    
-    # Extract password from Bearer token
-    password = authorization.replace("Bearer ", "")
-    if password != ACCESS_PASSWORD:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid access password"
-        )
-    return True
-
-class AuthRequest(BaseModel):
-    password: str
 
 # Global variables
 conversation_store = None
@@ -192,21 +163,6 @@ conversation_store = None
 prompt_builder = None
 app_config = None
 
-@api_router.post("/auth/login")
-async def authenticate(auth_request: AuthRequest):
-    """Authenticate user with password."""
-    if auth_request.password != ACCESS_PASSWORD:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid password"
-        )
-    
-    return {
-        "success": True,
-        "message": "Authentication successful",
-        "token": "authenticated"  # Simple token for demo
-    }
-
 @api_router.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -223,7 +179,7 @@ async def health_check():
     }
 
 @api_router.get("/providers")
-async def get_providers(_: bool = Depends(verify_auth_header)):
+async def get_providers(_: str = Depends(get_current_user)):
     """Get all providers and their status."""
     providers = []
     for status in provider_manager.provider_status.values():
@@ -241,7 +197,7 @@ async def get_providers(_: bool = Depends(verify_auth_header)):
     return {"providers": providers}
 
 @api_router.post("/providers/{provider_id}/toggle")
-async def toggle_provider(provider_id: str, enabled: bool = True):
+async def toggle_provider(provider_id: str, enabled: bool = True, _: str = Depends(get_current_user)):
     """Enable or disable a provider."""
     try:
         await provider_manager.enable_provider(provider_id, enabled)
@@ -251,7 +207,7 @@ async def toggle_provider(provider_id: str, enabled: bool = True):
         raise HTTPException(status_code=400, detail=str(e))
 
 @api_router.put("/providers/{provider_id}/config")
-async def update_provider_config(provider_id: str, config_update: ProviderConfigUpdate):
+async def update_provider_config(provider_id: str, config_update: ProviderConfigUpdate, _: str = Depends(get_current_user)):
     """Update provider configuration."""
     try:
         updates = config_update.dict(exclude_unset=True)
@@ -275,7 +231,7 @@ async def update_provider_config(provider_id: str, config_update: ProviderConfig
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/providers/{provider_id}/models/refresh")
-async def refresh_provider_models(provider_id: str):
+async def refresh_provider_models(provider_id: str, _: str = Depends(get_current_user)):
     """Refresh models for a specific provider."""
     try:
         adapter = provider_manager.registry.get(provider_id)
@@ -333,7 +289,7 @@ async def refresh_provider_models(provider_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/providers/{provider_id}/test")
-async def test_provider_connection(provider_id: str):
+async def test_provider_connection(provider_id: str, _: str = Depends(get_current_user)):
     """Test connection to a specific provider."""
     try:
         adapter = provider_manager.registry.get(provider_id)
@@ -388,7 +344,7 @@ async def test_provider_connection(provider_id: str):
         }
 
 @api_router.get("/history")
-async def get_history():
+async def get_history(_: str = Depends(get_current_user)):
     """Get chat history."""
     try:
         messages = conversation_store.load_conversation_history("default")
@@ -410,7 +366,7 @@ async def get_history():
 
 
 @api_router.post("/chat/send")
-async def send_message(request: ChatRequest, http_request: Request, _: bool = Depends(verify_auth_header)):
+async def send_message(request: ChatRequest, http_request: Request, _: str = Depends(get_current_user)):
     """Send a chat message and get streaming response."""
     
     def generate_error_stream(error_message: str, error_type: str = "error"):
@@ -446,7 +402,7 @@ async def send_message(request: ChatRequest, http_request: Request, _: bool = De
              adapter.config.api_key.startswith('sk-test-') or  # Add test key detection
              adapter.config.api_key == 'your_deepseek_api_key_here' or
              adapter.config.api_key == 'your_openai_api_key_here' or
-             adapter.config.api_key == 'your_anthropic_api_key_here')):
+             adapter.config.api_key == 'your_anthropic_api_key_here' )):
             return StreamingResponse(
                 generate_error_stream(f"API key for {provider_id} is not configured. Please add your API key in settings.", "API_KEY_MISSING"),
                 media_type="text/plain",
@@ -629,7 +585,7 @@ async def send_message(request: ChatRequest, http_request: Request, _: bool = De
         )
 
 @api_router.delete("/history")
-async def clear_history():
+async def clear_history(_: str = Depends(get_current_user)):
     """Clear chat history."""
     try:
         conversation_store.clear_conversation("default")
@@ -640,7 +596,7 @@ async def clear_history():
 
 
 @api_router.get("/models")
-async def get_all_models():
+async def get_all_models(_: str = Depends(get_current_user)):
     """Get all available models from all providers."""
     try:
         all_models = provider_manager.get_all_models()
@@ -667,7 +623,7 @@ async def get_all_models():
         raise HTTPException(status_code=500, detail="Failed to get models")
 
 @api_router.get("/models/{provider_id}")
-async def get_provider_models(provider_id: str):
+async def get_provider_models(provider_id: str, _: str = Depends(get_current_user)):
     """Get models for specific provider."""
     try:
         models = provider_manager.get_models_by_provider(provider_id)
@@ -701,7 +657,7 @@ async def get_provider_models(provider_id: str):
         raise HTTPException(status_code=500, detail="Failed to get provider models")
 
 @api_router.post("/config")
-async def update_config(config_data: dict):
+async def update_config(config_data: dict, _: str = Depends(get_current_user)):
     """Update application configuration."""
     try:
         global app_config
@@ -727,7 +683,7 @@ async def update_config(config_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/config")
-async def get_config(_: bool = Depends(verify_auth_header)):
+async def get_config(_: str = Depends(get_current_user)):
     """Get current application configuration."""
     try:
         # Load fresh config from file
@@ -821,7 +777,7 @@ async def get_config(_: bool = Depends(verify_auth_header)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/conversations")
-async def get_conversations(_: bool = Depends(verify_auth_header)):
+async def get_conversations(_: str = Depends(get_current_user)):
     """Get list of all conversations."""
     try:
         conversations = conversation_store.get_conversations()
@@ -831,7 +787,7 @@ async def get_conversations(_: bool = Depends(verify_auth_header)):
         raise HTTPException(status_code=500, detail="Failed to retrieve conversations")
 
 @api_router.post("/conversations")
-async def create_conversation(conversation_data: dict):
+async def create_conversation(conversation_data: dict, _: str = Depends(get_current_user)):
     """Create a new conversation."""
     try:
         conversation_id = conversation_data.get("id")
@@ -847,7 +803,7 @@ async def create_conversation(conversation_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/history/{conversation_id}")
-async def get_conversation_history(conversation_id: str):
+async def get_conversation_history(conversation_id: str, _: str = Depends(get_current_user)):
     """Get chat history for a specific conversation."""
     try:
         logger.info(f"[HISTORY] Request for conversation_id: {conversation_id}")
@@ -873,7 +829,7 @@ async def get_conversation_history(conversation_id: str):
         raise HTTPException(status_code=500, detail="Failed to retrieve conversation history")
 
 @api_router.delete("/history/{conversation_id}")
-async def clear_conversation_history(conversation_id: str):
+async def clear_conversation_history(conversation_id: str, _: str = Depends(get_current_user)):
     """Clear chat history for a specific conversation."""
     try:
         conversation_store.clear_conversation(conversation_id)
@@ -883,7 +839,7 @@ async def clear_conversation_history(conversation_id: str):
         raise HTTPException(status_code=500, detail="Failed to clear conversation history")
 
 @api_router.put("/conversations/{conversation_id}/title")
-async def update_conversation_title(conversation_id: str, title_data: dict):
+async def update_conversation_title(conversation_id: str, title_data: dict, _: str = Depends(get_current_user)):
     """Update conversation title."""
     try:
         title = title_data.get("title")
@@ -897,7 +853,7 @@ async def update_conversation_title(conversation_id: str, title_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.put("/config/generation")
-async def update_generation_config(generation_config: dict):
+async def update_generation_config(generation_config: dict, _: str = Depends(get_current_user)):
     """Update generation configuration."""
     try:
         logger.info(f"[CONFIG] Updating generation config: {generation_config}")
@@ -945,7 +901,7 @@ async def update_generation_config(generation_config: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.delete("/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str):
+async def delete_conversation(conversation_id: str, _: str = Depends(get_current_user)):
     """Delete a conversation and all its messages."""
     try:
         # Delete conversation from database
@@ -958,6 +914,7 @@ async def delete_conversation(conversation_id: str):
 
 # Register API router
 app.include_router(api_router)
+app.include_router(google_auth_router)
 
 # Serve static files (frontend) at root - AFTER API router registration
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
