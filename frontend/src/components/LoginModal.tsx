@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Lock, X } from 'lucide-react';
+import { Lock } from 'lucide-react';
 
 declare global {
   interface Window { 
@@ -11,7 +11,7 @@ declare global {
 
 interface LoginModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose?: () => void; // now optional since modal is mandatory auth gate
   error?: string;
 }
 
@@ -98,9 +98,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </p>
             </div>
           </div>
-          {/* Close disabled during mandatory auth flow */}
-          {/* <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"><X className="w-5 h-5" /></button> */}
-        </div>
+          {/* Close button intentionally removed during mandatory auth flow */}
+         </div>
 
         {/* Error Display */}
         {error && (
