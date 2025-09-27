@@ -19,6 +19,7 @@ export class ApiClient {
   private baseUrl: string;
   private activeRequests: Map<string, AbortController> = new Map();
   private getAuthHeaders: (() => Record<string, string>) | null = null;
+  private onUnauthorized: (() => void) | null = null;
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -28,10 +29,42 @@ export class ApiClient {
     this.getAuthHeaders = provider;
   }
 
+  setUnauthorizedCallback(callback: () => void) {
+    this.onUnauthorized = callback;
+  }
+
+  private handleUnauthorized() {
+    console.log('API Client: 401 Unauthorized - triggering logout');
+    // Clear stored token
+    localStorage.removeItem('jwt_token');
+    // Clear auth headers
+    this.getAuthHeaders = null;
+    // Trigger logout callback
+    if (this.onUnauthorized) {
+      this.onUnauthorized();
+    }
+  }
+
   private getHeaders(): Record<string, string> {
     const baseHeaders = { 'Content-Type': 'application/json' };
     const authHeaders = this.getAuthHeaders?.() || {};
     return { ...baseHeaders, ...authHeaders };
+  }
+
+  private async fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...this.getHeaders(),
+        ...options.headers
+      }
+    });
+
+    if (response.status === 401) {
+      this.handleUnauthorized();
+    }
+
+    return response;
   }
 
   // Authentication method
@@ -43,6 +76,9 @@ export class ApiClient {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        this.handleUnauthorized();
+      }
       const errorData = await response.json().catch(() => ({}));
       throw {
         response: {
@@ -86,6 +122,9 @@ export class ApiClient {
       console.log('API Client: Response status:', response.status, response.statusText);
 
       if (!response.ok) {
+        if (response.status === 401) {
+          this.handleUnauthorized();
+        }
         const errorData = await response.json().catch(() => ({ error: response.statusText }));
         console.error('API Client: Request failed:', errorData);
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);

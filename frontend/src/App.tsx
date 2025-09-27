@@ -54,6 +54,14 @@ function App() {
 
   // ========================= Auth Restore =========================
   useEffect(() => {
+    // Set up global 401 handler
+    apiClient.setUnauthorizedCallback(() => {
+      console.log('Global 401 handler: logging out user');
+      setIsAuthenticated(false);
+      setUserEmail(null);
+      localStorage.removeItem('jwt_token');
+    });
+
     try {
       const jwt = localStorage.getItem('jwt_token');
       if (jwt) {

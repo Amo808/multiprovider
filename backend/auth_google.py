@@ -9,7 +9,7 @@ from jose import jwt, JWTError
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 JWT_SECRET = os.getenv("JWT_SECRET", "change_me_secret")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES", "60"))
+JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES", "1440"))  # 24 hours instead of 1 hour
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -74,11 +74,16 @@ def get_current_user(
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_email = payload.get("sub")
         if not user_email:
+            print(f"JWT payload missing 'sub' field: {payload}")
             raise HTTPException(status_code=401, detail="Invalid token payload")
         return user_email
     except JWTError as e:
-        print(f"JWT decode error: {e}")  # Add debug logging
-        raise HTTPException(status_code=401, detail="Invalid token")
+        error_msg = str(e)
+        print(f"JWT decode error: {error_msg}")
+        if "expired" in error_msg.lower() or "signature has expired" in error_msg.lower():
+            raise HTTPException(status_code=401, detail="Token has expired")
+        else:
+            raise HTTPException(status_code=401, detail="Invalid token")
 
 # New endpoint to retrieve current authenticated user email
 @router.get("/me")
