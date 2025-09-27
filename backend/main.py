@@ -344,10 +344,10 @@ async def test_provider_connection(provider_id: str, _: str = Depends(get_curren
         }
 
 @api_router.get("/history")
-async def get_history(_: str = Depends(get_current_user)):
-    """Get chat history."""
+async def get_history(user_email: str = Depends(get_current_user)):
+    """Get chat history for default conversation (scoped to user)."""
     try:
-        messages = conversation_store.load_conversation_history("default")
+        messages = conversation_store.load_conversation_history("default", user_email=user_email)
         return [
             {
                 "id": msg.id,
@@ -366,8 +366,8 @@ async def get_history(_: str = Depends(get_current_user)):
 
 
 @api_router.post("/chat/send")
-async def send_message(request: ChatRequest, http_request: Request, _: str = Depends(get_current_user)):
-    """Send a chat message and get streaming response."""
+async def send_message(request: ChatRequest, http_request: Request, user_email: str = Depends(get_current_user)):
+    """Send a chat message and get streaming response (scoped to user)."""
     
     def generate_error_stream(error_message: str, error_type: str = "error"):
         """Generate SSE stream with error message."""
@@ -418,17 +418,18 @@ async def send_message(request: ChatRequest, http_request: Request, _: str = Dep
             meta={
                 "provider": provider_id,
                 "model": model_id,
-                "conversation_id": request.conversation_id
+                "conversation_id": request.conversation_id,
+                "user_email": user_email
             }
         )
         
         # Save user message
         conversation_id = request.conversation_id or "default"
-        logger.info(f"[CHAT] Processing message for conversation_id: {conversation_id}")
-        conversation_store.save_message(conversation_id, user_message)
+        logger.info(f"[CHAT] Processing message for conversation_id: {conversation_id} user={user_email}")
+        conversation_store.save_message(conversation_id, user_message, user_email=user_email)
         
         # Load history and build context
-        history = conversation_store.load_conversation_history(conversation_id)
+        history = conversation_store.load_conversation_history(conversation_id, user_email=user_email)
         logger.info(f"[CHAT] Loaded {len(history)} messages from history for {conversation_id}")
         
         # Add system prompt if provided
@@ -461,7 +462,8 @@ async def send_message(request: ChatRequest, http_request: Request, _: str = Dep
             meta={
                 "provider": provider_id,
                 "model": model_id,
-                "conversation_id": request.conversation_id
+                "conversation_id": request.conversation_id,
+                "user_email": user_email
             }
         )
         
@@ -537,10 +539,11 @@ async def send_message(request: ChatRequest, http_request: Request, _: str = Dep
                             "tokens_in": final_tokens_in,
                             "tokens_out": final_tokens_out,
                             "total_tokens": final_tokens_in + final_tokens_out,
-                            "estimated_cost": estimated_cost
+                            "estimated_cost": estimated_cost,
+                            "user_email": user_email
                         })
-                        logger.info(f"[CHAT] Saving assistant message to conversation_id: {conversation_id}")
-                        conversation_store.save_message(conversation_id, assistant_message)
+                        logger.info(f"[CHAT] Saving assistant message to conversation_id: {conversation_id} user={user_email}")
+                        conversation_store.save_message(conversation_id, assistant_message, user_email=user_email)
                         
                         # Send completion signal with usage
                         final_response = {
@@ -585,230 +588,46 @@ async def send_message(request: ChatRequest, http_request: Request, _: str = Dep
         )
 
 @api_router.delete("/history")
-async def clear_history(_: str = Depends(get_current_user)):
-    """Clear chat history."""
+async def clear_history(user_email: str = Depends(get_current_user)):
+    """Clear default conversation history for user."""
     try:
-        conversation_store.clear_conversation("default")
+        conversation_store.clear_conversation("default", user_email=user_email)
         return {"message": "History cleared successfully"}
     except Exception as e:
         logger.error(f"Failed to clear history: {e}")
         raise HTTPException(status_code=500, detail="Failed to clear history")
 
-
-@api_router.get("/models")
-async def get_all_models(_: str = Depends(get_current_user)):
-    """Get all available models from all providers."""
-    try:
-        all_models = provider_manager.get_all_models()
-        return {
-            "models": [
-                {
-                    "id": model.id,
-                    "name": model.name,
-                    "display_name": model.display_name,
-                    "provider": model.provider.value,
-                    "context_length": model.context_length,
-                    "supports_streaming": model.supports_streaming,
-                    "supports_functions": model.supports_functions,
-                    "supports_vision": model.supports_vision,
-                    "type": model.type.value,
-                    "enabled": model.enabled,
-                    "pricing": model.pricing
-                }
-                for model in all_models
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Failed to get models: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get models")
-
-@api_router.get("/models/{provider_id}")
-async def get_provider_models(provider_id: str, _: str = Depends(get_current_user)):
-    """Get models for specific provider."""
-    try:
-        models = provider_manager.get_models_by_provider(provider_id)
-        
-        # Filter models based on app_config if available
-        if app_config and "providers" in app_config and provider_id in app_config["providers"]:
-            enabled_model_ids = app_config["providers"][provider_id].get("models", [])
-            if enabled_model_ids:
-                models = [model for model in models if model.id in enabled_model_ids]
-        
-        return {
-            "provider": provider_id,
-            "models": [
-                {
-                    "id": model.id,
-                    "name": model.name,
-                    "display_name": model.display_name,
-                    "context_length": model.context_length,
-                    "supports_streaming": model.supports_streaming,
-                    "supports_functions": model.supports_functions,
-                    "supports_vision": model.supports_vision,
-                    "type": model.type.value,
-                    "enabled": model.enabled,
-                    "pricing": model.pricing
-                }
-                for model in models
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Failed to get models for provider {provider_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get provider models")
-
-@api_router.post("/config")
-async def update_config(config_data: dict, _: str = Depends(get_current_user)):
-    """Update application configuration."""
-    try:
-        global app_config
-        
-        # Update configuration
-        for key, value in config_data.items():
-            if key in app_config:
-                if isinstance(app_config[key], dict) and isinstance(value, dict):
-                    app_config[key].update(value)
-                else:
-                    app_config[key] = value
-        
-        # Save updated config to file
-        config_path = Path(__file__).parent.parent / "data" / "config.json"
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-        with open(config_path, "w") as f:
-            json.dump(app_config, f, indent=2)
-        
-        return {"message": "Configuration updated successfully", "config": app_config}
-        
-    except Exception as e:
-        logger.error(f"Failed to update config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.get("/config")
-async def get_config(_: str = Depends(get_current_user)):
-    """Get current application configuration."""
-    try:
-        # Load fresh config from file
-        config_path = Path(__file__).parent.parent / "data" / "config.json"
-        if config_path.exists():
-            with open(config_path, 'r') as f:
-                current_app_config = json.load(f)
-        else:
-            current_app_config = {}
-            
-        # Get enabled providers from provider manager
-        enabled_providers = provider_manager.get_enabled_providers()
-        
-        # Build full provider configs with models
-        provider_configs = {}
-        for status in enabled_providers:
-            provider_id = status.id.value  # Convert enum to string
-            
-            # Get models for this provider
-            models = provider_manager.get_models_by_provider(status.id)
-            
-            provider_configs[provider_id] = {
-                "id": provider_id,
-                "name": status.name,
-                "enabled": status.enabled,
-                "logo": f"/logos/{provider_id}.png",
-                "description": f"{status.name} AI models",
-                "keyVaults": {
-                    "apiKey": None  # Don't expose actual keys
-                },
-                "settings": {
-                    "showApiKey": True,
-                    "showModelFetcher": True,
-                    "disableBrowserRequest": False,
-                    "supportResponsesApi": True
-                },
-                "fetchOnClient": False,
-                "models": [
-                    {
-                        "id": model.id,
-                        "name": model.name,
-                        "display_name": model.display_name,
-                        "provider": provider_id,
-                        "context_length": model.context_length,
-                        "supports_streaming": model.supports_streaming,
-                        "supports_functions": model.supports_functions,
-                        "supports_vision": model.supports_vision,
-                        "type": model.type.value,
-                        "enabled": model.enabled,
-                        "pricing": model.pricing
-                    }
-                    for model in models
-                ]
-            }
-        
-        # Build complete config
-        full_config = {
-            "activeProvider": current_app_config.get("activeProvider", "deepseek"),
-            "activeModel": current_app_config.get("activeModel", "deepseek-chat"),
-            "providers": provider_configs,
-            "generation": {
-                **{  # Default values first
-                    "temperature": 0.7,
-                    "max_tokens": 8192,  # Default for DeepSeek  
-                    "top_p": 0.9,
-                    "frequency_penalty": 0.0,
-                    "presence_penalty": 0.0,
-                    "stream": True,
-                },
-                **current_app_config.get("generation", {})  # Override with saved values
-            },
-            "ui": current_app_config.get("ui", {
-                "theme": "light",
-                "fontSize": 14,
-                "language": "en",
-                "enableMarkdown": True,
-                "enableLatex": True,
-                "compactMode": False
-            }),
-            "system": current_app_config.get("system", {
-                "system_prompt": "You are a helpful AI assistant.",
-                "max_context_tokens": 32768,  # Increased to 32K tokens
-                "auto_save": True,
-                "conversations_limit": 100
-            })
-        }
-        
-        return {"config": full_config}
-    except Exception as e:
-        logger.error(f"Failed to get config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @api_router.get("/conversations")
-async def get_conversations(_: str = Depends(get_current_user)):
-    """Get list of all conversations."""
+async def get_conversations(user_email: str = Depends(get_current_user)):
+    """Get list of all conversations for current user."""
     try:
-        conversations = conversation_store.get_conversations()
+        conversations = conversation_store.get_conversations(user_email=user_email)
         return {"conversations": conversations}
     except Exception as e:
         logger.error(f"Failed to get conversations: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve conversations")
 
 @api_router.post("/conversations")
-async def create_conversation(conversation_data: dict, _: str = Depends(get_current_user)):
-    """Create a new conversation."""
+async def create_conversation(conversation_data: dict, user_email: str = Depends(get_current_user)):
+    """Create a new conversation for current user."""
     try:
         conversation_id = conversation_data.get("id")
         title = conversation_data.get("title")
-        
         if not conversation_id:
             raise HTTPException(status_code=400, detail="conversation_id is required")
-        
-        conversation_store.create_conversation(conversation_id, title)
+        conversation_store.create_conversation(conversation_id, title, user_email=user_email)
         return {"message": "Conversation created successfully", "id": conversation_id}
     except Exception as e:
         logger.error(f"Failed to create conversation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/history/{conversation_id}")
-async def get_conversation_history(conversation_id: str, _: str = Depends(get_current_user)):
-    """Get chat history for a specific conversation."""
+async def get_conversation_history(conversation_id: str, user_email: str = Depends(get_current_user)):
+    """Get chat history for a specific conversation (scoped to user)."""
     try:
-        logger.info(f"[HISTORY] Request for conversation_id: {conversation_id}")
-        messages = conversation_store.load_conversation_history(conversation_id)
-        logger.info(f"[HISTORY] Returning {len(messages)} messages for conversation_id: {conversation_id}")
+        logger.info(f"[HISTORY] Request for conversation_id: {conversation_id} user={user_email}")
+        messages = conversation_store.load_conversation_history(conversation_id, user_email=user_email)
+        logger.info(f"[HISTORY] Returning {len(messages)} messages for conversation_id: {conversation_id} user={user_email}")
         return {
             "conversation_id": conversation_id,
             "messages": [
@@ -829,84 +648,34 @@ async def get_conversation_history(conversation_id: str, _: str = Depends(get_cu
         raise HTTPException(status_code=500, detail="Failed to retrieve conversation history")
 
 @api_router.delete("/history/{conversation_id}")
-async def clear_conversation_history(conversation_id: str, _: str = Depends(get_current_user)):
-    """Clear chat history for a specific conversation."""
+async def clear_conversation_history(conversation_id: str, user_email: str = Depends(get_current_user)):
+    """Clear chat history for a specific conversation (scoped to user)."""
     try:
-        conversation_store.clear_conversation(conversation_id)
+        conversation_store.clear_conversation(conversation_id, user_email=user_email)
         return {"message": f"Conversation {conversation_id} cleared successfully"}
     except Exception as e:
         logger.error(f"Failed to clear conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to clear conversation history")
 
 @api_router.put("/conversations/{conversation_id}/title")
-async def update_conversation_title(conversation_id: str, title_data: dict, _: str = Depends(get_current_user)):
-    """Update conversation title."""
+async def update_conversation_title(conversation_id: str, title_data: dict, user_email: str = Depends(get_current_user)):
+    """Update conversation title (scoped to user)."""
     try:
         title = title_data.get("title")
         if not title:
             raise HTTPException(status_code=400, detail="title is required")
-        
-        conversation_store.update_conversation_title(conversation_id, title)
+        conversation_store.update_conversation_title(conversation_id, title, user_email=user_email)
         return {"message": "Conversation title updated successfully"}
     except Exception as e:
         logger.error(f"Failed to update conversation title {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@api_router.put("/config/generation")
-async def update_generation_config(generation_config: dict, _: str = Depends(get_current_user)):
-    """Update generation configuration."""
-    try:
-        logger.info(f"[CONFIG] Updating generation config: {generation_config}")
-        
-        # Load current config
-        config_path = Path(__file__).parent.parent / "data" / "config.json"
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                app_config = json.load(f)
-        else:
-            app_config = {}
-        
-        # Update generation section
-        if "generation" not in app_config:
-            app_config["generation"] = {}
-        
-        # Validate max_tokens based on active provider
-        active_provider = app_config.get("activeProvider", "deepseek")
-        max_tokens = generation_config.get("max_tokens")
-        
-        if max_tokens:
-            # Apply provider-specific limits
-            if active_provider == "deepseek":
-                max_tokens = min(max_tokens, 8192)  # DeepSeek limit
-            elif active_provider == "openai":
-                max_tokens = min(max_tokens, 32768)  # OpenAI limit
-            elif active_provider == "anthropic":
-                max_tokens = min(max_tokens, 32768)  # Anthropic limit
-            
-            generation_config["max_tokens"] = max_tokens
-            logger.info(f"[CONFIG] Adjusted max_tokens to {max_tokens} for provider {active_provider}")
-        
-        # Update config
-        app_config["generation"].update(generation_config)
-        
-        # Save updated config
-        with open(config_path, 'w') as f:
-            json.dump(app_config, f, indent=2)
-        
-        logger.info(f"[CONFIG] Generation config updated successfully")
-        return app_config["generation"]
-        
-    except Exception as e:
-        logger.error(f"Failed to update generation config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @api_router.delete("/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str, _: str = Depends(get_current_user)):
-    """Delete a conversation and all its messages."""
+async def delete_conversation(conversation_id: str, user_email: str = Depends(get_current_user)):
+    """Delete a conversation and all its messages (scoped to user)."""
     try:
-        # Delete conversation from database
-        conversation_store.delete_conversation(conversation_id)
-        logger.info(f"[DELETE] Deleted conversation: {conversation_id}")
+        conversation_store.delete_conversation(conversation_id, user_email=user_email)
+        logger.info(f"[DELETE] Deleted conversation: {conversation_id} user={user_email}")
         return {"success": True, "message": f"Conversation {conversation_id} deleted successfully"}
     except Exception as e:
         logger.error(f"Failed to delete conversation {conversation_id}: {e}")
