@@ -130,6 +130,21 @@ app.add_middleware(
 # Create API router with /api prefix
 api_router = APIRouter(prefix="/api")
 
+# Public debug endpoint (no auth required)
+@app.get("/debug/auth")
+async def debug_auth_public():
+    """Public debug endpoint to check auth configuration."""
+    import os
+    return {
+        "google_client_id_set": bool(os.getenv("GOOGLE_CLIENT_ID")),
+        "google_client_id_length": len(os.getenv("GOOGLE_CLIENT_ID", "")),
+        "jwt_secret_set": bool(os.getenv("JWT_SECRET")),
+        "cors_origins": os.getenv("CORS_ORIGINS", "default"),
+        "environment": os.getenv("RENDER") or "local",
+        "vite_google_client_id_set": bool(os.getenv("VITE_GOOGLE_CLIENT_ID")),
+        "vite_google_client_id_length": len(os.getenv("VITE_GOOGLE_CLIENT_ID", ""))
+    }
+
 # Pydantic models
 class ChatRequest(BaseModel):
     message: str
