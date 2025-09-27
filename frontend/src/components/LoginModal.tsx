@@ -1,8 +1,12 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Lock, X } from 'lucide-react';
 
 declare global {
-  interface Window { google?: any; handleGoogleCredential?: (resp: any) => void }
+  interface Window { 
+    google?: any; 
+    handleGoogleCredential?: (resp: any) => void;
+    _gisInitialized?: boolean;
+  }
 }
 
 interface LoginModalProps {
@@ -15,14 +19,64 @@ const GOOGLE_CLIENT_ID: string | undefined = (window as any).__GOOGLE_CLIENT_ID_
 
 export const LoginModal: React.FC<LoginModalProps> = ({ 
   isOpen, 
-  onClose, 
   error 
 }) => {
-  const handleGoogleClick = () => {
-    if (window.google && (window as any).google.accounts && GOOGLE_CLIENT_ID) {
-      (window as any).google.accounts.id.prompt();
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const clientId = GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      console.error('Google Client ID отсутствует (VITE_GOOGLE_CLIENT_ID)');
+      return;
     }
-  };
+
+    let cancelled = false;
+
+    const initAndRender = () => {
+      if (!window.google?.accounts?.id) return false;
+      try {
+        if (!window._gisInitialized) {
+          window.google.accounts.id.initialize({
+            client_id: clientId,
+            callback: window.handleGoogleCredential,
+            auto_select: false,
+            cancel_on_tap_outside: false
+          });
+          window._gisInitialized = true;
+        }
+        const btn = document.getElementById('google-signin-button');
+        if (btn) {
+          btn.innerHTML = '';
+          window.google.accounts.id.renderButton(btn, { 
+            theme: 'outline', 
+            size: 'large',
+            type: 'standard',
+            text: 'signin_with',
+            shape: 'rectangular',
+            logo_alignment: 'left'
+          });
+        }
+        window.google.accounts.id.prompt();
+        return true;
+      } catch (err) {
+        console.warn('Ошибка инициализации/рендера Google кнопки:', err);
+        return false;
+      }
+    };
+
+    if (!initAndRender()) {
+      let attempts = 0;
+      const interval = setInterval(() => {
+        if (cancelled) { clearInterval(interval); return; }
+        if (initAndRender() || ++attempts > 50) {
+          clearInterval(interval);
+        }
+      }, 150);
+    }
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -44,12 +98,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {/* Close disabled during mandatory auth flow */}
+          {/* <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"><X className="w-5 h-5" /></button> */}
         </div>
 
         {/* Error Display */}
@@ -60,16 +110,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         )}
 
         <div className="space-y-6">
-          <div className="flex flex-col items-center gap-4">
-            <div id="g_id_onload" data-client_id={GOOGLE_CLIENT_ID || ''} data-auto_prompt="false" data-callback="handleGoogleCredential" />
-            <div className="g_id_signin" data-type="standard" data-shape="rect" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left" />
-            <button
-              type="button"
-              onClick={handleGoogleClick}
-              className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg flex items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm font-medium text-gray-700 dark:text-gray-200"
-            >
-              <span>Sign in with Google</span>
-            </button>
+          <div className="flex flex-col items-center justify-center gap-4 min-h-[80px]">
+            <div id="google-signin-button" />
           </div>
           <p className="text-xs text-center text-gray-500 dark:text-gray-400">
             By continuing you agree to the application's terms of use.

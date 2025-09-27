@@ -484,28 +484,9 @@ function App() {
     }
   }, [fetchConfig]);
 
-  // Expose callback & initialize GIS
+  // Expose callback only (initialization handled inside LoginModal)
   useEffect(() => {
     (window as any).handleGoogleCredential = handleGoogleCredential;
-    // Инициализация Google Identity Services (однократно)
-    if ((window as any).google?.accounts?.id && !(window as any)._gisInitialized) {
-      const clientId = (window as any).__GOOGLE_CLIENT_ID__ || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID;
-      if (clientId) {
-        try {
-          (window as any).google.accounts.id.initialize({
-            client_id: clientId,
-            callback: handleGoogleCredential,
-            auto_select: false,
-            cancel_on_tap_outside: false
-          });
-          (window as any)._gisInitialized = true;
-        } catch (err) {
-          console.error('Failed to initialize Google Identity Services', err);
-        }
-      } else {
-        console.error('Missing Google Client ID (VITE_GOOGLE_CLIENT_ID) during initialization');
-      }
-    }
   }, [handleGoogleCredential]);
 
   // ========================= Loading / Auth UI =========================
@@ -513,7 +494,6 @@ function App() {
     return (
       <LoginModal
         isOpen={true}
-        onClose={() => {}}
         error={undefined}
       />
     );

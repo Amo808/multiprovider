@@ -4,6 +4,8 @@ services:
     runtime: docker
     plan: starter
     dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerBuildCommand: docker build --build-arg VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID} -t multichat-app .
     envVars:
       - key: OPENAI_API_KEY
         sync: false
