@@ -51,22 +51,6 @@ export class ApiClient {
     return { ...baseHeaders, ...authHeaders };
   }
 
-  private async fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...this.getHeaders(),
-        ...options.headers
-      }
-    });
-
-    if (response.status === 401) {
-      this.handleUnauthorized();
-    }
-
-    return response;
-  }
-
   // Authentication method
   async post(endpoint: string, data: any): Promise<{ data: any }> {
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
