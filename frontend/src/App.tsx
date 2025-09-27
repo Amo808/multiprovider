@@ -15,7 +15,6 @@ import {
   ModelProvider,
   GenerationConfig
 } from './components';
-import { useConversations as useApiConversations } from './hooks/useApi';
 import { apiClient } from './services/api';
 
 function App() {
@@ -52,7 +51,6 @@ function App() {
   const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig, fetchConfig } = useConfig();
   const { health } = useHealth();
   const { deleteConversation: deleteConversationMessages } = useConversations();
-  const { deleteConversation: deleteConversationFromServer } = useApiConversations();
 
   // ========================= Auth Restore =========================
   useEffect(() => {
