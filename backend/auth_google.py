@@ -54,3 +54,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         return payload.get("sub")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+# New endpoint to retrieve current authenticated user email
+@router.get("/me")
+async def get_me(user: str = Depends(get_current_user)):
+    return {"email": user}

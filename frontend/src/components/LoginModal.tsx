@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Lock, X, Eye, EyeOff } from 'lucide-react';
+import React from 'react';
+import { Lock, X } from 'lucide-react';
 
 declare global {
   interface Window { google?: any; handleGoogleCredential?: (resp: any) => void }
@@ -8,8 +8,6 @@ declare global {
 interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: (password: string) => void;
-  onGoogleLogin?: (token: string) => Promise<void>;
   error?: string;
 }
 
@@ -18,30 +16,9 @@ const GOOGLE_CLIENT_ID: string | undefined = (window as any).__GOOGLE_CLIENT_ID_
 export const LoginModal: React.FC<LoginModalProps> = ({ 
   isOpen, 
   onClose, 
-  onSuccess,
-  onGoogleLogin,
   error 
 }) => {
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    
-    try {
-      await onSuccess(password);
-      setPassword('');
-    } catch (err) {
-      // Error handled by parent
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const handleGoogleClick = () => {
-    // Trigger Google One Tap or button flow
     if (window.google && (window as any).google.accounts && GOOGLE_CLIENT_ID) {
       (window as any).google.accounts.id.prompt();
     }
@@ -60,10 +37,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </div>
             <div>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                Access Required
+                Sign In
               </h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Sign in with Google to continue
+                Use your Google account to continue
               </p>
             </div>
           </div>
@@ -75,69 +52,29 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Password Input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-              Password
-            </label>
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter access password"
-                className="w-full px-4 py-3 pr-12 border border-gray-300 dark:border-gray-600 rounded-lg 
-                         bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100
-                         focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
-                         placeholder-gray-400 dark:placeholder-gray-500 transition-colors"
-                required
-                autoFocus
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1 transition-colors"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              Password login is disabled. Use Google sign-in below.
-            </p>
+        {/* Error Display */}
+        {error && (
+          <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg mb-4">
+            <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
           </div>
+        )}
 
-          {/* Error Display */}
-          {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-              <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
-            </div>
-          )}
-
-          {/* Action Button */}
-          <div className="pt-2 space-y-3">
+        <div className="space-y-6">
+          <div className="flex flex-col items-center gap-4">
+            <div id="g_id_onload" data-client_id={GOOGLE_CLIENT_ID || ''} data-auto_prompt="false" data-callback="handleGoogleCredential" />
+            <div className="g_id_signin" data-type="standard" data-shape="rect" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left" />
             <button
-              type="submit"
-              disabled={!password.trim() || isSubmitting}
-              className="w-full px-4 py-3 bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-white rounded-lg font-medium"
+              type="button"
+              onClick={handleGoogleClick}
+              className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg flex items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm font-medium text-gray-700 dark:text-gray-200"
             >
-              Disabled
+              <span>Sign in with Google</span>
             </button>
-            {onGoogleLogin && (
-              <div className="flex flex-col items-center gap-2">
-                <div id="g_id_onload" data-client_id={GOOGLE_CLIENT_ID || ''} data-auto_prompt="false" data-callback="handleGoogleCredential" />
-                <div className="g_id_signin" data-type="standard" data-shape="rect" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left" />
-                <button
-                  type="button"
-                  onClick={handleGoogleClick}
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg flex items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm"
-                >
-                  <span>Sign in with Google</span>
-                </button>
-              </div>
-            )}
           </div>
-        </form>
+          <p className="text-xs text-center text-gray-500 dark:text-gray-400">
+            By continuing you agree to the application's terms of use.
+          </p>
+        </div>
       </div>
     </div>
   );

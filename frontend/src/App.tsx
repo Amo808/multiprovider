@@ -19,13 +19,13 @@ import { useConversations as useApiConversations } from './hooks/useApi';
 import { apiClient } from './services/api';
 
 function App() {
-  // State management
+  // ========================= State Management =========================
   const [selectedModel, setSelectedModel] = useState<ModelInfo | undefined>();
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | undefined>();
   const [showProviderManager, setShowProviderManager] = useState(false);
   const [showGenerationSettings, setShowGenerationSettings] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
-  const [showHistory, setShowHistory] = useState(true); // Show history by default for Lobe Chat-like experience
+  const [showHistory, setShowHistory] = useState(true);
   const [currentConversationId, setCurrentConversationId] = useState<string>('default');
   const [conversations, setConversations] = useState<Array<{id: string, title: string, updatedAt: string}>>([]);
   const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>(() => {
@@ -40,14 +40,15 @@ function App() {
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  // API hooks
+  // ========================= Hooks =========================
   const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig, fetchConfig } = useConfig();
   const { health } = useHealth();
   const { deleteConversation: deleteConversationMessages } = useConversations();
   const { deleteConversation: deleteConversationFromServer } = useApiConversations();
 
-  // Restore authentication on first mount
+  // ========================= Auth Restore =========================
   useEffect(() => {
     try {
       const jwt = localStorage.getItem('jwt_token');
@@ -55,15 +56,17 @@ function App() {
         apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${jwt}` }));
         setIsAuthenticated(true);
         fetchConfig();
+        // fetch user email
+        fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` }})
+          .then(r => r.ok ? r.json() : null)
+          .then(d => setUserEmail(d?.email || null))
+          .catch(() => {});
       }
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }, [fetchConfig]);
 
-  // Initialize app
+  // ========================= Theme Handling =========================
   useEffect(() => {
-    // Apply theme
     const root = document.documentElement;
     console.log(`Applying theme: ${theme}`);
     
@@ -87,7 +90,7 @@ function App() {
     }
   }, [theme]);
 
-  // Load conversations from backend on app start
+  // ========================= Load Conversations =========================
   useEffect(() => {
     const loadConversations = async () => {
       try {
@@ -144,7 +147,7 @@ function App() {
     }
   }, [isAuthenticated]); // Run once on app start
 
-  // Set default model when config loads
+  // ========================= Initial Model Selection =========================
   useEffect(() => {
     if (config && !selectedModel && !selectedProvider) {
       setSelectedProvider(config.activeProvider);
@@ -158,6 +161,7 @@ function App() {
     }
   }, [config, selectedModel, selectedProvider]);
 
+  // ========================= Debugging =========================
   // Debug logging for state changes
   useEffect(() => {
     console.log('State update - currentConversationId:', currentConversationId);
@@ -172,7 +176,7 @@ function App() {
     console.log('Config error:', configError);
   }, [config, configLoading, configError]);
 
-  // Handlers
+  // ========================= Handlers =========================
   const handleModelChange = useCallback(async (model: ModelInfo) => {
     setSelectedModel(model);
     if (model.provider !== selectedProvider) {
@@ -278,7 +282,7 @@ function App() {
     setTheme(nextTheme);
   };
 
-  // Conversation handlers
+  // ========================= Conversation Handlers =========================
   const handleNewConversation = async () => {
     const newId = `conv_${Date.now()}`;
     const newConversation = {
@@ -459,12 +463,7 @@ function App() {
     }
   };
 
-  // Authentication handlers
-  const handleLogin = async (_password: string) => {
-    // Legacy password flow removed
-    throw new Error('Password login disabled. Use Google sign-in.');
-  };
-
+  // ========================= Auth Handlers =========================
   const handleGoogleCredential = useCallback(async (resp: any) => {
     try {
       const r = await fetch('/auth/google', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id_token: resp.credential }) });
@@ -474,24 +473,47 @@ function App() {
       localStorage.setItem('jwt_token', token);
       apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${token}` }));
       setIsAuthenticated(true);
+      // fetch user email
+      fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` }})
+        .then(r => r.ok ? r.json() : null)
+        .then(d => setUserEmail(d?.email || null))
+        .catch(() => {});
       await fetchConfig();
     } catch (e) {
       console.error('Google login error', e);
     }
   }, [fetchConfig]);
 
+  // Expose callback & initialize GIS
   useEffect(() => {
     (window as any).handleGoogleCredential = handleGoogleCredential;
+    // Инициализация Google Identity Services (однократно)
+    if ((window as any).google?.accounts?.id && !(window as any)._gisInitialized) {
+      const clientId = (window as any).__GOOGLE_CLIENT_ID__ || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID;
+      if (clientId) {
+        try {
+          (window as any).google.accounts.id.initialize({
+            client_id: clientId,
+            callback: handleGoogleCredential,
+            auto_select: false,
+            cancel_on_tap_outside: false
+          });
+          (window as any)._gisInitialized = true;
+        } catch (err) {
+          console.error('Failed to initialize Google Identity Services', err);
+        }
+      } else {
+        console.error('Missing Google Client ID (VITE_GOOGLE_CLIENT_ID) during initialization');
+      }
+    }
   }, [handleGoogleCredential]);
 
-  // Show login modal if not authenticated (force it open to avoid blank screen)
+  // ========================= Loading / Auth UI =========================
   if (!isAuthenticated) {
     return (
       <LoginModal
         isOpen={true}
         onClose={() => {}}
-        onSuccess={handleLogin}
-        onGoogleLogin={async () => {}}
         error={undefined}
       />
     );
@@ -518,50 +540,30 @@ function App() {
     );
   }
 
+  // ========================= Main UI =========================
   return (
     <div className="h-screen bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden">
       {/* Header */}
       <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex-shrink-0">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          {/* Logo and Title */}
           <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setShowSidebar(!showSidebar)}
-              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 lg:hidden"
-            >
-              {showSidebar ? <X size={20} /> : <Menu size={20} />}
+            <button onClick={() => setShowSidebar(!showSidebar)} className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 lg:hidden">
+              {showSidebar ? <X size={20}/> : <Menu size={20}/>}
             </button>
-            <button
-              onClick={toggleHistorySidebar}
-              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors hidden lg:block"
-              title="Toggle conversation history"
-            >
-              <Menu size={20} />
+            <button onClick={toggleHistorySidebar} className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 hidden lg:block" title="Toggle conversation history">
+              <Menu size={20}/>
             </button>
             <div className="flex items-center space-x-2">
               <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-sm">AI</span>
               </div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">
-                Multi-Provider Chat
-              </h1>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Multi-Provider Chat</h1>
             </div>
           </div>
-
-          {/* Controls */}
           <div className="flex items-center space-x-3">
-            {/* Health Status */}
             {health && (
-              <div className={`px-2 py-1 rounded-full text-xs font-medium ${
-                health.status === 'healthy' 
-                  ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-                  : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
-              }`}>
-                {health.status}
-              </div>
+              <div className={`px-2 py-1 rounded-full text-xs font-medium ${health.status === 'healthy' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>{health.status}</div>
             )}
-
-            {/* Model Selector */}
             <div className="hidden sm:block min-w-[300px]">
               <ModelSelector
                 selectedModel={selectedModel}
@@ -571,8 +573,6 @@ function App() {
                 onManageProviders={() => setShowProviderManager(true)}
               />
             </div>
-
-            {/* Generation Settings */}
             <GenerationSettings
               config={config.generation}
               currentProvider={selectedProvider}
@@ -581,28 +581,20 @@ function App() {
               isOpen={showGenerationSettings}
               onToggle={() => setShowGenerationSettings(!showGenerationSettings)}
             />
-
-            {/* Theme Toggle */}
+            <button onClick={toggleTheme} className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700" title={`Theme: ${theme}`}>{getThemeIcon()}</button>
+            {userEmail && <span className="text-xs text-gray-500 dark:text-gray-400 hidden md:inline">{userEmail}</span>}
             <button
-              onClick={toggleTheme}
-              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              title={`Theme: ${theme}`}
+              onClick={() => { localStorage.removeItem('jwt_token'); setIsAuthenticated(false); setUserEmail(null); }}
+              className="p-2 text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30"
+              title="Logout"
             >
-              {getThemeIcon()}
+              <span className="text-xs font-medium">Logout</span>
             </button>
-
-            {/* Settings */}
-            <button
-              onClick={() => setShowProviderManager(true)}
-              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              title="Manage Providers"
-            >
-              <Settings size={16} />
+            <button onClick={() => setShowProviderManager(true)} className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700" title="Manage Providers">
+              <Settings size={16}/>
             </button>
           </div>
         </div>
-
-        {/* Mobile Model Selector */}
         <div className="sm:hidden mt-3">
           <ModelSelector
             selectedModel={selectedModel}
@@ -614,9 +606,7 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Conversation History Sidebar - Desktop */}
         {showHistory && (
           <div className="hidden lg:block">
             <ConversationHistory
@@ -629,57 +619,31 @@ function App() {
             />
           </div>
         )}
-
-        {/* Sidebar - Mobile */}
         {showSidebar && (
           <div className="fixed inset-0 z-50 lg:hidden">
             <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setShowSidebar(false)} />
             <div className="relative w-80 h-full bg-white dark:bg-gray-800 overflow-hidden flex flex-col">
-              {/* Mobile Conversation History */}
               <div className="flex-1 overflow-y-auto">
                 <ConversationHistory
                   conversations={conversations}
                   currentConversationId={currentConversationId}
                   onNewConversation={handleNewConversation}
-                  onSelectConversation={(id: string) => {
-                    handleSelectConversation(id);
-                    setShowSidebar(false);
-                  }}
+                  onSelectConversation={(id: string) => { handleSelectConversation(id); setShowSidebar(false); }}
                   onRenameConversation={handleRenameConversation}
                   onDeleteConversation={handleDeleteConversation}
                 />
               </div>
-              
-              {/* Mobile Quick Actions */}
               <div className="border-t border-gray-200 dark:border-gray-700 p-4">
                 <div className="space-y-2">
-                  <button
-                    onClick={() => {
-                      setShowProviderManager(true);
-                      setShowSidebar(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
-                  >
-                    Manage Providers
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowGenerationSettings(true);
-                      setShowSidebar(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
-                  >
-                    Generation Settings
-                  </button>
+                  <button onClick={() => { setShowProviderManager(true); setShowSidebar(false); }} className="w-full text-left px-3 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">Manage Providers</button>
+                  <button onClick={() => { setShowGenerationSettings(true); setShowSidebar(false); }} className="w-full text-left px-3 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">Generation Settings</button>
                 </div>
               </div>
             </div>
           </div>
         )}
-
-        {/* Chat Interface */}
         <div className="flex-1 flex flex-col min-h-0">
-          {currentConversationId && conversations.some(conv => conv.id === currentConversationId) ? (
+          {currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
             <ChatInterface
               selectedModel={selectedModel}
               selectedProvider={selectedProvider}
@@ -699,25 +663,20 @@ function App() {
         </div>
       </main>
 
-      {/* Provider Manager Modal */}
       {showProviderManager && (
         <div className="fixed inset-0 z-50">
           <ProviderManager onClose={() => setShowProviderManager(false)} />
         </div>
       )}
 
-      {/* Unlock Modal */}
-      {(() => {
-        console.log('App render: showUnlockModal =', showUnlockModal, 'selectedProvider =', selectedProvider);
-        return showUnlockModal && selectedProvider && (
-          <UnlockModal
-            isOpen={showUnlockModal}
-            provider={selectedProvider}
-            onClose={handleUnlockCancel}
-            onSubmit={handleUnlockSuccess}
-          />
-        );
-      })()}
+      {showUnlockModal && selectedProvider && (
+        <UnlockModal
+          isOpen={showUnlockModal}
+          provider={selectedProvider}
+          onClose={handleUnlockCancel}
+          onSubmit={handleUnlockSuccess}
+        />
+      )}
     </div>
   );
 }
