@@ -48,13 +48,12 @@ function App() {
   };
 
   // ========================= Hooks =========================
-  const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig, fetchConfig } = useConfig();
+  const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig, fetchConfig } = useConfig({ skipInitialFetch: true });
   const { health } = useHealth();
   const { deleteConversation: deleteConversationMessages } = useConversations();
 
   // ========================= Auth Restore =========================
   useEffect(() => {
-    // Set up global 401 handler
     apiClient.setUnauthorizedCallback(() => {
       console.log('Global 401 handler: logging out user');
       setIsAuthenticated(false);
@@ -64,15 +63,26 @@ function App() {
 
     try {
       const jwt = localStorage.getItem('jwt_token');
+      console.log('Auth restore: token present?', !!jwt);
       if (jwt) {
         apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${jwt}` }));
         setIsAuthenticated(true);
-        fetchConfig();
-        // fetch user email
-        fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` }})
-          .then(r => r.ok ? r.json() : null)
-          .then(d => setUserEmail(d?.email || null))
-          .catch(() => {});
+        // fetch user email first to verify token
+        fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` }} )
+          .then(r => {
+            if (!r.ok) throw new Error('me failed');
+            return r.json();
+          })
+          .then(d => {
+            setUserEmail(d?.email || null);
+            // only fetch config after confirming token works
+            fetchConfig();
+          })
+          .catch(err => {
+            console.log('Auth restore /auth/me failed, clearing token', err);
+            localStorage.removeItem('jwt_token');
+            setIsAuthenticated(false);
+          });
       }
     } catch { /* ignore */ }
   }, [fetchConfig]);
@@ -154,10 +164,10 @@ function App() {
       }
     };
 
-    if (isAuthenticated) {
+    if (isAuthenticated && conversations.length === 0) {
       loadConversations();
     }
-  }, [isAuthenticated]); // Run once on app start
+  }, [isAuthenticated, conversations.length]); // Run once on app start
 
   // ========================= Initial Model Selection =========================
   useEffect(() => {

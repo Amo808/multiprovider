@@ -177,7 +177,8 @@ export const useModels = (providerId?: ModelProvider) => {
 };
 
 // Config hook
-export const useConfig = () => {
+interface UseConfigOptions { skipInitialFetch?: boolean }
+export const useConfig = (options?: UseConfigOptions) => {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -237,8 +238,12 @@ export const useConfig = () => {
   }, []);
 
   useEffect(() => {
-    fetchConfig();
-  }, [fetchConfig]);
+    if (!options?.skipInitialFetch) {
+      fetchConfig();
+    } else {
+      console.log('useConfig: skipping initial fetch until auth ready');
+    }
+  }, [fetchConfig, options?.skipInitialFetch]);
 
   return {
     config,
