@@ -469,18 +469,27 @@ function App() {
 
   // ========================= Auth Handlers =========================
   const handleGoogleCredential = useCallback(async (resp: any) => {
+    console.log('[GIS] credential received', resp ? Object.keys(resp) : 'no resp');
     try {
+      if (!resp?.credential) {
+        console.error('[GIS] missing credential field');
+        return;
+      }
       const r = await fetch('/auth/google', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id_token: resp.credential }) });
-      if (!r.ok) { throw new Error('Google auth failed'); }
+      if (!r.ok) { console.error('[GIS] backend /auth/google failed', r.status); throw new Error('Google auth failed'); }
       const data = await r.json();
       const token = data.access_token;
+      console.log('[GIS] backend token ok, length=', token?.length);
       localStorage.setItem('jwt_token', token);
       apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${token}` }));
       setIsAuthenticated(true);
-      fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` }})
-        .then(r => r.ok ? r.json() : null)
-        .then(d => setUserEmail(d?.email || null))
-        .catch(() => {});
+      const me = await fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` }});
+      if (me.ok) {
+        const d = await me.json();
+        setUserEmail(d?.email || null);
+      } else {
+        console.warn('[GIS] /auth/me failed', me.status);
+      }
       await fetchConfig();
     } catch (e) {
       console.error('Google login error', e);
@@ -498,6 +507,7 @@ function App() {
       <LoginModal
         isOpen={true}
         error={undefined}
+        onGoogleCredential={handleGoogleCredential}
       />
     );
   }

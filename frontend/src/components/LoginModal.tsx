@@ -4,22 +4,23 @@ import { Lock } from 'lucide-react';
 declare global {
   interface Window { 
     google?: any; 
-    handleGoogleCredential?: (resp: any) => void;
     _gisInitialized?: boolean;
   }
 }
 
 interface LoginModalProps {
   isOpen: boolean;
-  onClose?: () => void; // now optional since modal is mandatory auth gate
+  onClose?: () => void; // optional
   error?: string;
+  onGoogleCredential: (resp: any) => void;
 }
 
 const GOOGLE_CLIENT_ID: string | undefined = (window as any).__GOOGLE_CLIENT_ID__ || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID;
 
 export const LoginModal: React.FC<LoginModalProps> = ({ 
   isOpen, 
-  error 
+  error,
+  onGoogleCredential
 }) => {
 
   useEffect(() => {
@@ -37,17 +38,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       if (!window.google?.accounts?.id) return false;
       try {
         if (!window._gisInitialized) {
+          console.log('[GIS] initialize');
           window.google.accounts.id.initialize({
             client_id: clientId,
-            callback: window.handleGoogleCredential,
+            callback: onGoogleCredential,
             auto_select: false,
-            cancel_on_tap_outside: false
+            cancel_on_tap_outside: false,
+            ux_mode: 'popup', // more reliable on mobile / ITP
+            context: 'signin'
           });
           window._gisInitialized = true;
         }
         const btn = document.getElementById('google-signin-button');
         if (btn) {
           btn.innerHTML = '';
+          console.log('[GIS] renderButton');
           window.google.accounts.id.renderButton(btn, { 
             theme: 'outline', 
             size: 'large',
@@ -56,8 +61,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             shape: 'rectangular',
             logo_alignment: 'left'
           });
+        } else {
+          console.warn('[GIS] button container not found');
         }
-        window.google.accounts.id.prompt();
+        // Prompt (for One Tap fallback) - ignore errors
+        try { window.google.accounts.id.prompt((n: any) => { console.log('[GIS] prompt notification', n); }); } catch {}
         return true;
       } catch (err) {
         console.warn('Ошибка инициализации/рендера Google кнопки:', err);
@@ -71,12 +79,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         if (cancelled) { clearInterval(interval); return; }
         if (initAndRender() || ++attempts > 50) {
           clearInterval(interval);
+          if (attempts > 50) console.error('[GIS] не удалось инициализировать после 50 попыток');
         }
       }, 150);
     }
 
     return () => { cancelled = true; };
-  }, [isOpen]);
+  }, [isOpen, onGoogleCredential]);
 
   if (!isOpen) return null;
 
@@ -98,10 +107,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </p>
             </div>
           </div>
-          {/* Close button intentionally removed during mandatory auth flow */}
          </div>
 
-        {/* Error Display */}
         {error && (
           <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg mb-4">
             <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
