@@ -85,3 +85,6 @@ data/history.jsonl
 # Temporary files
 *.tmp
 *.temp
+
+# Allow frontend src/lib directory (shadcn/ui utils)
+!frontend/src/lib/
