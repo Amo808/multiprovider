@@ -48,7 +48,16 @@ export class ApiClient {
   private getHeaders(): Record<string, string> {
     const baseHeaders = { 'Content-Type': 'application/json' };
     const authHeaders = this.getAuthHeaders?.() || {};
-    return { ...baseHeaders, ...authHeaders };
+    const headers = { ...baseHeaders, ...authHeaders };
+    
+    // Log when auth headers are present
+    if (authHeaders.Authorization) {
+      console.log('[API] Request with auth header, token length:', authHeaders.Authorization.length);
+    } else {
+      console.log('[API] Request without auth header');
+    }
+    
+    return headers;
   }
 
   // Authentication method

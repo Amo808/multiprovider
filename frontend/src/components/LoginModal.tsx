@@ -44,7 +44,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             callback: onGoogleCredential,
             auto_select: false,
             cancel_on_tap_outside: false,
-            ux_mode: 'popup', // more reliable on mobile / ITP
+            ux_mode: 'popup',
             context: 'signin'
           });
           window._gisInitialized = true;
@@ -64,8 +64,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         } else {
           console.warn('[GIS] button container not found');
         }
-        // Prompt (for One Tap fallback) - ignore errors
-        try { window.google.accounts.id.prompt((n: any) => { console.log('[GIS] prompt notification', n); }); } catch {}
+        // Remove automatic prompt to prevent popup on every reload
+        // try { window.google.accounts.id.prompt((n: any) => { console.log('[GIS] prompt notification', n); }); } catch {}
         return true;
       } catch (err) {
         console.warn('Ошибка инициализации/рендера Google кнопки:', err);

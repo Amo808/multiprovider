@@ -475,24 +475,64 @@ function App() {
         console.error('[GIS] missing credential field');
         return;
       }
-      const r = await fetch('/auth/google', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id_token: resp.credential }) });
-      if (!r.ok) { console.error('[GIS] backend /auth/google failed', r.status); throw new Error('Google auth failed'); }
-      const data = await r.json();
-      const token = data.access_token;
-      console.log('[GIS] backend token ok, length=', token?.length);
-      localStorage.setItem('jwt_token', token);
-      apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${token}` }));
-      setIsAuthenticated(true);
-      const me = await fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` }});
-      if (me.ok) {
-        const d = await me.json();
-        setUserEmail(d?.email || null);
-      } else {
-        console.warn('[GIS] /auth/me failed', me.status);
+      
+      console.log('[GIS] sending request to /auth/google...');
+      
+      // Добавляем таймаут для запроса
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 секунд таймаут
+      
+      try {
+        const r = await fetch('/auth/google', { 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify({ id_token: resp.credential }),
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        console.log('[GIS] backend response status:', r.status);
+        
+        if (!r.ok) { 
+          const errorText = await r.text();
+          console.error('[GIS] backend /auth/google failed', r.status, errorText); 
+          throw new Error(`Google auth failed: ${r.status} ${errorText}`); 
+        }
+        
+        const data = await r.json();
+        const token = data.access_token;
+        console.log('[GIS] backend token received, length=', token?.length);
+        
+        localStorage.setItem('jwt_token', token);
+        apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${token}` }));
+        setIsAuthenticated(true);
+        
+        console.log('[GIS] calling /auth/me...');
+        const me = await fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` }});
+        if (me.ok) {
+          const d = await me.json();
+          setUserEmail(d?.email || null);
+          console.log('[GIS] user email set:', d?.email);
+        } else {
+          console.warn('[GIS] /auth/me failed', me.status);
+        }
+        
+        console.log('[GIS] fetching config...');
+        await fetchConfig();
+        console.log('[GIS] auth flow completed successfully');
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        if (fetchError?.name === 'AbortError') {
+          console.error('[GIS] request timed out after 10 seconds');
+          throw new Error('Authentication request timed out');
+        }
+        throw fetchError;
       }
-      await fetchConfig();
-    } catch (e) {
-      console.error('Google login error', e);
+    } catch (e: any) {
+      console.error('[GIS] Google login error', e);
+      // Можно показать пользователю ошибку
+      alert(`Login failed: ${e?.message || 'Unknown error'}`);
     }
   }, [fetchConfig]);
 
@@ -503,13 +543,27 @@ function App() {
 
   // ========================= Loading / Auth UI =========================
   if (!isAuthenticated) {
-    return (
-      <LoginModal
-        isOpen={true}
-        error={undefined}
-        onGoogleCredential={handleGoogleCredential}
-      />
-    );
+    // Показываем модальное окно только если нет токена в localStorage
+    const hasStoredToken = Boolean(localStorage.getItem('jwt_token'));
+    if (!hasStoredToken) {
+      return (
+        <LoginModal
+          isOpen={true}
+          error={undefined}
+          onGoogleCredential={handleGoogleCredential}
+        />
+      );
+    } else {
+      // Если токен есть, но мы не аутентифицированы, показываем загрузку
+      return (
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600 dark:text-gray-400">Verifying authentication...</p>
+          </div>
+        </div>
+      );
+    }
   }
 
   if (configLoading || !config) {

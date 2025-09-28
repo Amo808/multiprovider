@@ -58,28 +58,38 @@ def get_current_user(
     # Try to get token from Security first, then from Header
     token = None
     
+    print(f"[AUTH] credentials present: {credentials is not None}")
+    print(f"[AUTH] authorization header present: {authorization is not None}")
+    if authorization:
+        print(f"[AUTH] authorization header length: {len(authorization)}")
+    
     if credentials is not None:
         token = credentials.credentials
+        print(f"[AUTH] token from credentials, length: {len(token) if token else 0}")
     elif authorization is not None:
         # Handle "Bearer TOKEN" format
         if authorization.startswith("Bearer "):
             token = authorization.split(" ", 1)[1]
+            print(f"[AUTH] token from Bearer header, length: {len(token) if token else 0}")
         else:
             token = authorization
+            print(f"[AUTH] token from raw header, length: {len(token) if token else 0}")
     
     if not token:
+        print("[AUTH] No token found - returning 401")
         raise HTTPException(status_code=401, detail="Not authenticated")
     
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_email = payload.get("sub")
         if not user_email:
-            print(f"JWT payload missing 'sub' field: {payload}")
+            print(f"[AUTH] JWT payload missing 'sub' field: {payload}")
             raise HTTPException(status_code=401, detail="Invalid token payload")
+        print(f"[AUTH] Successfully authenticated user: {user_email}")
         return user_email
     except JWTError as e:
         error_msg = str(e)
-        print(f"JWT decode error: {error_msg}")
+        print(f"[AUTH] JWT decode error: {error_msg}")
         if "expired" in error_msg.lower() or "signature has expired" in error_msg.lower():
             raise HTTPException(status_code=401, detail="Token has expired")
         else:

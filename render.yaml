@@ -22,7 +22,7 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: JWT_EXPIRES
-        value: "60"
+        value: "1440"
       - key: PORT
         value: 10000
       - key: PYTHONUNBUFFERED
