@@ -214,6 +214,14 @@ class GeminiAdapter(BaseAdapter):
                 "topP": params.top_p,
             }
         }
+        # Inject thinking config if requested
+        thinking_cfg = {}
+        if params.thinking_budget is not None:
+            thinking_cfg["budgetTokens"] = params.thinking_budget
+        if params.include_thoughts:
+            thinking_cfg["includeThoughts"] = True
+        if thinking_cfg:
+            payload["thinkingConfig"] = thinking_cfg
 
         if params.stop_sequences:
             payload["generationConfig"]["stopSequences"] = params.stop_sequences
@@ -271,7 +279,9 @@ class GeminiAdapter(BaseAdapter):
                                 "tokens_out": tokens_out,
                                 "estimated_cost": self._calculate_cost(tokens_in, tokens_out, model),
                                 "provider": ModelProvider.GEMINI,
-                                "model": model
+                                "model": model,
+                                "thinking_budget": params.thinking_budget,
+                                "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
                             }
                         )
                     else:
@@ -333,7 +343,9 @@ class GeminiAdapter(BaseAdapter):
                                                         "tokens_out": tokens_out,
                                                         "estimated_cost": self._calculate_cost(input_tokens, tokens_out, model),
                                                         "provider": ModelProvider.GEMINI,
-                                                        "model": model
+                                                        "model": model,
+                                                        "thinking_budget": params.thinking_budget,
+                                                        "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
                                                     }
                                                 )
                                             
@@ -352,7 +364,9 @@ class GeminiAdapter(BaseAdapter):
                                                             "tokens_out": tokens_out,
                                                             "estimated_cost": self._calculate_cost(input_tokens, tokens_out, model),
                                                             "provider": ModelProvider.GEMINI,
-                                                            "model": model
+                                                            "model": model,
+                                                            "thinking_budget": params.thinking_budget,
+                                                            "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
                                                         }
                                                     )
                                                 
@@ -367,7 +381,9 @@ class GeminiAdapter(BaseAdapter):
                                                         "total_tokens": input_tokens + final_output_tokens,
                                                         "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
                                                         "provider": ModelProvider.GEMINI,
-                                                        "model": model
+                                                        "model": model,
+                                                        "thinking_budget": params.thinking_budget,
+                                                        "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
                                                     }
                                                 )
                                                 return
@@ -411,7 +427,9 @@ class GeminiAdapter(BaseAdapter):
                 "total_tokens": input_tokens + final_output_tokens,
                 "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
                 "provider": ModelProvider.GEMINI,
-                "model": model
+                "model": model,
+                "thinking_budget": params.thinking_budget,
+                "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
             }
         )
 

@@ -61,6 +61,9 @@ class GenerationParams:
     presence_penalty: float = 0.0
     stop_sequences: Optional[List[str]] = None
     stream: bool = True
+    # New Gemini thinking parameters
+    thinking_budget: Optional[int] = None  # -1 dynamic, 0 off, >0 fixed tokens, None means not requested
+    include_thoughts: bool = False  # Whether to request thought summary if API supports
 
 @dataclass
 class ProviderConfig:
