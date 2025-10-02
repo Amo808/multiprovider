@@ -214,21 +214,16 @@ class GeminiAdapter(BaseAdapter):
                 "topP": params.top_p,
             }
         }
-        # Inject thinking (correct field name) if requested
-        thinking_payload = {}
-        if params.thinking_budget is not None:
-            # Dynamic mode
-            if params.thinking_budget == -1:
-                # According to docs sample: { "thinking": { "budget": -1 } }
-                thinking_payload["budget"] = -1
-            else:
-                # Fixed budget (token count)
-                thinking_payload["budgetTokens"] = params.thinking_budget
-        if params.include_thoughts:
-            thinking_payload["includeThoughts"] = True
-        if thinking_payload:
-            payload["thinking"] = thinking_payload
-            self.logger.info(f"[Gemini] Inject thinking payload: {thinking_payload}")
+        # Inject thinking config INSIDE generationConfig per latest docs
+        if params.thinking_budget is not None or params.include_thoughts:
+            thinking_cfg = {}
+            if params.thinking_budget is not None:
+                thinking_cfg["thinkingBudget"] = params.thinking_budget  # -1 dynamic, 0 off, >0 fixed
+            if params.include_thoughts:
+                thinking_cfg["includeThoughts"] = True
+            if thinking_cfg:
+                payload["generationConfig"]["thinkingConfig"] = thinking_cfg
+                self.logger.info(f"[Gemini] thinkingConfig injected: {thinking_cfg}")
 
         if params.stop_sequences:
             payload["generationConfig"]["stopSequences"] = params.stop_sequences
@@ -253,18 +248,24 @@ class GeminiAdapter(BaseAdapter):
                 url = f"{self.base_url}/v1beta/models/{model}:streamGenerateContent?key={self.api_key}"
             else:
                 url = f"{self.base_url}/v1beta/models/{model}:generateContent?key={self.api_key}"
+            
+            # Log URL for debugging (hide API key)
+            safe_url = url.replace(self.api_key, "***API_KEY***") if self.api_key else url
+            self.logger.info(f"Making request to: {safe_url}")
+            
             # Prepare retry mechanism if 'thinking' not yet supported
             for attempt in range(2):
                 safe_url = url.replace(self.api_key, "***API_KEY***") if self.api_key else url
-                self.logger.info(f"Making request to: {safe_url} (attempt {attempt+1})")
+                self.logger.info(f"Making request to: {safe_url} (attempt {attempt+1}) payloadKeys={list(payload.keys())} genKeys={list(payload['generationConfig'].keys())}")
                 async with self.session.post(url, json=payload) as response:
                     if response.status == 400:
                         err_txt = await response.text()
-                        if attempt == 0 and ("Unknown name \"thinking\"" in err_txt or "Unknown name \"thinkingConfig\"" in err_txt):
-                            if "thinking" in payload:
-                                self.logger.warning("[Gemini] 'thinking' field not accepted by API. Retrying without it.")
-                                del payload["thinking"]
-                                continue  # retry without thinking
+                        if attempt == 0 and ("Unknown name \"thinkingConfig\"" in err_txt or "Unknown name \"thinkingBudget\"" in err_txt):
+                            # Remove thinkingConfig and retry once
+                            if "thinkingConfig" in payload.get("generationConfig", {}):
+                                self.logger.warning("[Gemini] thinkingConfig rejected by API, retrying without it")
+                                del payload["generationConfig"]["thinkingConfig"]
+                                continue
                     # Normal processing continues below
                     if response.status != 200:
                         error_text = await response.text()
