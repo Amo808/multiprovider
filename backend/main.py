@@ -477,7 +477,8 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             top_p=generation_config.get("top_p", 1.0),
             frequency_penalty=generation_config.get("frequency_penalty", 0.0),
             presence_penalty=generation_config.get("presence_penalty", 0.0),
-            stream=request.stream
+            stream=request.stream,
+            thinking_budget=generation_config.get("thinking_budget"),
         )
         
         # Create assistant message for response

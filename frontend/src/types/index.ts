@@ -123,6 +123,9 @@ export interface GenerationConfig {
   presence_penalty?: number;
   stop_sequences?: string[];
   stream: boolean;
+  // Gemini thinking extensions
+  thinking_budget?: number; // -1 dynamic, 0 off, >0 fixed
+  include_thoughts?: boolean; // request thought summary (if supported)
 }
 
 export interface UIConfig {

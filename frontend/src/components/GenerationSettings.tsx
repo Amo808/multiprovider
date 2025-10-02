@@ -187,6 +187,65 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
               description="Controls randomness. Lower values make output more focused and deterministic."
             />
 
+            {/* Thinking Budget (Gemini) */}
+            {currentProvider === 'gemini' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Thinking Budget
+                  </label>
+                  <span className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+                    {localConfig.thinking_budget === undefined ? 'auto(-1)' : localConfig.thinking_budget}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-1}
+                  max={24576}
+                  step={1}
+                  value={localConfig.thinking_budget ?? -1}
+                  onChange={(e) => handleChange('thinking_budget', Number(e.target.value))}
+                  className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+                  style={{
+                    background: `linear-gradient(to right, #8b5cf6 0%, #8b5cf6 ${(((localConfig.thinking_budget ?? -1) + 1) / (24576 + 1)) * 100}%, #e5e7eb ${(((localConfig.thinking_budget ?? -1) + 1) / (24576 + 1)) * 100}%, #e5e7eb 100%)`
+                  }}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                  <span className="block">Controls Gemini reasoning depth:</span>
+                  <span className="block">-1 = Dynamic (model decides), 0 = Off, {'>'}0 = fixed thinking tokens.</span>
+                </p>
+                <div className="flex items-center space-x-2 pt-1">
+                  <button
+                    onClick={() => handleChange('thinking_budget', -1)}
+                    className="px-2 py-1 text-xs rounded border border-purple-300 dark:border-purple-600 text-purple-600 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/30"
+                  >Auto (-1)</button>
+                  <button
+                    onClick={() => handleChange('thinking_budget', 0)}
+                    className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  >Off (0)</button>
+                  <button
+                    onClick={() => handleChange('thinking_budget', 4096)}
+                    className="px-2 py-1 text-xs rounded border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                  >4K</button>
+                  <button
+                    onClick={() => handleChange('thinking_budget', 8192)}
+                    className="px-2 py-1 text-xs rounded border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                  >8K</button>
+                </div>
+                <label className="flex items-center space-x-2 pt-2">
+                  <input
+                    type="checkbox"
+                    checked={!!localConfig.include_thoughts}
+                    onChange={(e) => handleChange('include_thoughts', e.target.checked)}
+                    className="rounded border-gray-300 dark:border-gray-600 text-purple-600 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  />
+                  <span className="text-xs text-gray-600 dark:text-gray-400">
+                    Include thought summary (if supported)
+                  </span>
+                </label>
+              </div>
+            )}
+
             {/* Max Tokens */}
             <Slider
               label="Max Tokens"
