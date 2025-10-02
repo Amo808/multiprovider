@@ -214,14 +214,21 @@ class GeminiAdapter(BaseAdapter):
                 "topP": params.top_p,
             }
         }
-        # Inject thinking config if requested
-        thinking_cfg = {}
+        # Inject thinking (correct field name) if requested
+        thinking_payload = {}
         if params.thinking_budget is not None:
-            thinking_cfg["budgetTokens"] = params.thinking_budget
+            # Dynamic mode
+            if params.thinking_budget == -1:
+                # According to docs sample: { "thinking": { "budget": -1 } }
+                thinking_payload["budget"] = -1
+            else:
+                # Fixed budget (token count)
+                thinking_payload["budgetTokens"] = params.thinking_budget
         if params.include_thoughts:
-            thinking_cfg["includeThoughts"] = True
-        if thinking_cfg:
-            payload["thinkingConfig"] = thinking_cfg
+            thinking_payload["includeThoughts"] = True
+        if thinking_payload:
+            payload["thinking"] = thinking_payload
+            self.logger.info(f"[Gemini] Inject thinking payload: {thinking_payload}")
 
         if params.stop_sequences:
             payload["generationConfig"]["stopSequences"] = params.stop_sequences
