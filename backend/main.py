@@ -479,6 +479,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             presence_penalty=generation_config.get("presence_penalty", 0.0),
             stream=request.stream,
             thinking_budget=generation_config.get("thinking_budget"),
+            include_thoughts=generation_config.get("include_thoughts", False),
         )
         
         # Create assistant message for response
@@ -854,6 +855,45 @@ async def update_config(config_data: dict, _: str = Depends(get_current_user)):
         
     except Exception as e:
         logger.error(f"Failed to update config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/config/generation")
+async def update_generation_config(generation_config: dict, _: str = Depends(get_current_user)):
+    """Update generation configuration (includes Gemini thinking parameters)."""
+    try:
+        logger.info(f"[CONFIG] Updating generation config: {generation_config}")
+        # Load current config file
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                current = json.load(f)
+        else:
+            current = {}
+        if "generation" not in current:
+            current["generation"] = {}
+        gen = current["generation"]
+        # Allowed keys
+        allowed = {
+            "temperature", "max_tokens", "top_p", "top_k", "frequency_penalty", "presence_penalty",
+            "stop_sequences", "stream", "thinking_budget", "include_thoughts"
+        }
+        for k, v in generation_config.items():
+            if k in allowed:
+                gen[k] = v
+        # Normalize thinking_budget: if provided as string, cast
+        if "thinking_budget" in gen and isinstance(gen["thinking_budget"], str):
+            try:
+                gen["thinking_budget"] = int(gen["thinking_budget"])
+            except ValueError:
+                logger.warning(f"[CONFIG] Invalid thinking_budget value ignored: {gen['thinking_budget']}")
+                gen.pop("thinking_budget")
+        # Save
+        with open(config_path, 'w') as f:
+            json.dump(current, f, indent=2)
+        logger.info("[CONFIG] Generation config updated successfully")
+        return gen
+    except Exception as e:
+        logger.error(f"Failed to update generation config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Register API router

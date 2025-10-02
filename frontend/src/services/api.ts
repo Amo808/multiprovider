@@ -441,10 +441,12 @@ export class ApiClient {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      console.error('API: updateGenerationConfig failed', response.status, errorData);
       throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
     }
-
-    return response.json();
+    const data = await response.json();
+    console.log('API: updateGenerationConfig result', data);
+    return data;
   }
 
   async resetConfig(): Promise<AppConfig> {
