@@ -280,23 +280,31 @@ class GeminiAdapter(BaseAdapter):
                         # Handle non-streaming response
                         data = await response.json()
                         candidates = data.get("candidates", [])
+                        usage_metadata = data.get("usageMetadata", {})
+                        # Extract thought token counts if present
+                        thoughts_tokens = usage_metadata.get("thoughtTokens") or usage_metadata.get("thought_token_count") or usage_metadata.get("thoughtsTokenCount")
+                        thought_budget_used = usage_metadata.get("thinkingTokenCount") or usage_metadata.get("thinking_token_count")
                         if candidates and candidates[0].get("content"):
                             content = candidates[0]["content"]["parts"][0]["text"]
-                            usage_metadata = data.get("usageMetadata", {})
                             tokens_in = usage_metadata.get("promptTokenCount", input_tokens)
                             tokens_out = usage_metadata.get("candidatesTokenCount", self.estimate_tokens(content))
+                            meta_extra = {
+                                "tokens_in": tokens_in,
+                                "tokens_out": tokens_out,
+                                "estimated_cost": self._calculate_cost(tokens_in, tokens_out, model),
+                                "provider": ModelProvider.GEMINI,
+                                "model": model,
+                                "thinking_budget": params.thinking_budget,
+                                "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
+                            }
+                            if thoughts_tokens is not None:
+                                meta_extra["thought_tokens"] = thoughts_tokens
+                            if thought_budget_used is not None:
+                                meta_extra["thinking_tokens_used"] = thought_budget_used
                             yield ChatResponse(
                                 content=content,
                                 done=True,
-                                meta={
-                                    "tokens_in": tokens_in,
-                                    "tokens_out": tokens_out,
-                                    "estimated_cost": self._calculate_cost(tokens_in, tokens_out, model),
-                                    "provider": ModelProvider.GEMINI,
-                                    "model": model,
-                                    "thinking_budget": params.thinking_budget,
-                                    "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
-                                }
+                                meta=meta_extra
                             )
                         else:
                             yield ChatResponse(
@@ -354,19 +362,28 @@ class GeminiAdapter(BaseAdapter):
                                                 if finish_reason:
                                                     self.logger.info(f"Gemini response finished with reason: {finish_reason}")
                                                     final_output_tokens = self.estimate_tokens(accumulated_content)
+                                                    # Extract usage metadata if present in streaming chunk
+                                                    usage_meta_stream = json_response.get("usageMetadata", {})
+                                                    thoughts_tokens_s = usage_meta_stream.get("thoughtTokens") or usage_meta_stream.get("thought_token_count") or usage_meta_stream.get("thoughtsTokenCount")
+                                                    thought_budget_used_s = usage_meta_stream.get("thinkingTokenCount") or usage_meta_stream.get("thinking_token_count")
+                                                    final_meta = {
+                                                        "tokens_in": input_tokens,
+                                                        "tokens_out": final_output_tokens,
+                                                        "total_tokens": input_tokens + final_output_tokens,
+                                                        "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
+                                                        "provider": ModelProvider.GEMINI,
+                                                        "model": model,
+                                                        "thinking_budget": params.thinking_budget,
+                                                        "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
+                                                    }
+                                                    if thoughts_tokens_s is not None:
+                                                        final_meta["thought_tokens"] = thoughts_tokens_s
+                                                    if thought_budget_used_s is not None:
+                                                        final_meta["thinking_tokens_used"] = thought_budget_used_s
                                                     yield ChatResponse(
                                                         content="",
                                                         done=True,
-                                                        meta={
-                                                            "tokens_in": input_tokens,
-                                                            "tokens_out": final_output_tokens,
-                                                            "total_tokens": input_tokens + final_output_tokens,
-                                                            "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
-                                                            "provider": ModelProvider.GEMINI,
-                                                            "model": model,
-                                                            "thinking_budget": params.thinking_budget,
-                                                            "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
-                                                        }
+                                                        meta=final_meta
                                                     )
                                                     return
                                         except json.JSONDecodeError as e:

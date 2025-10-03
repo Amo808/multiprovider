@@ -433,6 +433,7 @@ export class ApiClient {
   }
 
   async updateGenerationConfig(config: Partial<GenerationConfig>): Promise<GenerationConfig> {
+    // Supports extended GPT-5 params: verbosity, reasoning_effort, cfg_scale, free_tool_calling, grammar_definition, tools
     const response = await fetch(`${this.baseUrl}/config/generation`, {
       method: 'PUT',
       headers: this.getHeaders(),

@@ -203,6 +203,21 @@ const MessageBubble: React.FC<{
                   ↓{message.meta.tokens_out}
                 </span>
               )}
+              { (message.meta as any)?.thought_tokens !== undefined && (
+                <span className="text-purple-600 dark:text-purple-400" title={`Thinking (thought) tokens: ${(message.meta as any).thought_tokens}`}>
+                  Θ{(message.meta as any).thought_tokens}
+                </span>
+              )}
+              { (message.meta as any)?.thinking_tokens_used !== undefined && (
+                <span className="text-purple-600 dark:text-purple-400" title={`Thinking tokens actually used: ${(message.meta as any).thinking_tokens_used}`}>
+                  used:{(message.meta as any).thinking_tokens_used}
+                </span>
+              )}
+              { (message.meta as any)?.tool_calls && Array.isArray((message.meta as any).tool_calls) && (message.meta as any).tool_calls.length > 0 && (
+                <span className="text-orange-600 dark:text-orange-400" title="Tool calls executed">
+                  tools:{(message.meta as any).tool_calls.length}
+                </span>
+              )}
               {message.meta.estimated_cost ? (
                 <span className="text-yellow-600 dark:text-yellow-400" title={`Estimated cost: $${message.meta.estimated_cost}`}>
                   ${message.meta.estimated_cost.toFixed(4)}
@@ -509,6 +524,24 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <span>
                   Context: {selectedModel.context_length.toLocaleString()} tokens
                 </span>
+                {generationConfig.verbosity && (
+                  <>
+                    <span>•</span>
+                    <span title="Verbosity hint to GPT-5" className="text-indigo-600 dark:text-indigo-400">Verbosity: {generationConfig.verbosity}</span>
+                  </>
+                )}
+                {generationConfig.reasoning_effort && (
+                  <>
+                    <span>•</span>
+                    <span title="Reasoning effort" className="text-purple-600 dark:text-purple-400">Reasoning: {generationConfig.reasoning_effort}</span>
+                  </>
+                )}
+                {generationConfig.thinking_budget !== undefined && selectedProvider === 'gemini' && (
+                  <>
+                    <span>•</span>
+                    <span title="Gemini thinking budget" className="text-purple-600 dark:text-purple-400">ThinkBudget: {generationConfig.thinking_budget}</span>
+                  </>
+                )}
                 {generationConfig.stream && (
                   <>
                     <span>•</span>

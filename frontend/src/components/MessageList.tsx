@@ -81,10 +81,12 @@ const MessageItem: React.FC<{ message: Message; isStreaming?: boolean; streaming
             {isStreaming && <span className="streaming-cursor"></span>}
           </div>
           {message.meta && (message.meta.tokens_in || message.meta.tokens_out) && (
-            <div className="text-xs text-gray-500 mt-2">
-              {message.meta.tokens_in && `Input: ${message.meta.tokens_in} tokens`}
-              {message.meta.tokens_in && message.meta.tokens_out && ' • '}
-              {message.meta.tokens_out && `Output: ${message.meta.tokens_out} tokens`}
+            <div className="text-xs text-gray-500 mt-2 space-x-1">
+              {message.meta.tokens_in && <span>Input: {message.meta.tokens_in}</span>}
+              {message.meta.tokens_out && <span>Output: {message.meta.tokens_out}</span>}
+              {(message.meta as any)?.thought_tokens !== undefined && <span>Θ:{(message.meta as any).thought_tokens}</span>}
+              {(message.meta as any)?.thinking_tokens_used !== undefined && <span>used:{(message.meta as any).thinking_tokens_used}</span>}
+              {(message.meta as any)?.tool_calls && Array.isArray((message.meta as any).tool_calls) && <span>tools:{(message.meta as any).tool_calls.length}</span>}
             </div>
           )}
         </div>

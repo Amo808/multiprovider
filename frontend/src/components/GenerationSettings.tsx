@@ -187,6 +187,112 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
               description="Controls randomness. Lower values make output more focused and deterministic."
             />
 
+            {/* GPT-5 Verbosity */}
+            {currentProvider === 'openai' && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center justify-between">
+                  <span>Verbosity (GPT-5)</span>
+                  <select
+                    value={localConfig.verbosity || ''}
+                    onChange={(e) => handleChange('verbosity', e.target.value || undefined)}
+                    className="ml-2 text-xs border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700"
+                  >
+                    <option value="">default</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                  </select>
+                </label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Scales output length/detail without editing prompt.</p>
+              </div>
+            )}
+
+            {/* GPT-5 Reasoning Effort */}
+            {currentProvider === 'openai' && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center justify-between">
+                  <span>Reasoning Effort</span>
+                  <select
+                    value={localConfig.reasoning_effort || ''}
+                    onChange={(e) => handleChange('reasoning_effort', e.target.value || undefined)}
+                    className="ml-2 text-xs border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700"
+                  >
+                    <option value="">default</option>
+                    <option value="minimal">minimal</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                  </select>
+                </label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">minimal = fastest (few/no reasoning tokens).</p>
+              </div>
+            )}
+
+            {/* CFG Scale */}
+            {currentProvider === 'openai' && (
+              <Slider
+                label="CFG Scale"
+                value={localConfig.cfg_scale || 0}
+                min={0}
+                max={10}
+                step={0.1}
+                onChange={(value) => handleChange('cfg_scale', value === 0 ? undefined : value)}
+                description="Experimental guidance strength for constrained outputs (placeholder)."
+              />
+            )}
+
+            {/* Free Tool Calling */}
+            {currentProvider === 'openai' && (
+              <div className="space-y-2">
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={!!localConfig.free_tool_calling}
+                    onChange={(e) => handleChange('free_tool_calling', e.target.checked)}
+                    className="rounded border-gray-300 dark:border-gray-600 text-green-600 focus:ring-green-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Free-Form Tool Calling</span>
+                </label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Allow raw text payload to custom tools (no JSON wrapping).</p>
+              </div>
+            )}
+
+            {/* Grammar Definition (collapsible) */}
+            {currentProvider === 'openai' && (
+              <details className="border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                <summary className="text-sm font-medium cursor-pointer text-gray-700 dark:text-gray-300">Grammar (CFG/Lark) Definition</summary>
+                <textarea
+                  className="mt-2 w-full h-24 text-xs font-mono p-2 rounded-md border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100"
+                  placeholder="Optional Lark grammar definition..."
+                  value={localConfig.grammar_definition || ''}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleChange('grammar_definition', e.target.value || undefined)}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400">Provide Lark grammar to constrain output (future enforcement).</p>
+              </details>
+            )}
+
+            {/* Tools JSON */}
+            {currentProvider === 'openai' && (
+              <details className="border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                <summary className="text-sm font-medium cursor-pointer text-gray-700 dark:text-gray-300">Tools (JSON)</summary>
+                <textarea
+                  className="mt-2 w-full h-24 text-xs font-mono p-2 rounded-md border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100"
+                  placeholder='[ { "type": "custom", "name": "code_exec", "description": "Executes python" } ]'
+                  value={(() => { try { return localConfig.tools ? JSON.stringify(localConfig.tools, null, 2) : ''; } catch { return ''; } })()}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    if (!val) return handleChange('tools', undefined);
+                    try {
+                      const parsed = JSON.parse(val);
+                      if (Array.isArray(parsed)) handleChange('tools', parsed);
+                    } catch {
+                      // ignore parse errors silently
+                    }
+                  }}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400">Define custom tools (use type 'custom' for free-form calls).</p>
+              </details>
+            )}
+
             {/* Thinking Budget (Gemini) */}
             {currentProvider === 'gemini' && (
               <div className="space-y-2">

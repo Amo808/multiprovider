@@ -303,6 +303,31 @@ class OpenAIAdapter(BaseAdapter):
             "frequency_penalty": params.frequency_penalty,
             "presence_penalty": params.presence_penalty,
         }
+        # --- NEW GPT-5 PARAM HANDLING ---
+        if model.startswith('gpt-5'):
+            # Verbosity maps to text.verbosity (Responses API) but for chat we include hint under extensions
+            if params.verbosity in {"low", "medium", "high"}:
+                payload.setdefault("text", {})["verbosity"] = params.verbosity
+            # Reasoning effort -> reasoning.effort
+            if params.reasoning_effort in {"minimal", "medium", "high"}:
+                payload.setdefault("reasoning", {})["effort"] = params.reasoning_effort
+            # CFG scale placeholder (future). Only include if provided and numeric
+            if isinstance(params.cfg_scale, (int, float)):
+                payload.setdefault("guidance", {})["cfg_scale"] = params.cfg_scale
+            # Free-form tool calling support: if free_tool_calling True and tools provided use custom type tools
+            if params.free_tool_calling and params.tools:
+                # Expect tools already in correct schema from frontend
+                payload["tools"] = params.tools
+            elif params.tools:
+                # If tools provided but not free-form, still attach them
+                payload["tools"] = params.tools
+            # Grammar definition placeholder (not enforced yet)
+            if params.grammar_definition:
+                payload.setdefault("guidance", {})["grammar"] = {
+                    "syntax": "lark",  # default assumption
+                    "definition": params.grammar_definition[:50000]  # safety truncate
+                }
+        # --- END NEW PARAM HANDLING ---
 
         # Use correct token parameter based on model
         # New OpenAI models use max_completion_tokens, legacy models use max_tokens
@@ -326,6 +351,49 @@ class OpenAIAdapter(BaseAdapter):
 
         if params.stop_sequences:
             payload["stop"] = params.stop_sequences
+
+        # --- GPT-5 ADVANCED FEATURE HANDLING (Responses API switch & tool/grammar injection) ---
+        use_responses_api = False
+        if model.startswith('gpt-5'):
+            # Decide switch if any advanced feature requested
+            advanced_trigger = any([
+                params.free_tool_calling,
+                params.tools,
+                params.grammar_definition,
+                params.verbosity,
+                params.reasoning_effort,
+            ])
+            if advanced_trigger:
+                use_responses_api = True
+
+        # Inject grammar as tool if grammar_definition present and using responses
+        grammar_tool = None
+        if params.grammar_definition:
+            grammar_tool = {
+                "type": "custom",
+                "name": "grammar_constraint",
+                "description": "Grammar constrained output",
+                "format": {
+                    "type": "grammar",
+                    "syntax": "lark",
+                    "definition": params.grammar_definition[:50000]
+                }
+            }
+        # Prepare tools list if using responses endpoint
+        responses_tools = []
+        if use_responses_api:
+            if params.tools:
+                responses_tools.extend(params.tools)
+            if grammar_tool:
+                responses_tools.append(grammar_tool)
+            # If free tool calling requested but no tools supplied, create a placeholder custom tool
+            if params.free_tool_calling and not any(t.get('type') == 'custom' for t in responses_tools):
+                responses_tools.append({
+                    "type": "custom",
+                    "name": "code_exec",
+                    "description": "Executes arbitrary code (placeholder - server will NOT execute)."
+                })
+        # --- END ADVANCED FEATURE HANDLING ---
 
         # 🔍 Deep Research Mode for o3 model
         is_deep_research = False
@@ -391,37 +459,34 @@ class OpenAIAdapter(BaseAdapter):
 
         accumulated_content = ""
         output_tokens = 0
-        
+        collected_tool_calls = []  # For responses endpoint tool calls
+        current_partial_calls = {}  # call_id -> accumulating input
+
         try:
             # Use different endpoint for special models
-            uses_responses_endpoint = model in ['o1-pro', 'o3-deep-research']
+            uses_responses_endpoint = model in ['o1-pro', 'o3-deep-research'] or use_responses_api
             
             if uses_responses_endpoint:
                 url = f"{self.base_url}/responses"
                 self.logger.info(f"Using /responses endpoint for model: {model}")
-                
-                # For /responses endpoint, use 'input' parameter (new API format)
                 responses_payload = {
                     "model": model,
-                    "input": api_messages,  # Use 'input' instead of 'messages' for /responses API
+                    "input": api_messages,
                     "stream": params.stream,
                 }
-                
-                # Deep research models require tools
-                if model == "o3-deep-research":
-                    responses_payload["tools"] = [{"type": "web_search_preview"}]  # Required for o3-deep-research
-                    self.logger.info(f"🔍 [o3-deep-research] Added required tools: {{'type': 'web_search_preview'}}")
-                
-                # Add parameters supported by /responses endpoint
+                # Add advanced fields
+                if params.verbosity in {"low", "medium", "high"}:
+                    responses_payload.setdefault("text", {})["verbosity"] = params.verbosity
+                if params.reasoning_effort in {"minimal", "medium", "high"}:
+                    responses_payload.setdefault("reasoning", {})["effort"] = params.reasoning_effort
+                if responses_tools:
+                    responses_payload["tools"] = responses_tools
+                if params.cfg_scale is not None:
+                    responses_payload.setdefault("guidance", {})["cfg_scale"] = params.cfg_scale
                 if params.max_tokens:
                     responses_payload["max_output_tokens"] = params.max_tokens
-                if params.temperature is not None:
-                    responses_payload["temperature"] = params.temperature
-                
-                # Log payload info for debugging
-                message_count = len(api_messages)
-                self.logger.info(f"🔍 [/responses] Sending {message_count} messages via 'input' parameter")
-                    
+                if params.stop_sequences:
+                    responses_payload["stop"] = params.stop_sequences
                 payload = responses_payload
             else:
                 url = f"{self.base_url}/chat/completions"
@@ -437,6 +502,36 @@ class OpenAIAdapter(BaseAdapter):
                     return
 
                 if not params.stream:
+                    data = await response.json()
+                    if uses_responses_endpoint:
+                        # Extract text from responses format
+                        full_text = ""
+                        tool_calls_out = []
+                        for item in data.get("output", []):
+                            if item.get("type") == "message":
+                                for c in item.get("content", []):
+                                    if c.get("type") == "output_text":
+                                        full_text += c.get("text", "")
+                            elif item.get("type") == "custom_tool_call":
+                                tool_calls_out.append({
+                                    "name": item.get("name"),
+                                    "call_id": item.get("call_id"),
+                                    "input": item.get("input")
+                                })
+                        usage = data.get("usage", {})
+                        yield ChatResponse(
+                            content=full_text,
+                            id=data.get("id"),
+                            done=True,
+                            meta={
+                                "tokens_in": usage.get("input_tokens", input_tokens),
+                                "tokens_out": usage.get("output_tokens", self.estimate_tokens(full_text)),
+                                "provider": ModelProvider.OPENAI,
+                                "model": model,
+                                "tool_calls": tool_calls_out
+                            }
+                        )
+                        return
                     # Handle non-streaming response
                     data = await response.json()
                     
@@ -655,9 +750,8 @@ class OpenAIAdapter(BaseAdapter):
                 meta={"provider": ModelProvider.OPENAI, "model": model}
             )
 
-        # Final response with complete usage for ALL models (including GPT-5)
+        # Final response (only for chat/completions path) remains unchanged
         final_output_tokens = self.estimate_tokens(accumulated_content) if accumulated_content else output_tokens
-        
         final_meta = {
             "tokens_in": input_tokens,
             "tokens_out": final_output_tokens,
@@ -666,16 +760,9 @@ class OpenAIAdapter(BaseAdapter):
             "model": model,
             "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model)
         }
-        
-        # Add GPT-5 specific completion flag
         if is_gpt5:
             final_meta["openai_completion"] = True
-        
-        yield ChatResponse(
-            content="",  # Empty content for final usage update
-            done=True,
-            meta=final_meta
-        )
+        yield ChatResponse(content="", done=True, meta=final_meta)
 
     def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
         """Calculate estimated cost based on model pricing"""

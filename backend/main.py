@@ -480,6 +480,13 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             stream=request.stream,
             thinking_budget=generation_config.get("thinking_budget"),
             include_thoughts=generation_config.get("include_thoughts", False),
+            # New GPT-5 params passthrough
+            verbosity=generation_config.get("verbosity"),
+            reasoning_effort=generation_config.get("reasoning_effort"),
+            cfg_scale=generation_config.get("cfg_scale"),
+            free_tool_calling=generation_config.get("free_tool_calling", False),
+            grammar_definition=generation_config.get("grammar_definition"),
+            tools=generation_config.get("tools"),
         )
         
         # Create assistant message for response
@@ -875,10 +882,24 @@ async def update_generation_config(generation_config: dict, _: str = Depends(get
         # Allowed keys
         allowed = {
             "temperature", "max_tokens", "top_p", "top_k", "frequency_penalty", "presence_penalty",
-            "stop_sequences", "stream", "thinking_budget", "include_thoughts"
+            "stop_sequences", "stream", "thinking_budget", "include_thoughts",
+            # New GPT-5 params
+            "verbosity", "reasoning_effort", "cfg_scale", "free_tool_calling", "grammar_definition", "tools"
         }
         for k, v in generation_config.items():
             if k in allowed:
+                # Basic normalization
+                if k == "verbosity" and v not in (None, "low", "medium", "high"):
+                    continue
+                if k == "reasoning_effort" and v not in (None, "minimal", "medium", "high"):
+                    continue
+                if k == "cfg_scale":
+                    try:
+                        v = float(v)
+                    except Exception:
+                        continue
+                if k == "tools" and not isinstance(v, list):
+                    continue
                 gen[k] = v
         # Normalize thinking_budget: if provided as string, cast
         if "thinking_budget" in gen and isinstance(gen["thinking_budget"], str):

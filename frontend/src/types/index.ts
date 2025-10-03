@@ -49,6 +49,9 @@ export interface ChatResponse {
     stage?: string;
     progress?: number;
     reasoning?: boolean;
+    thought_tokens?: number; // Gemini thought token usage
+    thinking_tokens_used?: number; // Gemini effective thinking usage
+    tool_calls?: { call_id: string; name?: string; input?: string }[]; // Responses API tool calls
   };
 }
 
@@ -126,6 +129,13 @@ export interface GenerationConfig {
   // Gemini thinking extensions
   thinking_budget?: number; // -1 dynamic, 0 off, >0 fixed
   include_thoughts?: boolean; // request thought summary (if supported)
+  // GPT-5 extensions
+  verbosity?: 'low' | 'medium' | 'high';
+  reasoning_effort?: 'minimal' | 'medium' | 'high';
+  cfg_scale?: number;
+  free_tool_calling?: boolean;
+  grammar_definition?: string;
+  tools?: any[]; // tool schema objects
 }
 
 export interface UIConfig {
