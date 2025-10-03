@@ -311,22 +311,20 @@ class OpenAIAdapter(BaseAdapter):
             # Reasoning effort -> reasoning.effort
             if params.reasoning_effort in {"minimal", "medium", "high"}:
                 payload.setdefault("reasoning", {})["effort"] = params.reasoning_effort
-            # CFG scale placeholder (future). Only include if provided and numeric
-            if isinstance(params.cfg_scale, (int, float)):
-                payload.setdefault("guidance", {})["cfg_scale"] = params.cfg_scale
-            # Free-form tool calling support: if free_tool_calling True and tools provided use custom type tools
+            # NOTE: cfg_scale & grammar via 'guidance' are temporarily disabled (API 400: Unknown parameter 'guidance')
+            # If/when OpenAI re-enables guidance, reintroduce these fields guarded by capability check.
+            # if isinstance(params.cfg_scale, (int, float)):
+            #     payload.setdefault("guidance", {})["cfg_scale"] = params.cfg_scale
             if params.free_tool_calling and params.tools:
                 # Expect tools already in correct schema from frontend
                 payload["tools"] = params.tools
             elif params.tools:
-                # If tools provided but not free-form, still attach them
                 payload["tools"] = params.tools
-            # Grammar definition placeholder (not enforced yet)
-            if params.grammar_definition:
-                payload.setdefault("guidance", {})["grammar"] = {
-                    "syntax": "lark",  # default assumption
-                    "definition": params.grammar_definition[:50000]  # safety truncate
-                }
+            # if params.grammar_definition:
+            #     payload.setdefault("guidance", {})["grammar"] = {
+            #         "syntax": "lark",  # default assumption
+            #         "definition": params.grammar_definition[:50000]
+            #     }
         # --- END NEW PARAM HANDLING ---
 
         # Use correct token parameter based on model
@@ -481,8 +479,9 @@ class OpenAIAdapter(BaseAdapter):
                     responses_payload.setdefault("reasoning", {})["effort"] = params.reasoning_effort
                 if responses_tools:
                     responses_payload["tools"] = responses_tools
-                if params.cfg_scale is not None:
-                    responses_payload.setdefault("guidance", {})["cfg_scale"] = params.cfg_scale
+                # Temporarily disable guidance block (cfg_scale / grammar) due to API 400 errors
+                # if params.cfg_scale is not None:
+                #     responses_payload.setdefault("guidance", {})["cfg_scale"] = params.cfg_scale
                 if params.max_tokens:
                     responses_payload["max_output_tokens"] = params.max_tokens
                 if params.stop_sequences:
