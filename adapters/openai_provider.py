@@ -479,6 +479,17 @@ class OpenAIAdapter(BaseAdapter):
                     responses_payload.setdefault("reasoning", {})["effort"] = params.reasoning_effort
                 if responses_tools:
                     responses_payload["tools"] = responses_tools
+                # Auto-inject required tool for deep research model to avoid 400 error
+                if model == 'o3-deep-research':
+                    required_types = {"web_search_preview", "file_search", "mcp"}
+                    existing_types = {t.get('type') for t in responses_payload.get('tools', [])}
+                    if not existing_types.intersection(required_types):
+                        self.logger.info("Auto-injecting web_search_preview tool for o3-deep-research model")
+                        responses_payload.setdefault("tools", []).append({
+                            "type": "web_search_preview",
+                            "name": "web_search_preview",
+                            "description": "Auto-injected web search tool (no user tool provided)."
+                        })
                 # Temporarily disable guidance block (cfg_scale / grammar) due to API 400 errors
                 # if params.cfg_scale is not None:
                 #     responses_payload.setdefault("guidance", {})["cfg_scale"] = params.cfg_scale
