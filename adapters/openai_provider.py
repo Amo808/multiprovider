@@ -486,10 +486,18 @@ class OpenAIAdapter(BaseAdapter):
                     if not existing_types.intersection(required_types):
                         self.logger.info("Auto-injecting web_search_preview tool for o3-deep-research model")
                         responses_payload.setdefault("tools", []).append({
-                            "type": "web_search_preview",
-                            "name": "web_search_preview",
-                            "description": "Auto-injected web search tool (no user tool provided)."
+                            "type": "web_search_preview"
                         })
+                # Sanitize tools: remove unsupported fields for built-in research tool types
+                if responses_payload.get('tools'):
+                    sanitized_tools = []
+                    for t in responses_payload['tools']:
+                        ttype = t.get('type')
+                        if ttype in {"web_search_preview", "file_search", "mcp"}:
+                            sanitized_tools.append({"type": ttype})
+                        else:
+                            sanitized_tools.append(t)
+                    responses_payload['tools'] = sanitized_tools
                 # Temporarily disable guidance block (cfg_scale / grammar) due to API 400 errors
                 # if params.cfg_scale is not None:
                 #     responses_payload.setdefault("guidance", {})["cfg_scale"] = params.cfg_scale
