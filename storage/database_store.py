@@ -192,43 +192,63 @@ class DatabaseConversationStore:
             finally:
                 conn.close()
 
+    def _storage_id(self, conversation_id: str, user_email: Optional[str]) -> str:
+        """Generate a per-user storage key to avoid global PK collisions.
+        For authenticated users we namespace the id by email.
+        Legacy rows (without namespacing) are still readable via fallback."""
+        if user_email:
+            return f"{user_email}__{conversation_id}"
+        return conversation_id
+
+    def _maybe_legacy_id(self, conversation_id: str, user_email: Optional[str]) -> Optional[str]:
+        """If a legacy (non-namespaced) conversation exists for this user, return its id."""
+        if not user_email:
+            return None
+        # Legacy pattern: id stored without namespacing but user_email column set.
+        return conversation_id
+
     def create_conversation(self, conversation_id: str, title: str = None, user_email: Optional[str] = None) -> None:
-        """Create a new conversation scoped to user (if provided)."""
+        """Create a new conversation scoped to user (if provided). Uses namespaced storage id."""
+        storage_id = self._storage_id(conversation_id, user_email)
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                
                 title = title or f"Conversation {conversation_id[:8]}"
                 now = datetime.now().isoformat()
-                
-                # Prevent duplicate for same user
+
+                # Check existence with storage id (new scheme)
                 if self.db_type == 'postgresql':
-                    if user_email:
-                        cursor.execute("SELECT 1 FROM conversations WHERE id=%s AND user_email=%s", (conversation_id, user_email))
+                    cursor.execute("SELECT 1 FROM conversations WHERE id=%s", (storage_id,))
+                else:
+                    cursor.execute("SELECT 1 FROM conversations WHERE id=?", (storage_id,))
+                if cursor.fetchone():
+                    return  # Already exists (this user's namespaced id)
+
+                # Fallback: legacy record exists with plain id for this user? Do not insert new, reuse.
+                legacy_id = self._maybe_legacy_id(conversation_id, user_email)
+                if legacy_id and legacy_id != storage_id:
+                    if self.db_type == 'postgresql':
+                        cursor.execute("SELECT 1 FROM conversations WHERE id=%s AND user_email=%s", (legacy_id, user_email))
                     else:
-                        cursor.execute("SELECT 1 FROM conversations WHERE id=%s AND user_email IS NULL", (conversation_id,))
+                        cursor.execute("SELECT 1 FROM conversations WHERE id=? AND user_email=?", (legacy_id, user_email))
                     if cursor.fetchone():
-                        return
+                        return  # Legacy row present
+
+                # Insert new namespaced row
+                if self.db_type == 'postgresql':
                     cursor.execute(
                         'INSERT INTO conversations (id, title, created_at, updated_at, message_count, user_email) VALUES (%s,%s,%s,%s,%s,%s)',
-                        (conversation_id, title, now, now, 0, user_email)
+                        (storage_id, title, now, now, 0, user_email)
                     )
                 else:
-                    if user_email:
-                        cursor.execute('SELECT 1 FROM conversations WHERE id=? AND user_email=?', (conversation_id, user_email))
-                    else:
-                        cursor.execute('SELECT 1 FROM conversations WHERE id=? AND (user_email IS NULL OR user_email="")', (conversation_id,))
-                    if cursor.fetchone():
-                        return
                     cursor.execute(
                         'INSERT INTO conversations (id, title, created_at, updated_at, message_count, user_email) VALUES (?,?,?,?,?,?)',
-                        (conversation_id, title, now, now, 0, user_email)
+                        (storage_id, title, now, now, 0, user_email)
                     )
-                
+
                 conn.commit()
-                logger.info(f"[DatabaseStore] Created conversation: {conversation_id}")
-                
+                logger.info(f"[DatabaseStore] Created conversation: {conversation_id} (storage_id={storage_id})")
             except Exception as e:
                 logger.error(f"Failed to create conversation {conversation_id}: {e}")
                 conn.rollback()
@@ -237,39 +257,34 @@ class DatabaseConversationStore:
                 conn.close()
 
     def save_message(self, conversation_id: str, message: Message, user_email: Optional[str] = None) -> None:
-        """Save a message to specific conversation for user."""
+        """Save a message to specific conversation for user (namespaced id)."""
+        storage_id = self._storage_id(conversation_id, user_email)
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                
-                # Ensure conversation exists
+                # Ensure conversation
                 self.create_conversation(conversation_id, user_email=user_email)
-                
-                # Prepare message data
+                # Meta adjustments
                 if not message.meta:
                     message.meta = {}
-                message.meta["conversation_id"] = conversation_id
+                message.meta["conversation_id"] = conversation_id  # external id
                 if user_email:
                     message.meta["user_email"] = user_email
-                
                 timestamp = message.timestamp.isoformat() if hasattr(message.timestamp, 'isoformat') else str(message.timestamp)
                 meta_json = json.dumps(message.meta) if message.meta else None
-                
                 if self.db_type == 'postgresql':
                     cursor.execute('''INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, user_email) VALUES (%s,%s,%s,%s,%s,%s,%s)''',
-                                   (message.id, conversation_id, message.role, message.content, timestamp, meta_json, user_email))
-                    cursor.execute('''UPDATE conversations SET message_count=(SELECT COUNT(*) FROM messages WHERE conversation_id=%s AND (user_email=%s OR (%s IS NULL AND user_email IS NULL))), updated_at=%s WHERE id=%s AND (user_email=%s OR (%s IS NULL AND user_email IS NULL))''',
-                                   (conversation_id, user_email, user_email, datetime.now().isoformat(), conversation_id, user_email, user_email))
+                                   (message.id, storage_id, message.role, message.content, timestamp, meta_json, user_email))
+                    cursor.execute('''UPDATE conversations SET message_count=(SELECT COUNT(*) FROM messages WHERE conversation_id=%s), updated_at=%s WHERE id=%s''',
+                                   (storage_id, datetime.now().isoformat(), storage_id))
                 else:
                     cursor.execute('''INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, user_email) VALUES (?,?,?,?,?,?,?)''',
-                                   (message.id, conversation_id, message.role, message.content, timestamp, meta_json, user_email))
-                    cursor.execute('''UPDATE conversations SET message_count=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND (user_email=? OR (? IS NULL AND (user_email IS NULL OR user_email="")))), updated_at=? WHERE id=? AND (user_email=? OR (? IS NULL AND (user_email IS NULL OR user_email="")))''',
-                                   (conversation_id, user_email, user_email, datetime.now().isoformat(), conversation_id, user_email, user_email))
-                
+                                   (message.id, storage_id, message.role, message.content, timestamp, meta_json, user_email))
+                    cursor.execute('''UPDATE conversations SET message_count=(SELECT COUNT(*) FROM messages WHERE conversation_id=?), updated_at=? WHERE id=?''',
+                                   (storage_id, datetime.now().isoformat(), storage_id))
                 conn.commit()
-                logger.info(f"[DatabaseStore] Saved message to conversation: {conversation_id}")
-                
+                logger.info(f"[DatabaseStore] Saved message to conversation: {conversation_id} (storage_id={storage_id})")
             except Exception as e:
                 logger.error(f"Failed to save message to {conversation_id}: {e}")
                 conn.rollback()
@@ -278,99 +293,72 @@ class DatabaseConversationStore:
                 conn.close()
 
     def load_conversation_history(self, conversation_id: str, limit: Optional[int] = None, user_email: Optional[str] = None) -> List[Message]:
-        """Load chat history for a conversation (scoped by user)."""
+        storage_id = self._storage_id(conversation_id, user_email)
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                params = [conversation_id]
+                # Primary attempt (namespaced)
+                params = [storage_id]
                 clause = "conversation_id = ?"
                 if self.db_type == 'postgresql':
                     clause = "conversation_id = %s"
-                if user_email:
-                    clause += " AND user_email = %s" if self.db_type == 'postgresql' else " AND user_email = ?"
-                    params.append(user_email)
-                else:
-                    clause += " AND (user_email IS NULL OR user_email='' )"
                 if limit:
                     if self.db_type == 'postgresql':
-                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC LIMIT %s''', (*params, limit))
+                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC LIMIT %s''', (storage_id, limit))
                     else:
-                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC LIMIT ?''', (*params, limit))
+                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC LIMIT ?''', (storage_id, limit))
                 else:
                     if self.db_type == 'postgresql':
-                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC''', params)
+                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC''', (storage_id,))
                     else:
-                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC''', params)
+                        cursor.execute(f'''SELECT id, role, content, timestamp, meta FROM messages WHERE {clause} ORDER BY created_at ASC''', (storage_id,))
                 rows = cursor.fetchall()
+                # Fallback legacy (plain id) if no rows
+                if not rows and storage_id != conversation_id:
+                    legacy_id = conversation_id
+                    if limit:
+                        if self.db_type == 'postgresql':
+                            cursor.execute('''SELECT id, role, content, timestamp, meta FROM messages WHERE conversation_id=%s ORDER BY created_at ASC LIMIT %s''', (legacy_id, limit))
+                        else:
+                            cursor.execute('''SELECT id, role, content, timestamp, meta FROM messages WHERE conversation_id=? ORDER BY created_at ASC LIMIT ?''', (legacy_id, limit))
+                    else:
+                        if self.db_type == 'postgresql':
+                            cursor.execute('''SELECT id, role, content, timestamp, meta FROM messages WHERE conversation_id=%s ORDER BY created_at ASC''', (legacy_id,))
+                        else:
+                            cursor.execute('''SELECT id, role, content, timestamp, meta FROM messages WHERE conversation_id=? ORDER BY created_at ASC''', (legacy_id,))
+                    rows = cursor.fetchall()
                 messages: List[Message] = []
                 for row in rows:
                     msg_id, role, content, timestamp_str, meta_json = row
-                    
-                    # Parse timestamp
                     try:
                         timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                     except Exception:
                         timestamp = datetime.now()
-                    
-                    # Parse meta
                     meta = json.loads(meta_json) if meta_json else {}
-                    
                     messages.append(Message(id=msg_id, role=role, content=content, timestamp=timestamp, meta=meta))
-                
-                logger.info(f"[DatabaseStore] Loaded {len(messages)} messages for {conversation_id}")
+                logger.info(f"[DatabaseStore] Loaded {len(messages)} messages for {conversation_id} (storage_id={storage_id})")
                 return messages
-                
             except Exception as e:
                 logger.error(f"Failed to load conversation {conversation_id}: {e}")
                 return []
             finally:
                 conn.close()
 
-    def get_conversations(self, user_email: Optional[str]) -> List[dict]:
-        """List conversations for a user."""
-        with self._lock:
-            conn = self._get_connection()
-            try:
-                cursor = conn.cursor()
-                
-                if user_email:
-                    if self.db_type == 'postgresql':
-                        cursor.execute('''SELECT id, title, created_at, updated_at, message_count FROM conversations WHERE user_email=%s ORDER BY updated_at DESC''', (user_email,))
-                    else:
-                        cursor.execute('''SELECT id, title, created_at, updated_at, message_count FROM conversations WHERE user_email=? ORDER BY updated_at DESC''', (user_email,))
-                else:
-                    # Legacy anonymous (should be none once all users have email)
-                    cursor.execute('''SELECT id, title, created_at, updated_at, message_count FROM conversations WHERE user_email IS NULL OR user_email='' ORDER BY updated_at DESC''')
-                
-                rows = cursor.fetchall()
-                return [
-                    {"id": r[0], "title": r[1], "created_at": r[2], "updated_at": r[3], "message_count": r[4]} for r in rows
-                ]
-            except Exception as e:
-                logger.error(f"Failed to get conversations: {e}")
-                return []
-            finally:
-                conn.close()
-
     def clear_conversation(self, conversation_id: str, user_email: Optional[str]) -> None:
-        """Clear specific conversation history."""
+        storage_id = self._storage_id(conversation_id, user_email)
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                
-                # Delete messages
                 if self.db_type == 'postgresql':
-                    cursor.execute('DELETE FROM messages WHERE conversation_id=%s AND user_email=%s', (conversation_id, user_email))
-                    cursor.execute('UPDATE conversations SET message_count=0, updated_at=%s WHERE id=%s AND user_email=%s', (datetime.now().isoformat(), conversation_id, user_email))
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=%s', (storage_id,))
+                    cursor.execute('UPDATE conversations SET message_count=0, updated_at=%s WHERE id=%s', (datetime.now().isoformat(), storage_id))
                 else:
-                    cursor.execute('DELETE FROM messages WHERE conversation_id=? AND user_email=?', (conversation_id, user_email))
-                    cursor.execute('UPDATE conversations SET message_count=0, updated_at=? WHERE id=? AND user_email=?', (datetime.now().isoformat(), conversation_id, user_email))
-                
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=?', (storage_id,))
+                    cursor.execute('UPDATE conversations SET message_count=0, updated_at=? WHERE id=?', (datetime.now().isoformat(), storage_id))
                 conn.commit()
-                logger.info(f"[DatabaseStore] Cleared conversation: {conversation_id}")
-                
+                logger.info(f"[DatabaseStore] Cleared conversation: {conversation_id} (storage_id={storage_id})")
             except Exception as e:
                 logger.error(f"Failed to clear conversation {conversation_id}: {e}")
                 conn.rollback()
@@ -379,23 +367,19 @@ class DatabaseConversationStore:
                 conn.close()
 
     def delete_conversation(self, conversation_id: str, user_email: Optional[str]) -> None:
-        """Delete entire conversation."""
+        storage_id = self._storage_id(conversation_id, user_email)
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                
-                # Delete messages first (foreign key constraint)
                 if self.db_type == 'postgresql':
-                    cursor.execute('DELETE FROM messages WHERE conversation_id=%s AND user_email=%s', (conversation_id, user_email))
-                    cursor.execute('DELETE FROM conversations WHERE id=%s AND user_email=%s', (conversation_id, user_email))
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=%s', (storage_id,))
+                    cursor.execute('DELETE FROM conversations WHERE id=%s', (storage_id,))
                 else:
-                    cursor.execute('DELETE FROM messages WHERE conversation_id=? AND user_email=?', (conversation_id, user_email))
-                    cursor.execute('DELETE FROM conversations WHERE id=? AND user_email=?', (conversation_id, user_email))
-                
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=?', (storage_id,))
+                    cursor.execute('DELETE FROM conversations WHERE id=?', (storage_id,))
                 conn.commit()
-                logger.info(f"[DatabaseStore] Deleted conversation: {conversation_id}")
-                
+                logger.info(f"[DatabaseStore] Deleted conversation: {conversation_id} (storage_id={storage_id})")
             except Exception as e:
                 logger.error(f"Failed to delete conversation {conversation_id}: {e}")
                 conn.rollback()
@@ -404,23 +388,19 @@ class DatabaseConversationStore:
                 conn.close()
 
     def update_conversation_title(self, conversation_id: str, title: str, user_email: Optional[str]) -> None:
-        """Update conversation title."""
+        storage_id = self._storage_id(conversation_id, user_email)
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                
-                now = datetime.now().isoformat()
                 if self.db_type == 'postgresql':
-                    cursor.execute('UPDATE conversations SET title=%s, updated_at=%s WHERE id=%s AND user_email=%s', (title, now, conversation_id, user_email))
+                    cursor.execute('UPDATE conversations SET title=%s, updated_at=%s WHERE id=%s', (title, datetime.now().isoformat(), storage_id))
                 else:
-                    cursor.execute('UPDATE conversations SET title=?, updated_at=? WHERE id=? AND user_email=?', (title, now, conversation_id, user_email))
-                
+                    cursor.execute('UPDATE conversations SET title=?, updated_at=? WHERE id=?', (title, datetime.now().isoformat(), storage_id))
                 conn.commit()
-                logger.info(f"[DatabaseStore] Updated title for {conversation_id}")
-                
+                logger.info(f"[DatabaseStore] Updated title for conversation: {conversation_id} (storage_id={storage_id})")
             except Exception as e:
-                logger.error(f"Failed to update title for {conversation_id}: {e}")
+                logger.error(f"Failed to update conversation title {conversation_id}: {e}")
                 conn.rollback()
                 raise
             finally:
