@@ -256,9 +256,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  const { getConversation, sendMessage, clearConversation, stopStreaming, recoverStuckRequest } = useConversations();
+  const { getConversation, sendMessage, clearConversation, stopStreaming, recoverStuckRequest, compressConversation } = useConversations();
   const conversationState = getConversation(conversationId);
-  const { messages, isStreaming, error, currentResponse, deepResearchStage, connectionLost, lastHeartbeat } = conversationState;
+  const { messages, isStreaming, error, currentResponse, deepResearchStage, connectionLost, lastHeartbeat, thoughtTokens, reasoningWaitStart, summaryApplied } = conversationState as any;
+
+  // Derived large input stats
+  const totalChars = messages.reduce((acc: number, m: Message) => acc + (m.content?.length || 0), 0);
+  const LARGE_CHAR_THRESHOLD = 60000;
+  const VERY_LARGE_CHAR_THRESHOLD = 100000;
+  const showLargeInputWarning = totalChars > LARGE_CHAR_THRESHOLD && !summaryApplied;
+
+  // Reasoning elapsed timer
+  const [reasoningElapsed, setReasoningElapsed] = useState(0);
+  useEffect(() => {
+    let interval: any;
+    if (isStreaming && reasoningWaitStart && !currentResponse) {
+      interval = setInterval(() => {
+        setReasoningElapsed(Math.floor((Date.now() - reasoningWaitStart) / 1000));
+      }, 1000);
+    } else {
+      setReasoningElapsed(0);
+    }
+    return () => interval && clearInterval(interval);
+  }, [isStreaming, reasoningWaitStart, currentResponse]);
 
   // Custom message handler with API key error handling
   const handleSendMessage = async (request: SendMessageRequest) => {
@@ -397,7 +417,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         ) : (
           <div className="py-4">
-            {messages.map((message, index) => (
+            {messages.map((message: Message, index: number) => (
               <MessageBubble
                 key={message.id}
                 message={message}
@@ -414,6 +434,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       {/* Input Area */}
       <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 flex-shrink-0">
+        {/* Large Input / Compression Banner */}
+        {showLargeInputWarning && (
+          <div className={`mb-4 p-3 rounded-md border text-sm ${ totalChars > VERY_LARGE_CHAR_THRESHOLD ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-700 dark:text-red-300' : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-300 dark:border-yellow-700 text-yellow-800 dark:text-yellow-200' }`}>
+            <div className="flex items-start justify-between">
+              <div className="pr-4">
+                <p className="font-medium mb-1">{ totalChars > VERY_LARGE_CHAR_THRESHOLD ? 'Очень большой контекст' : 'Большой контекст' }</p>
+                <p>
+                  Общая длина истории: {totalChars.toLocaleString()} символов. Это может замедлить GPT-5 и увеличить стоимость.
+                  {reasoningElapsed > 0 && ' Модель всё ещё обдумывает ввод.'}
+                </p>
+                <p className="mt-1 text-xs opacity-80">Рекомендация: сжать историю (summary) перед следующим запросом.</p>
+              </div>
+              <div className="flex flex-col space-y-2">
+                <button
+                  onClick={() => compressConversation(conversationId)}
+                  disabled={summaryApplied}
+                  className="px-3 py-1.5 rounded-md text-xs font-medium bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white shadow"
+                >
+                  {summaryApplied ? 'Уже сжато' : 'Сжать историю'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Connection Status and Recovery */}
         {connectionLost && isStreaming && (
           <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
@@ -514,47 +559,40 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         {/* Status Bar */}
         <div className="mt-3 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <div className="flex items-center space-x-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             {selectedModel && selectedProvider && (
               <>
-                <span>
-                  Model: {selectedModel.display_name} ({selectedProvider.toUpperCase()})
-                </span>
+                <span>Model: {selectedModel.display_name} ({selectedProvider.toUpperCase()})</span>
                 <span>•</span>
-                <span>
-                  Context: {selectedModel.context_length.toLocaleString()} tokens
-                </span>
-                {generationConfig.verbosity && (
+                <span>Context: {selectedModel.context_length.toLocaleString()} tokens</span>
+                {generationConfig.verbosity && (<><span>•</span><span className="text-indigo-600 dark:text-indigo-400">Verbosity: {generationConfig.verbosity}</span></>)}
+                {generationConfig.reasoning_effort && (<><span>•</span><span className="text-purple-600 dark:text-purple-400">Reasoning: {generationConfig.reasoning_effort}</span></>)}
+                {generationConfig.thinking_budget !== undefined && selectedProvider === 'gemini' && (<><span>•</span><span className="text-purple-600 dark:text-purple-400">ThinkBudget: {generationConfig.thinking_budget}</span></>)}
+                {generationConfig.stream && (<><span>•</span><span className="text-green-600 dark:text-green-400">Streaming</span></>)}
+                {reasoningWaitStart && !currentResponse && isStreaming && (
                   <>
                     <span>•</span>
-                    <span title="Verbosity hint to GPT-5" className="text-indigo-600 dark:text-indigo-400">Verbosity: {generationConfig.verbosity}</span>
+                    <span className="text-purple-600 dark:text-purple-400" title="Model still reasoning before first token">Reasoning wait: {reasoningElapsed}s</span>
                   </>
                 )}
-                {generationConfig.reasoning_effort && (
+                {typeof thoughtTokens === 'number' && thoughtTokens > 0 && (
                   <>
                     <span>•</span>
-                    <span title="Reasoning effort" className="text-purple-600 dark:text-purple-400">Reasoning: {generationConfig.reasoning_effort}</span>
+                    <span className="text-purple-600 dark:text-purple-400" title="Thought tokens (internal reasoning)">Θ {thoughtTokens}</span>
                   </>
                 )}
-                {generationConfig.thinking_budget !== undefined && selectedProvider === 'gemini' && (
+                {summaryApplied && (
                   <>
                     <span>•</span>
-                    <span title="Gemini thinking budget" className="text-purple-600 dark:text-purple-400">ThinkBudget: {generationConfig.thinking_budget}</span>
-                  </>
-                )}
-                {generationConfig.stream && (
-                  <>
-                    <span>•</span>
-                    <span className="text-green-600 dark:text-green-400">Streaming enabled</span>
+                    <span className="text-blue-600 dark:text-blue-400" title="Conversation history was compressed">Summary applied</span>
                   </>
                 )}
               </>
             )}
           </div>
-          <div>
-            {messages.length > 0 && (
-              <span>{messages.length} message{messages.length !== 1 ? 's' : ''}</span>
-            )}
+          <div className="flex items-center gap-3">
+            {messages.length > 0 && <span>{messages.length} msg{messages.length !== 1 ? 's' : ''}</span>}
+            {totalChars > 0 && <span>{(totalChars/1000).toFixed(1)}k chars</span>}
           </div>
         </div>
       </div>

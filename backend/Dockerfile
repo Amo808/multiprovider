@@ -29,12 +29,12 @@ USER app
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:$PORT/health')" || exit 1
+# Health check with extended timeout for GPT-5 compatibility
+HEALTHCHECK --interval=30s --timeout=60s --start-period=10s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:$PORT/health', timeout=30)" || exit 1
 
 # Render uses PORT environment variable
 EXPOSE $PORT
 
-# Start command with dynamic port
-CMD ["sh", "-c", "python main.py --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start command with production settings for large input handling
+CMD ["sh", "-c", "python main.py --host 0.0.0.0 --port ${PORT:-8000} --timeout 300"]

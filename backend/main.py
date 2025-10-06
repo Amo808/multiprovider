@@ -926,17 +926,26 @@ frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
 
+# Add Gunicorn-compatible server config for production
+# Support for longer timeouts for GPT-5 and large input handling
 if __name__ == "__main__":
     import uvicorn
+    import argparse
     
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
-    debug = os.getenv("DEBUG", "False").lower() == "true"  # Изменено на False по умолчанию
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--timeout", type=int, default=300, help="Request timeout in seconds for large GPT-5 requests")
+    parser.add_argument("--workers", type=int, default=1)
+    args = parser.parse_args()
     
+    # Configure for production with large input support
     uvicorn.run(
-        "main:app", 
-        host=host, 
-        port=port, 
-        reload=debug,  # Только если DEBUG=True
+        "main:app",
+        host=args.host,
+        port=args.port,
+        timeout_keep_alive=120,  # Keep connections alive for heartbeat
+        timeout_graceful_shutdown=30,
+        limit_concurrency=50,  # Allow some concurrent GPT-5 requests
         log_level="info"
     )
