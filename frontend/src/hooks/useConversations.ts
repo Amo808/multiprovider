@@ -61,7 +61,9 @@ export const useConversations = () => {
     const checkConnectionHealth = () => {
       const now = Date.now();
       const HEARTBEAT_TIMEOUT = 60000; // 60 seconds without heartbeat = connection issue
-      const STREAMING_TIMEOUT = 300000; // 5 minutes total timeout for streaming requests
+      const REASONING_HEARTBEAT_TIMEOUT = 120000; // 2 minutes for reasoning tasks (more lenient)
+      const STREAMING_TIMEOUT = 600000; // 10 minutes total timeout for streaming requests (increased)
+      const REASONING_TIMEOUT = 900000; // 15 minutes for reasoning tasks
       
       setConversations(prev => {
         const updated = { ...prev };
@@ -70,15 +72,27 @@ export const useConversations = () => {
         Object.entries(updated).forEach(([conversationId, conversation]) => {
           if (conversation.isStreaming && conversation.lastHeartbeat) {
             const timeSinceHeartbeat = now - conversation.lastHeartbeat;
-            const shouldMarkAsLost = timeSinceHeartbeat > HEARTBEAT_TIMEOUT;
-            const shouldTimeout = timeSinceHeartbeat > STREAMING_TIMEOUT;
+            
+            // Check if this is a reasoning task
+            const isReasoningTask = conversation.messages.some(msg => 
+              msg.meta?.reasoning || 
+              (msg.role === 'assistant' && msg.meta?.deep_research)
+            );
+            
+            const heartbeatTimeout = isReasoningTask ? REASONING_HEARTBEAT_TIMEOUT : HEARTBEAT_TIMEOUT;
+            const streamingTimeout = isReasoningTask ? REASONING_TIMEOUT : STREAMING_TIMEOUT;
+            
+            const shouldMarkAsLost = timeSinceHeartbeat > heartbeatTimeout;
+            const shouldTimeout = timeSinceHeartbeat > streamingTimeout;
             
             if (shouldTimeout && !conversation.connectionLost) {
               console.warn(`[${conversationId}] Streaming timeout (${Math.round(timeSinceHeartbeat/1000)}s), marking as failed`);
               updated[conversationId] = {
                 ...conversation,
                 isStreaming: false,
-                error: 'Request timed out. The model may still be processing, but the connection was lost.',
+                error: isReasoningTask 
+                  ? 'Deep reasoning request timed out. This can happen with very complex queries. Please try again with a simpler question or lower reasoning effort.' 
+                  : 'Request timed out. The model may still be processing, but the connection was lost.',
                 connectionLost: true,
                 deepResearchStage: undefined
               };
@@ -89,8 +103,10 @@ export const useConversations = () => {
                 ...conversation,
                 connectionLost: true,
                 deepResearchStage: conversation.deepResearchStage 
-                  ? `⚠️ Connection issue detected. ${conversation.deepResearchStage}` 
-                  : '⚠️ Connection issue detected. Trying to reconnect...'
+                  ? `⚠️ Long processing detected. ${conversation.deepResearchStage}` 
+                  : isReasoningTask
+                    ? '⚠️ Deep reasoning is taking longer than expected. The model is working on a complex response...'
+                    : '⚠️ Connection issue detected. Trying to reconnect...'
               };
               hasUpdates = true;
             }
@@ -265,7 +281,11 @@ export const useConversations = () => {
           error: null,
           currentResponse: '',
           lastHeartbeat: Date.now(), // Track start time
-          connectionLost: false
+          connectionLost: false,
+          // Set initial reasoning stage if reasoning_effort is medium/high
+          deepResearchStage: (request.config?.reasoning_effort === 'medium' || request.config?.reasoning_effort === 'high') 
+            ? `🧠 Starting deep reasoning (effort: ${request.config.reasoning_effort})...`
+            : undefined
         }
       }));
 
@@ -311,14 +331,15 @@ export const useConversations = () => {
 
       await apiClient.sendMessage(request, (chunk: ChatResponse) => {
         // Handle heartbeat messages - keep connection alive, update last activity
-        if (chunk.heartbeat) {
-          console.log(`[${conversationId}] Heartbeat received:`, chunk.heartbeat);
+        if (chunk.heartbeat || chunk.ping) {
+          console.log(`[${conversationId}] Heartbeat received:`, chunk);
           setConversations(prev => ({
             ...prev,
             [conversationId]: {
               ...prev[conversationId],
               lastHeartbeat: Date.now(),
-              // Keep current stage message if no new one provided
+              connectionLost: false, // Reset connection lost status on heartbeat
+              // Update stage message from heartbeat if provided
               deepResearchStage: chunk.stage_message || prev[conversationId].deepResearchStage
             }
           }));
@@ -343,7 +364,8 @@ export const useConversations = () => {
                         ...msg.meta,
                         ...chunk.meta,
                         deep_research: chunk.meta?.deep_research || true,
-                        reasoning: chunk.meta?.reasoning
+                        reasoning: chunk.meta?.reasoning || (chunk.stage_message?.toLowerCase().includes('reasoning') ?? false),
+                        stage_message: chunk.stage_message
                       }
                     }
                   : msg

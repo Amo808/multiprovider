@@ -16,7 +16,14 @@ from dotenv import load_dotenv
 # Import our custom modules
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
+# Ensure backend directory itself is on sys.path for direct module imports when running via `py -m uvicorn backend.main:app`
+backend_dir = Path(__file__).parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+# Ensure project root on path for adapters package
+project_root = backend_dir.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 from adapters import (
     provider_manager, 
@@ -27,7 +34,34 @@ from adapters import (
 )
 from storage import HistoryStore, PromptBuilder
 from storage.database_store import DatabaseConversationStore
-from auth_google import router as google_auth_router, get_current_user
+from auth_google import router as google_auth_router, get_current_user as original_get_current_user
+
+# --- Dev Auth Bypass Setup ---------------------------------------------------
+# We want local development to ALWAYS work without Google OAuth / JWT.
+# Conditions for bypass:
+# 1. Explicit DEV_MODE=1 OR
+# 2. Running locally (no RENDER env var) AND FORCE_DEV_AUTH not disabled
+# You can disable bypass by setting FORCE_DEV_AUTH=0 (even if running locally).
+DEV_MODE_FLAG = os.getenv("DEV_MODE", "0") == "1"
+LOCAL_ENV = not os.getenv("RENDER")
+FORCE_DEV_AUTH = os.getenv("FORCE_DEV_AUTH", "1") == "1"
+DEV_STATIC_USER = os.getenv("DEV_STATIC_USER", "dev@example.com")
+DEV_AUTH_ACTIVE = DEV_MODE_FLAG or (LOCAL_ENV and FORCE_DEV_AUTH)
+
+if DEV_AUTH_ACTIVE:
+    # Override dependency so every endpoint treats requests as authenticated.
+    def get_current_user():  # type: ignore
+        return DEV_STATIC_USER
+    logging.getLogger(__name__).info(
+        f"[DEV-AUTH] Bypass ACTIVE (user={DEV_STATIC_USER}) | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH}" 
+    )
+else:
+    # Use the real auth dependency
+    get_current_user = original_get_current_user  # type: ignore
+    logging.getLogger(__name__).info(
+        f"[DEV-AUTH] Bypass DISABLED | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH}"
+    )
+# ----------------------------------------------------------------------------
 
 # Load environment variables
 load_dotenv()
@@ -504,108 +538,150 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         )
         
         async def generate_response():
-            """Generate streaming response with cancellation support."""
+            """Generate streaming response with cancellation support.
+            Added: heartbeat every 10s, provider call global timeout, first token latency logging.
+            """
+            logger.info(f"🔍 [STREAM] generate_response() started: provider={provider_id}, model={model_id}")
             full_content = ""
             total_tokens_in = 0
             total_tokens_out = 0
+            import time, asyncio as _asyncio
+            start_ts = time.time()
+            first_chunk_ts = None
+            last_emit_ts = time.time()
+            HEARTBEAT_INTERVAL = 10  # seconds
             
+            # Увеличенный таймаут для reasoning моделей
+            if hasattr(params, 'reasoning_effort') and params.reasoning_effort in ['medium', 'high']:
+                PROVIDER_TIMEOUT = 1200  # 20 минут для reasoning
+            else:
+                PROVIDER_TIMEOUT = 300    # 5 минут для обычных моделей
+
+            async def heartbeat():
+                nonlocal last_emit_ts
+                now = time.time()
+                if now - last_emit_ts >= HEARTBEAT_INTERVAL:
+                    hb = {"ping": True, "uptime": int(now - start_ts), "done": False}
+                    yield f"data: {json.dumps(hb)}\n\n"
+                    last_emit_ts = now
+
             try:
-                # Check if client disconnected
-                if await http_request.is_disconnected():
-                    logger.info(f"[CHAT] Client disconnected for conversation {conversation_id}")
+                logger.info(f"🔍 [STREAM] About to call provider_manager.chat_completion: provider={provider_id}, model={model_id}")
+                # Wrapped async generator with timeout
+                async def provider_stream():
+                    logger.info(f"🔍 [STREAM] Inside provider_stream(), calling chat_completion...")
+                    async for response in provider_manager.chat_completion(
+                        history, provider_id, model_id, params
+                    ):
+                        yield response
+
+                async def stream_with_timeout():
+                    # Implement manual timeout for first and overall inactivity
+                    OVERALL_TIMEOUT = PROVIDER_TIMEOUT
+                    last_activity = time.time()
+
+                    async for r in provider_stream():
+                        last_activity = time.time()
+                        yield r
+                        if time.time() - start_ts > OVERALL_TIMEOUT:
+                            yield type('R', (), { 'error': f'Provider timeout after {OVERALL_TIMEOUT}s', 'content': None, 'done': True, 'meta': None })()
+                            return
+                        # Heartbeat handled outside
+                    # After stream ends naturally
                     return
-                
-                async for response in provider_manager.chat_completion(
-                    history, provider_id, model_id, params
-                ):
-                    # Check for client disconnection during streaming
+
+                async for response in stream_with_timeout():
+                    # Heartbeat before processing (in case of long gaps)
+                    async for hb_chunk in heartbeat():
+                        yield hb_chunk
+
                     if await http_request.is_disconnected():
-                        logger.info(f"[CHAT] Client disconnected during streaming for conversation {conversation_id}")
+                        logger.info(f"[CHAT] Client disconnected during streaming for {conversation_id}")
                         return
-                    
+
                     if response.error:
-                        # Check if this is an authentication error (401)
-                        if ("401" in response.error and "authentication" in response.error.lower()) or \
-                           ("Authentication Fails" in response.error) or \
-                           ("invalid" in response.error and "api key" in response.error.lower()):
-                            logger.warning(f"Authentication error detected for {provider_id}: {response.error}")
-                            yield f"data: {json.dumps({'error': f'API key for {provider_id} is invalid. Please check your API key in settings.', 'type': 'API_KEY_MISSING', 'done': True})}\n\n"
-                        else:
-                            yield f"data: {json.dumps({'error': response.error, 'done': True})}\n\n"
+                        logger.warning(f"[CHAT] Provider error: {response.error}")
+                        yield f"data: {json.dumps({'error': response.error, 'done': True})}\n\n"
                         break
-                        
+
                     if response.content:
+                        if first_chunk_ts is None:
+                            first_chunk_ts = time.time()
+                            logger.info(f"[CHAT] First token latency {first_chunk_ts - start_ts:.2f}s conversation={conversation_id}")
                         full_content += response.content
-                        
-                        # Include current token info in streaming chunks
                         chunk_data = {
-                            'content': response.content, 
-                            'id': assistant_message.id, 
-                            'done': False, 
-                            'provider': provider_id, 
+                            'content': response.content,
+                            'id': assistant_message.id,
+                            'done': False,
+                            'provider': provider_id,
                             'model': model_id
                         }
-                        
                         if response.meta:
                             chunk_data['meta'] = {
-                                'tokens_in': response.meta.get("tokens_in", total_tokens_in),
-                                'tokens_out': response.meta.get("tokens_out", total_tokens_out),
+                                'tokens_in': response.meta.get('tokens_in', total_tokens_in),
+                                'tokens_out': response.meta.get('tokens_out', total_tokens_out),
                                 'provider': provider_id,
                                 'model': model_id,
-                                'estimated_cost': response.meta.get("estimated_cost")
+                                'estimated_cost': response.meta.get('estimated_cost')
                             }
-                            
                         yield f"data: {json.dumps(chunk_data)}\n\n"
-                    
+                        last_emit_ts = time.time()
+
                     if response.meta:
-                        total_tokens_in = response.meta.get("tokens_in", 0)
-                        total_tokens_out = response.meta.get("tokens_out", 0)
-                    
+                        total_tokens_in = response.meta.get("tokens_in", total_tokens_in)
+                        total_tokens_out = response.meta.get("tokens_out", total_tokens_out)
+
                     if response.done:
-                        # Save complete assistant message
                         assistant_message.content = full_content
-                        
-                        # Get token info from response meta if available
                         response_meta = response.meta or {}
                         final_tokens_in = response_meta.get("tokens_in", total_tokens_in)
                         final_tokens_out = response_meta.get("tokens_out", total_tokens_out)
-                        estimated_cost = response_meta.get("estimated_cost", None)
-                        
+                        estimated_cost = response_meta.get("estimated_cost")
                         assistant_message.meta.update({
-                            "tokens_in": final_tokens_in,
-                            "tokens_out": final_tokens_out,
-                            "total_tokens": final_tokens_in + final_tokens_out,
-                            "estimated_cost": estimated_cost,
-                            "user_email": user_email
+                            'tokens_in': final_tokens_in,
+                            'tokens_out': final_tokens_out,
+                            'total_tokens': final_tokens_in + final_tokens_out,
+                            'estimated_cost': estimated_cost,
+                            'user_email': user_email,
+                            'first_token_latency': (first_chunk_ts - start_ts) if first_chunk_ts else None,
+                            'total_latency': time.time() - start_ts
                         })
-                        logger.info(f"[CHAT] Saving assistant message to conversation_id: {conversation_id} user={user_email}")
+                        logger.info(f"[CHAT] Saving assistant message conversation={conversation_id} total_latency={time.time()-start_ts:.2f}s")
                         conversation_store.save_message(conversation_id, assistant_message, user_email=user_email)
-                        
-                        # Send completion signal with usage
                         final_response = {
-                            'done': True, 
-                            'id': assistant_message.id, 
-                            'provider': provider_id, 
-                            'model': model_id, 
+                            'done': True,
+                            'id': assistant_message.id,
+                            'provider': provider_id,
+                            'model': model_id,
                             'meta': {
-                                'tokens_in': final_tokens_in, 
-                                'tokens_out': final_tokens_out, 
+                                'tokens_in': final_tokens_in,
+                                'tokens_out': final_tokens_out,
                                 'total_tokens': final_tokens_in + final_tokens_out,
-                                'estimated_cost': estimated_cost
+                                'estimated_cost': estimated_cost,
+                                'first_token_latency': (first_chunk_ts - start_ts) if first_chunk_ts else None,
+                                'total_latency': time.time() - start_ts
                             }
                         }
-                            
                         yield f"data: {json.dumps(final_response)}\n\n"
                         break
-                
+
+                    # Heartbeat after processing too (covers branches with no new content)
+                    async for hb_chunk in heartbeat():
+                        yield hb_chunk
+
+                # Final heartbeat if nothing was ever sent
+                if first_chunk_ts is None:
+                    async for hb_chunk in heartbeat():
+                        yield hb_chunk
+
             except asyncio.CancelledError:
                 logger.info(f"[CHAT] Request cancelled for conversation {conversation_id}")
                 yield f"data: {json.dumps({'error': 'Request cancelled', 'cancelled': True, 'done': True})}\n\n"
-                return
             except Exception as e:
                 logger.error(f"Streaming error: {e}")
                 yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 
+        logger.info(f"🔍 [STREAM] About to create StreamingResponse for conversation {conversation_id}")
         return StreamingResponse(
             generate_response(),
             media_type="text/plain",

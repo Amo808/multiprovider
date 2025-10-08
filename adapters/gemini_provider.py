@@ -205,6 +205,35 @@ class GeminiAdapter(BaseAdapter):
         input_text = "\n".join([f"{msg.get('role', 'user')}: {msg.get('parts', [{}])[0].get('text', '')}" for msg in contents])
         input_tokens = self.estimate_tokens(input_text)
 
+        # Warn user about potentially long requests
+        is_reasoning_request = (params.thinking_budget is not None and params.thinking_budget != 0) or params.include_thoughts
+        if is_reasoning_request:
+            yield ChatResponse(
+                content=" (Reasoning mode enabled - this may take several minutes to complete)",
+                done=False,
+                meta={
+                    "tokens_in": input_tokens,
+                    "tokens_out": 0,
+                    "provider": ModelProvider.GEMINI,
+                    "model": model,
+                    "warning": True
+                }
+            )
+        
+        # Warn for large inputs that may cause longer processing times
+        if input_tokens > 50000:
+            yield ChatResponse(
+                content=" (Large input detected - processing may take extra time)",
+                done=False,
+                meta={
+                    "tokens_in": input_tokens,
+                    "tokens_out": 0,
+                    "provider": ModelProvider.GEMINI,
+                    "model": model,
+                    "warning": True
+                }
+            )
+
         # Gemini API payload
         payload = {
             "contents": contents,
@@ -313,12 +342,60 @@ class GeminiAdapter(BaseAdapter):
                             )
                         return
 
-                    # Streaming branch (same as before) ---------------------------------
+                    # Streaming branch with improved patience for long reasoning requests
                     text_buffer = ""
                     json_buffer = ""
                     bracket_count = 0
                     in_json = False
+                    last_activity = asyncio.get_event_loop().time()
+                    heartbeat_counter = 0
+                    empty_chunks_count = 0
+                    max_empty_chunks = 200  # More patience for reasoning models
+                    
+                    # Check if this is a reasoning request that may take longer
+                    is_reasoning_request = (params.thinking_budget is not None and params.thinking_budget != 0) or params.include_thoughts
+                    if is_reasoning_request:
+                        max_empty_chunks = 500  # Even more patience for reasoning
+                        self.logger.info(f"[Gemini] Reasoning request detected, increasing patience for long waits")
+                    
                     async for chunk in response.content.iter_chunked(1024):
+                        current_time = asyncio.get_event_loop().time()
+                        
+                        # Handle empty chunks
+                        if not chunk:
+                            empty_chunks_count += 1
+                            if empty_chunks_count > max_empty_chunks:
+                                self.logger.warning(f"[Gemini] Too many empty chunks ({empty_chunks_count}), ending stream")
+                                break
+                            
+                            # Send heartbeat every 15 seconds of no data
+                            if current_time - last_activity > 15:
+                                heartbeat_counter += 1
+                                if heartbeat_counter <= 3:
+                                    heartbeat_msg = " (Please wait, model is thinking...)"
+                                elif heartbeat_counter <= 6:
+                                    heartbeat_msg = " (Still processing your request, this may take a while...)"
+                                else:
+                                    heartbeat_msg = " (Model is working on a complex response, thank you for your patience...)"
+                                
+                                yield ChatResponse(
+                                    content=heartbeat_msg,
+                                    done=False,
+                                    meta={
+                                        "tokens_in": input_tokens,
+                                        "tokens_out": self.estimate_tokens(accumulated_content),
+                                        "provider": ModelProvider.GEMINI,
+                                        "model": model,
+                                        "heartbeat": True
+                                    }
+                                )
+                                last_activity = current_time
+                            continue
+                        
+                        # Reset counters on receiving data
+                        empty_chunks_count = 0
+                        last_activity = current_time
+                        
                         text_buffer += chunk.decode('utf-8', errors='ignore')
                         i = 0
                         while i < len(text_buffer):

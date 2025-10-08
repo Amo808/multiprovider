@@ -88,7 +88,14 @@ const MessageBubble: React.FC<{
               {message.meta?.reasoning ? (
                 <>
                   <Brain size={12} className="animate-pulse text-purple-600 dark:text-purple-400" />
-                  <span className="text-xs text-purple-600 dark:text-purple-400">Reasoning...</span>
+                  <span className="text-xs text-purple-600 dark:text-purple-400">
+                    {deepResearchStage ? 'Reasoning...' : 'Deep reasoning in progress...'}
+                  </span>
+                </>
+              ) : deepResearchStage ? (
+                <>
+                  <Brain size={12} className="animate-pulse text-blue-600 dark:text-blue-400" />
+                  <span className="text-xs text-blue-600 dark:text-blue-400">Processing...</span>
                 </>
               ) : (
                 <>
@@ -441,6 +448,43 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         )}
 
+        {/* Reasoning Progress Indicator */}
+        {isStreaming && !connectionLost && (generationConfig.reasoning_effort === 'medium' || generationConfig.reasoning_effort === 'high') && (
+          <div className="mb-4 p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-md">
+            <div className="flex items-center space-x-3">
+              <Brain size={20} className="animate-pulse text-purple-600 dark:text-purple-400" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-purple-800 dark:text-purple-200">
+                  Deep Reasoning in Progress
+                </p>
+                <p className="text-xs text-purple-600 dark:text-purple-400 mt-1">
+                  {deepResearchStage ? deepResearchStage : 
+                    `The model is carefully thinking through your request (effort: ${generationConfig.reasoning_effort}). This may take several minutes for complex queries.`}
+                </p>
+                {lastHeartbeat && (
+                  <div className="mt-2 flex items-center space-x-2 text-xs text-purple-500">
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                    <span>Processing for {Math.round((Date.now() - lastHeartbeat) / 1000)}s</span>
+                    <span className="text-purple-400">• Server responding normally</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* General Streaming Indicator */}
+        {isStreaming && !connectionLost && deepResearchStage && !(generationConfig.reasoning_effort === 'medium' || generationConfig.reasoning_effort === 'high') && (
+          <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+            <div className="flex items-center space-x-2">
+              <Zap size={16} className="animate-pulse text-blue-600 dark:text-blue-400" />
+              <div>
+                <p className="text-sm text-blue-800 dark:text-blue-200">{deepResearchStage}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
             <div className="flex items-center space-x-2">
@@ -533,7 +577,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 {generationConfig.reasoning_effort && (
                   <>
                     <span>•</span>
-                    <span title="Reasoning effort" className="text-purple-600 dark:text-purple-400">Reasoning: {generationConfig.reasoning_effort}</span>
+                    <span title="Reasoning effort - higher values take longer but may provide better responses" 
+                          className={`${isStreaming && (generationConfig.reasoning_effort === 'medium' || generationConfig.reasoning_effort === 'high') 
+                            ? 'text-purple-600 dark:text-purple-400 animate-pulse font-medium' 
+                            : 'text-purple-600 dark:text-purple-400'}`}>
+                      Reasoning: {generationConfig.reasoning_effort}
+                      {isStreaming && (generationConfig.reasoning_effort === 'medium' || generationConfig.reasoning_effort === 'high') && (
+                        <span className="ml-1">⚡</span>
+                      )}
+                    </span>
                   </>
                 )}
                 {generationConfig.thinking_budget !== undefined && selectedProvider === 'gemini' && (
@@ -545,13 +597,27 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 {generationConfig.stream && (
                   <>
                     <span>•</span>
-                    <span className="text-green-600 dark:text-green-400">Streaming enabled</span>
+                    <span className={`${isStreaming ? 'text-green-600 dark:text-green-400 animate-pulse' : 'text-green-600 dark:text-green-400'}`}>
+                      Streaming enabled
+                    </span>
                   </>
                 )}
               </>
             )}
           </div>
-          <div>
+          <div className="flex items-center space-x-4">
+            {isStreaming && lastHeartbeat && (
+              <>
+                <span className="text-blue-600 dark:text-blue-400 animate-pulse">
+                  Processing: {Math.round((Date.now() - lastHeartbeat) / 1000)}s
+                </span>
+                {(generationConfig.reasoning_effort === 'medium' || generationConfig.reasoning_effort === 'high') && (
+                  <span className="text-purple-600 dark:text-purple-400 text-xs">
+                    ⚡ Deep reasoning active
+                  </span>
+                )}
+              </>
+            )}
             {messages.length > 0 && (
               <span>{messages.length} message{messages.length !== 1 ? 's' : ''}</span>
             )}
