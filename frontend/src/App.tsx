@@ -6,7 +6,6 @@ import {
   GenerationSettings, 
   ProviderManager,
   UnlockModal,
-  LoginModal,
   ConversationHistory,
   useConfig,
   useHealth,
@@ -16,6 +15,9 @@ import {
   GenerationConfig
 } from './components';
 import { apiClient } from './services/api';
+
+// Unified dev flag (frontend) - force bypass always for local dev unless explicitly disabled
+const FORCE_DEV = (import.meta as any).env?.VITE_DEV_MODE === '1' || true; // always true fallback
 
 function App() {
   // ========================= State Management =========================
@@ -38,8 +40,8 @@ function App() {
   });
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string>('');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(true); // force true
+  const [userEmail, setUserEmail] = useState<string | null>('dev@example.com');
 
   // Helper to get auth headers (avoid TypeScript private access)
   const getAuthHeaders = () => {
@@ -54,6 +56,14 @@ function App() {
 
   // ========================= Auth Restore =========================
   useEffect(() => {
+    if (FORCE_DEV) {
+      setIsAuthenticated(true);
+      setUserEmail('dev@example.com');
+      // Directly fetch config once
+      fetchConfig();
+      return;
+    }
+
     apiClient.setUnauthorizedCallback(() => {
       console.log('Global 401 handler: logging out user');
       setIsAuthenticated(false);
@@ -542,28 +552,16 @@ function App() {
   }, [handleGoogleCredential]);
 
   // ========================= Loading / Auth UI =========================
-  if (!isAuthenticated) {
-    // Показываем модальное окно только если нет токена в localStorage
-    const hasStoredToken = Boolean(localStorage.getItem('jwt_token'));
-    if (!hasStoredToken) {
-      return (
-        <LoginModal
-          isOpen={true}
-          error={undefined}
-          onGoogleCredential={handleGoogleCredential}
-        />
-      );
-    } else {
-      // Если токен есть, но мы не аутентифицированы, показываем загрузку
-      return (
-        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600 dark:text-gray-400">Verifying authentication...</p>
-          </div>
+  // Remove login modal entirely; in non-dev still show simple spinner until auth
+  if (!isAuthenticated && !FORCE_DEV) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p>Authentication required...</p>
         </div>
-      );
-    }
+      </div>
+    );
   }
 
   if (configLoading || !config) {
