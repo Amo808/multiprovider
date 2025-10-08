@@ -6,6 +6,7 @@ import {
   GenerationSettings, 
   ProviderManager,
   UnlockModal,
+  LoginModal,
   ConversationHistory,
   useConfig,
   useHealth,
@@ -15,9 +16,6 @@ import {
   GenerationConfig
 } from './components';
 import { apiClient } from './services/api';
-
-// Unified dev flag (frontend) - force bypass always for local dev unless explicitly disabled
-const FORCE_DEV = (import.meta as any).env?.VITE_DEV_MODE === '1' || true; // always true fallback
 
 function App() {
   // ========================= State Management =========================
@@ -40,8 +38,10 @@ function App() {
   });
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string>('');
-  const [isAuthenticated, setIsAuthenticated] = useState(true); // force true
-  const [userEmail, setUserEmail] = useState<string | null>('dev@example.com');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  const DEV_MODE = (import.meta as any).env?.VITE_DEV_MODE === '1';
 
   // Helper to get auth headers (avoid TypeScript private access)
   const getAuthHeaders = () => {
@@ -56,14 +56,6 @@ function App() {
 
   // ========================= Auth Restore =========================
   useEffect(() => {
-    if (FORCE_DEV) {
-      setIsAuthenticated(true);
-      setUserEmail('dev@example.com');
-      // Directly fetch config once
-      fetchConfig();
-      return;
-    }
-
     apiClient.setUnauthorizedCallback(() => {
       console.log('Global 401 handler: logging out user');
       setIsAuthenticated(false);
@@ -71,31 +63,54 @@ function App() {
       localStorage.removeItem('jwt_token');
     });
 
-    try {
-      const jwt = localStorage.getItem('jwt_token');
-      console.log('Auth restore: token present?', !!jwt);
-      if (jwt) {
-        apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${jwt}` }));
-        setIsAuthenticated(true);
-        // fetch user email first to verify token
-        fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` }} )
-          .then(r => {
-            if (!r.ok) throw new Error('me failed');
-            return r.json();
-          })
-          .then(d => {
-            setUserEmail(d?.email || null);
-            // only fetch config after confirming token works
+    const initAuth = async () => {
+      try {
+        // First check if dev auth is active via health endpoint
+        const healthResponse = await fetch('/api/health');
+        if (healthResponse.ok) {
+          const healthData = await healthResponse.json();
+          console.log('Health check:', healthData);
+          
+          // If dev auth is active, skip JWT verification
+          if (healthData.dev_auth_active) {
+            console.log('Dev auth active - bypassing JWT verification');
+            setIsAuthenticated(true);
+            setUserEmail('dev@example.com');
             fetchConfig();
-          })
-          .catch(err => {
-            console.log('Auth restore /auth/me failed, clearing token', err);
-            localStorage.removeItem('jwt_token');
-            setIsAuthenticated(false);
-          });
+            return;
+          }
+        }
+
+        // Regular JWT auth flow
+        const jwt = localStorage.getItem('jwt_token');
+        console.log('Auth restore: token present?', !!jwt);
+        if (jwt) {
+          apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${jwt}` }));
+          setIsAuthenticated(true);
+          // fetch user email first to verify token
+          fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` }} )
+            .then(r => {
+              if (!r.ok) throw new Error('me failed');
+              return r.json();
+            })
+            .then(d => {
+              setUserEmail(d?.email || null);
+              // only fetch config after confirming token works
+              fetchConfig();
+            })
+            .catch(err => {
+              console.log('Auth restore /auth/me failed, clearing token', err);
+              localStorage.removeItem('jwt_token');
+              setIsAuthenticated(false);
+            });
+        }
+      } catch (error) {
+        console.log('Auth initialization failed:', error);
       }
-    } catch { /* ignore */ }
-  }, [fetchConfig]);
+    };
+
+    initAuth();
+  }, [fetchConfig, DEV_MODE]);
 
   // ========================= Theme Handling =========================
   useEffect(() => {
@@ -552,15 +567,13 @@ function App() {
   }, [handleGoogleCredential]);
 
   // ========================= Loading / Auth UI =========================
-  // Remove login modal entirely; in non-dev still show simple spinner until auth
-  if (!isAuthenticated && !FORCE_DEV) {
+  if (!isAuthenticated && !DEV_MODE) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p>Authentication required...</p>
-        </div>
-      </div>
+      <LoginModal
+        isOpen={true}
+        error={undefined}
+        onGoogleCredential={() => {}}
+      />
     );
   }
 

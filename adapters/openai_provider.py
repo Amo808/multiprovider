@@ -266,7 +266,14 @@ class OpenAIAdapter(BaseAdapter):
         total_input_length = sum(len(m.content) for m in messages)
         self.logger.info(f"🔍 [ENTRY] {model} generate called - input_length={total_input_length:,} chars")
         is_reasoning_model = any(model.startswith(prefix) for prefix in ['o1', 'o3', 'o4'])
-        is_gpt5 = model.startswith('gpt-5')
+        is_gpt5 = model.startswith("gpt-5")
+        
+        if is_gpt5:
+            # Ensure GPT-5 requests have enough output budget when reasoning is enabled
+            if not params.max_tokens or params.max_tokens <= 0:
+                params.max_tokens = 8192 if params.reasoning_effort in {"medium", "high"} else 4096
+            elif params.reasoning_effort in {"medium", "high"} and params.max_tokens < 8192:
+                params.max_tokens = 8192
 
         # Large input early warning & reasoning effort auto-downgrade
         reasoning_adjustment = None
@@ -326,7 +333,14 @@ class OpenAIAdapter(BaseAdapter):
             payload["stop"] = params.stop_sequences
 
         # Decide responses endpoint usage
-        use_responses_api = False
+        advanced_features_requested = any([
+            params.free_tool_calling,
+            params.tools,
+            params.grammar_definition,
+            params.verbosity,
+            params.reasoning_effort,
+        ])
+        use_responses_api = is_gpt5
         if model.startswith('gpt-5'):
             if any([params.free_tool_calling, params.tools, params.grammar_definition, params.verbosity, params.reasoning_effort]):
                 use_responses_api = True

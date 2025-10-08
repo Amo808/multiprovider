@@ -7,6 +7,8 @@ services:
     dockerContext: .
     dockerBuildCommand: docker build --build-arg VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID} -t multichat-app .
     envVars:
+      - key: DEV_MODE
+        value: "1"
       - key: OPENAI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY  
