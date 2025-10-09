@@ -6,6 +6,9 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 from jose import jwt, JWTError
 
+DEV_MODE = os.getenv("DEV_MODE", "0") == "1"
+STATIC_DEV_USER = os.getenv("DEV_STATIC_USER", "dev@example.com")
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 JWT_SECRET = os.getenv("JWT_SECRET", "change_me_secret")
 JWT_ALGORITHM = "HS256"
@@ -52,6 +55,9 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(security),
     authorization: str = Header(None)
 ) -> str:
+    if DEV_MODE:
+        return STATIC_DEV_USER
+
     token = None
     print(f"[AUTH] credentials present: {credentials is not None}")
     print(f"[AUTH] authorization header present: {authorization is not None}")
@@ -108,6 +114,9 @@ def get_current_user(
 # --- Auth Endpoints ---
 @router.post("/google", response_model=TokenOut)
 async def google_login(payload: GoogleTokenIn, response: Response):
+    if DEV_MODE:
+        return TokenOut(access_token="dev", refresh_token=None, expires_in=3600)
+
     print(f"Google login attempt - client_id set: {bool(GOOGLE_CLIENT_ID)}, length: {len(GOOGLE_CLIENT_ID)}")
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=500, detail="Server not configured for Google OAuth")

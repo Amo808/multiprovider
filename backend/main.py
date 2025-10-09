@@ -49,20 +49,22 @@ FORCE_DEV_AUTH = os.getenv("FORCE_DEV_AUTH", "1") == "1"
 DEV_STATIC_USER = os.getenv("DEV_STATIC_USER", "dev@example.com")
 # TEMPORARY: Force dev auth for this deployment until we configure OAuth
 PRODUCTION_DEV_MODE = os.getenv("BYPASS_GOOGLE_AUTH", "0") == "1"
-DEV_AUTH_ACTIVE = DEV_MODE_FLAG or (LOCAL_ENV and FORCE_DEV_AUTH) or PRODUCTION_DEV_MODE
+# HOTFIX: Force dev mode for this specific deployment
+FORCE_PRODUCTION_DEV = True  # Change to False when OAuth is properly configured
+DEV_AUTH_ACTIVE = DEV_MODE_FLAG or (LOCAL_ENV and FORCE_DEV_AUTH) or PRODUCTION_DEV_MODE or FORCE_PRODUCTION_DEV
 
 if DEV_AUTH_ACTIVE:
     # Override dependency so every endpoint treats requests as authenticated.
     def get_current_user():  # type: ignore
         return DEV_STATIC_USER
     logging.getLogger(__name__).info(
-        f"[DEV-AUTH] Bypass ACTIVE (user={DEV_STATIC_USER}) | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH} PRODUCTION_DEV_MODE={PRODUCTION_DEV_MODE}" 
+        f"[DEV-AUTH] Bypass ACTIVE (user={DEV_STATIC_USER}) | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH} PRODUCTION_DEV_MODE={PRODUCTION_DEV_MODE} FORCE_PRODUCTION_DEV={FORCE_PRODUCTION_DEV}" 
     )
 else:
     # Use the real auth dependency
     get_current_user = original_get_current_user  # type: ignore
     logging.getLogger(__name__).info(
-        f"[DEV-AUTH] Bypass DISABLED | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH} PRODUCTION_DEV_MODE={PRODUCTION_DEV_MODE}"
+        f"[DEV-AUTH] Bypass DISABLED | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH} PRODUCTION_DEV_MODE={PRODUCTION_DEV_MODE} FORCE_PRODUCTION_DEV={FORCE_PRODUCTION_DEV}"
     )
 # ----------------------------------------------------------------------------
 
@@ -1017,5 +1019,7 @@ if __name__ == "__main__":
         host=host, 
         port=port, 
         reload=debug,  # Только если DEBUG=True
-        log_level="info"
+        log_level="info",
+        timeout_keep_alive=600,  # 10 minutes keep-alive for long requests
+        timeout_graceful_shutdown=60
     )

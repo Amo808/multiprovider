@@ -52,5 +52,5 @@ EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:10000/health || exit 1
 
-# Start the application
-CMD ["python", "backend/main.py"]
+# Start the application with infinite patience for long OpenAI responses
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "10000", "--timeout-keep-alive", "600"]

@@ -60,10 +60,10 @@ export const useConversations = () => {
   useEffect(() => {
     const checkConnectionHealth = () => {
       const now = Date.now();
-      // More generous timeouts for reasoning models
-      const HEARTBEAT_TIMEOUT = 180000; // 3 minutes without heartbeat = connection issue (was 60s)
-      const REASONING_HEARTBEAT_TIMEOUT = 300000; // 5 minutes for reasoning models (GPT-5, o1, etc.)
-      const STREAMING_TIMEOUT = 1800000; // 30 minutes total timeout for streaming requests (was 5 minutes)
+      // Even more generous timeouts - we want to wait as long as OpenAI needs
+      const HEARTBEAT_TIMEOUT = 600000; // 10 minutes without heartbeat = connection issue
+      const REASONING_HEARTBEAT_TIMEOUT = 1800000; // 30 minutes for reasoning models (GPT-5, o1, etc.)
+      const STREAMING_TIMEOUT = 3600000; // 60 minutes total timeout for streaming requests
       
       setConversations(prev => {
         const updated = { ...prev };

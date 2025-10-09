@@ -342,7 +342,7 @@ class GeminiAdapter(BaseAdapter):
                             )
                         return
 
-                    # Streaming branch with improved patience for long reasoning requests
+                    # Streaming branch with infinite patience for Gemini responses
                     text_buffer = ""
                     json_buffer = ""
                     bracket_count = 0
@@ -350,44 +350,47 @@ class GeminiAdapter(BaseAdapter):
                     last_activity = asyncio.get_event_loop().time()
                     heartbeat_counter = 0
                     empty_chunks_count = 0
-                    max_empty_chunks = 200  # More patience for reasoning models
+                    heartbeat_interval = 15  # Send heartbeat every 15 seconds
                     
                     # Check if this is a reasoning request that may take longer
                     is_reasoning_request = (params.thinking_budget is not None and params.thinking_budget != 0) or params.include_thoughts
                     if is_reasoning_request:
-                        max_empty_chunks = 500  # Even more patience for reasoning
-                        self.logger.info(f"[Gemini] Reasoning request detected, increasing patience for long waits")
+                        self.logger.info(f"[Gemini] Reasoning request detected, will wait as long as needed")
                     
                     async for chunk in response.content.iter_chunked(1024):
                         current_time = asyncio.get_event_loop().time()
                         
-                        # Handle empty chunks
+                        # Handle empty chunks - never give up, just track and send heartbeats
                         if not chunk:
                             empty_chunks_count += 1
-                            if empty_chunks_count > max_empty_chunks:
-                                self.logger.warning(f"[Gemini] Too many empty chunks ({empty_chunks_count}), ending stream")
-                                break
                             
-                            # Send heartbeat every 15 seconds of no data
-                            if current_time - last_activity > 15:
+                            # Send heartbeat every 15 seconds of no data, but never stop waiting
+                            if current_time - last_activity > heartbeat_interval:
                                 heartbeat_counter += 1
-                                if heartbeat_counter <= 3:
-                                    heartbeat_msg = " (Please wait, model is thinking...)"
-                                elif heartbeat_counter <= 6:
-                                    heartbeat_msg = " (Still processing your request, this may take a while...)"
-                                else:
-                                    heartbeat_msg = " (Model is working on a complex response, thank you for your patience...)"
+                                silence_duration = current_time - last_activity
+                                
+                                if silence_duration < 60:
+                                    heartbeat_msg = f" (Model thinking... {silence_duration:.0f}s)"
+                                elif silence_duration < 300:  # 5 minutes
+                                    heartbeat_msg = f" (Deep reasoning in progress... {silence_duration:.0f}s)"
+                                elif silence_duration < 900:  # 15 minutes  
+                                    heartbeat_msg = f" (Complex reasoning... {silence_duration:.0f}s - still waiting)"
+                                else:  # 15+ minutes
+                                    heartbeat_msg = f" (Extensive reasoning... {silence_duration:.0f}s - we will wait as long as needed)"
                                 
                                 yield ChatResponse(
-                                    content=heartbeat_msg,
+                                    content="",
                                     done=False,
+                                    heartbeat="Processing... connection active",
                                     meta={
                                         "tokens_in": input_tokens,
                                         "tokens_out": self.estimate_tokens(accumulated_content),
                                         "provider": ModelProvider.GEMINI,
                                         "model": model,
-                                        "heartbeat": True
-                                    }
+                                        "silence_duration": silence_duration,
+                                        "empty_chunks": empty_chunks_count
+                                    },
+                                    stage_message=heartbeat_msg
                                 )
                                 last_activity = current_time
                             continue

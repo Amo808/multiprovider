@@ -461,3 +461,63 @@ class DatabaseConversationStore:
                 raise
             finally:
                 conn.close()
+
+    def get_conversations(self, user_email: Optional[str] = None) -> List[Dict]:
+        """Get list of conversations for a user (or all if no user_email provided)."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                
+                if user_email:
+                    # Get conversations for specific user (both namespaced and legacy)
+                    if self.db_type == 'postgresql':
+                        cursor.execute('''
+                            SELECT id, title, created_at, updated_at, message_count, user_email 
+                            FROM conversations 
+                            WHERE user_email = %s OR id LIKE %s
+                            ORDER BY updated_at DESC
+                        ''', (user_email, f"{user_email}__%"))
+                    else:
+                        cursor.execute('''
+                            SELECT id, title, created_at, updated_at, message_count, user_email 
+                            FROM conversations 
+                            WHERE user_email = ? OR id LIKE ?
+                            ORDER BY updated_at DESC
+                        ''', (user_email, f"{user_email}__%"))
+                else:
+                    # Get all conversations (for dev mode or admin)
+                    cursor.execute('''
+                        SELECT id, title, created_at, updated_at, message_count, user_email 
+                        FROM conversations 
+                        ORDER BY updated_at DESC
+                    ''')
+                
+                rows = cursor.fetchall()
+                conversations = []
+                
+                for row in rows:
+                    conv_id, title, created_at, updated_at, message_count, conv_user_email = row
+                    
+                    # Extract original conversation_id from namespaced storage_id
+                    original_id = conv_id
+                    if user_email and conv_id.startswith(f"{user_email}__"):
+                        original_id = conv_id[len(f"{user_email}__"):]
+                    
+                    conversations.append({
+                        'id': original_id,  # Return original ID to frontend
+                        'title': title,
+                        'created_at': created_at,
+                        'updated_at': updated_at,
+                        'message_count': message_count or 0,
+                        'user_email': conv_user_email
+                    })
+                
+                logger.info(f"[DatabaseStore] Retrieved {len(conversations)} conversations for user: {user_email}")
+                return conversations
+                
+            except Exception as e:
+                logger.error(f"Failed to get conversations for user {user_email}: {e}")
+                return []
+            finally:
+                conn.close()

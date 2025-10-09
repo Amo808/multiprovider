@@ -606,28 +606,27 @@ class OpenAIAdapter(BaseAdapter):
                 # Handle streaming response
                 start_time = asyncio.get_event_loop().time()
                 last_heartbeat = start_time
-                heartbeat_interval = 15  # Increased heartbeat interval
+                heartbeat_interval = 30  # More patience for reasoning requests
                 first_content_chunk = True
                 
                 # Enhanced monitoring for long requests
                 monitor_task = None
                 response_received = False
                 
-                # Send streaming_ready signal for GPT-5
-                if is_gpt5:
-                    self.logger.info(f"[GPT-5] Sending immediate status update - streaming ready")
-                    yield ChatResponse(
-                        content="",
-                        done=False,
-                        streaming_ready=True,
-                        meta={
-                            "provider": ModelProvider.OPENAI,
-                            "model": model,
-                            "stage": "streaming_started",
-                            "timestamp": start_time
-                        },
-                        stage_message="GPT-5 is generating response..."
-                    )
+                # Send streaming_ready signal for all models
+                self.logger.info(f"[{model}] Sending immediate status update - streaming ready")
+                yield ChatResponse(
+                    content="",
+                    done=False,
+                    streaming_ready=True,
+                    meta={
+                        "provider": ModelProvider.OPENAI,
+                        "model": model,
+                        "stage": "streaming_started",
+                        "timestamp": start_time
+                    },
+                    stage_message=f"{model} is generating response..."
+                )
                 
                 buffer = ""
                 stream_finished = False
@@ -640,113 +639,81 @@ class OpenAIAdapter(BaseAdapter):
                         heartbeat_interval
                     )
                 
-                # The main streaming loop. sock_read timeout on the session will catch true hangs.
-                # The readline timeout is for sending heartbeats during long silences.
+                # The main streaming loop with infinite patience for OpenAI responses.
+                # We will wait as long as OpenAI needs, sending heartbeats to keep connection alive.
                 empty_line_count = 0
-                max_empty_lines = 10  # Increased tolerance for reasoning requests
                 consecutive_timeouts = 0
-                max_consecutive_timeouts = 5  # Allow more timeouts before giving up
+                last_token_time = asyncio.get_event_loop().time()
+                heartbeat_interval = 15  # Send heartbeat every 15 seconds of silence
                 
                 while not stream_finished:
                     try:
-                        # Longer timeout for reasoning requests
-                        timeout_duration = 30 if params.reasoning_effort in ["medium", "high"] else heartbeat_interval
+                        # Infinite patience - we wait as long as OpenAI needs
+                        # Only timeout for heartbeat purposes, not to give up
+                        timeout_duration = heartbeat_interval
                         raw_line = await asyncio.wait_for(response.content.readline(), timeout=timeout_duration)
                         
-                        # Reset timeout counter on successful read
+                        # Reset timeout counter and update last token time on successful read
                         consecutive_timeouts = 0
+                        if raw_line.strip():  # Only update if we got actual content
+                            last_token_time = asyncio.get_event_loop().time()
                         
-                        # Улучшенная логика обработки пустых строк
+                        # Handle empty lines - but don't give up, just log
                         if not raw_line:
                             empty_line_count += 1
                             self.logger.debug(f"[OPENAI] Empty line #{empty_line_count}")
                             
-                            # More patient for reasoning requests
-                            current_max_empty = max_empty_lines * 2 if params.reasoning_effort in ["medium", "high"] else max_empty_lines
-                            
-                            if empty_line_count >= current_max_empty:
-                                # Extra patience for reasoning requests
-                                if params.reasoning_effort in ["medium", "high"] and empty_line_count < current_max_empty * 2:
-                                    self.logger.info(f"[OPENAI] Many empty lines ({empty_line_count}) but reasoning request - being extra patient...")
-                                    yield ChatResponse(
-                                        content="",
-                                        done=False,
-                                        stage_message="OpenAI reasoning in progress... being patient with connection",
-                                        meta={"provider": ModelProvider.OPENAI, "model": model}
-                                    )
-                                    continue
-                                
-                                # Final check for connection status
+                            # Check connection status but don't break - be infinitely patient
+                            if empty_line_count > 20:  # Only warn, don't break
                                 try:
                                     if hasattr(response, 'closed') and response.closed:
-                                        self.logger.warning("[OPENAI] Stream ended: connection closed - OpenAI may have timed out")
-                                        if params.reasoning_effort in ["medium", "high"]:
-                                            yield ChatResponse(
-                                                content="",
-                                                done=False,
-                                                stage_message="Connection interrupted during reasoning. Response may be incomplete.",
-                                                meta={"provider": ModelProvider.OPENAI, "model": model, "interrupted": True}
-                                            )
+                                        self.logger.warning("[OPENAI] Stream ended: connection closed by server")
                                         break
                                     elif hasattr(response, 'connection') and hasattr(response.connection, 'closed') and response.connection.closed:
                                         self.logger.warning("[OPENAI] Stream ended: underlying connection closed")
                                         break
                                     else:
-                                        self.logger.info("[OPENAI] Many empty lines but connection seems alive, continuing...")
+                                        # Connection alive, reset counter and continue waiting
+                                        self.logger.debug("[OPENAI] Many empty lines but connection alive, continuing to wait...")
                                         empty_line_count = 0  # Reset and continue
                                 except AttributeError:
-                                    self.logger.warning("[OPENAI] Cannot check connection status, assuming closed")
-                                    break
+                                    self.logger.debug("[OPENAI] Cannot check connection status, continuing...")
                             continue
                             
-                        # Сбрасываем счетчик при получении данных
+                        # Reset empty line counter when we get data
                         empty_line_count = 0
                     except asyncio.TimeoutError:
+                        # Timeout is only for heartbeat - we never give up waiting for OpenAI
                         consecutive_timeouts += 1
                         current_time = asyncio.get_event_loop().time()
                         elapsed = current_time - start_time
+                        silence_duration = current_time - last_token_time
                         
-                        # More tolerant for reasoning requests
-                        if consecutive_timeouts >= max_consecutive_timeouts:
-                            if params.reasoning_effort in ["medium", "high"]:
-                                self.logger.warning(f"[OPENAI] Multiple consecutive timeouts ({consecutive_timeouts}) for reasoning request")
-                                yield ChatResponse(
-                                    content="",
-                                    done=False,
-                                    stage_message=f"Long silence from OpenAI ({elapsed:.0f}s). Model may still be processing reasoning...",
-                                    meta={"provider": ModelProvider.OPENAI, "model": model}
-                                )
-                                consecutive_timeouts = 0  # Reset and keep trying
-                                continue
-                            else:
-                                self.logger.warning(f"[OPENAI] Too many consecutive timeouts, giving up")
-                                break
+                        self.logger.debug(f"[OPENAI] Heartbeat timeout #{consecutive_timeouts} after {elapsed:.2f}s total, {silence_duration:.2f}s since last token")
                         
-                        self.logger.debug(f"[OPENAI] Heartbeat timeout after {elapsed:.2f}s. Sending keep-alive.")
-                        
-                        # Progressive messaging based on elapsed time and reasoning effort
+                        # Progressive messaging based on how long we've been waiting
                         is_high_reasoning = params.reasoning_effort in ["medium", "high"] or params.verbosity == "high"
                         
-                        if elapsed < 60:
+                        if silence_duration < 60:
                             if is_high_reasoning:
-                                message = f"GPT-5 reasoning... ({elapsed:.0f}s)"
+                                message = f"GPT-5 reasoning... ({silence_duration:.0f}s since last token)"
                             else:
-                                message = f"Processing... ({elapsed:.0f}s)"
-                        elif elapsed < 180:
+                                message = f"Processing... ({silence_duration:.0f}s since last token)"
+                        elif silence_duration < 300:  # 5 minutes
                             if is_high_reasoning:
-                                message = f"GPT-5 deep reasoning... ({elapsed:.0f}s) - High reasoning effort can take 3-10 minutes"
+                                message = f"GPT-5 deep reasoning... ({silence_duration:.0f}s since last token) - High reasoning effort can take many minutes"
                             else:
-                                message = f"Still processing... ({elapsed:.0f}s) - OpenAI reasoning can take 3-5 minutes"
-                        elif elapsed < 300:
+                                message = f"Still processing... ({silence_duration:.0f}s since last token) - OpenAI reasoning can take 5-15 minutes"
+                        elif silence_duration < 900:  # 15 minutes
                             if is_high_reasoning:
-                                message = f"GPT-5 complex reasoning... ({elapsed:.0f}s) - High effort reasoning is working"
+                                message = f"GPT-5 complex reasoning... ({silence_duration:.0f}s since last token) - High effort reasoning can be very thorough"
                             else:
-                                message = f"Long processing... ({elapsed:.0f}s) - This is taking longer than usual"
-                        else:
+                                message = f"Long processing... ({silence_duration:.0f}s since last token) - This is taking longer than usual but we're waiting"
+                        else:  # 15+ minutes
                             if is_high_reasoning:
-                                message = f"GPT-5 extensive reasoning... ({elapsed:.0f}s) - High reasoning effort can be very thorough"
+                                message = f"GPT-5 extensive reasoning... ({silence_duration:.0f}s since last token) - Waiting as long as needed"
                             else:
-                                message = f"Very long processing... ({elapsed:.0f}s) - OpenAI reasoning can be very slow"
+                                message = f"Very long processing... ({silence_duration:.0f}s since last token) - We will wait as long as OpenAI needs"
                         
                         yield ChatResponse(
                             content="",

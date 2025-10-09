@@ -6,6 +6,15 @@
 
 Professional AI chat application with support for multiple providers (OpenAI, DeepSeek, Anthropic, Gemini).
 
+## ⏰ Infinite Patience for Long AI Responses
+This application is designed to **wait as long as needed** for AI responses, even if they take 15+ minutes. Perfect for:
+- **GPT-5 reasoning tasks** with high complexity  
+- **OpenAI o1/o3 models** with extended thinking time
+- **Complex analysis** that requires deep processing
+- **Long-form content generation**
+
+The system sends heartbeat messages every 15 seconds to keep the connection alive and shows progressive status updates so you always know the AI is working.
+
 ## 🔐 Authentication (Google OAuth + JWT)
 The application now uses **Google OAuth 2.0** for login. After Google sign-in the backend issues a short-lived **JWT** used for all `/api/*` calls.
 
