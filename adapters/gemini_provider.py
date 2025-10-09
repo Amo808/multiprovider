@@ -42,8 +42,8 @@ class GeminiAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=8192,
-                recommended_max_tokens=4096,
+                max_output_tokens=32768,  # Increased max output
+                recommended_max_tokens=16384,  # Increased recommended
                 description="Most powerful thinking model with advanced reasoning and multimodal understanding",
                 pricing={"input_tokens": 1.25, "output_tokens": 10.00}  # Per million tokens (<=200k prompts)
             ),
@@ -58,8 +58,8 @@ class GeminiAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=8192,
-                recommended_max_tokens=4096,
+                max_output_tokens=32768,  # Increased max output
+                recommended_max_tokens=16384,  # Increased recommended
                 description="Best price-performance with adaptive thinking and comprehensive capabilities",
                 pricing={"input_tokens": 0.30, "output_tokens": 2.50}  # Per million tokens
             ),
@@ -74,8 +74,8 @@ class GeminiAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=8192,
-                recommended_max_tokens=4096,
+                max_output_tokens=32768,  # Increased max output
+                recommended_max_tokens=16384,  # Increased recommended
                 description="Most cost-effective model with high throughput and low latency",
                 pricing={"input_tokens": 0.10, "output_tokens": 0.40}  # Per million tokens
             ),

@@ -44,6 +44,8 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
+                max_output_tokens=32768,  # Added max output
+                recommended_max_tokens=16384,  # Added recommended
                 pricing={"input_tokens": 30.00, "output_tokens": 150.00}  # estimated per 1M tokens
             ),
             ModelInfo(
@@ -56,6 +58,8 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
+                max_output_tokens=32768,  # Added max output
+                recommended_max_tokens=16384,  # Added recommended
                 pricing={"input_tokens": 25.00, "output_tokens": 125.00}  # estimated per 1M tokens
             ),
             ModelInfo(

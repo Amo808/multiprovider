@@ -63,53 +63,39 @@ function App() {
       localStorage.removeItem('jwt_token');
     });
 
-    const initAuth = async () => {
-      try {
-        // First check if dev auth is active via health endpoint
-        const healthResponse = await fetch('/api/health');
-        if (healthResponse.ok) {
-          const healthData = await healthResponse.json();
-          console.log('Health check:', healthData);
-          
-          // If dev auth is active, skip JWT verification
-          if (healthData.dev_auth_active) {
-            console.log('Dev auth active - bypassing JWT verification');
-            setIsAuthenticated(true);
-            setUserEmail('dev@example.com');
+    // In DEV_MODE, skip authentication and load config directly
+    if (DEV_MODE) {
+      console.log('DEV_MODE: Skipping authentication, setting as authenticated');
+      setIsAuthenticated(true);
+      setUserEmail('dev@example.com');
+      fetchConfig();
+      return;
+    }
+
+    try {
+      const jwt = localStorage.getItem('jwt_token');
+      console.log('Auth restore: token present?', !!jwt);
+      if (jwt) {
+        apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${jwt}` }));
+        setIsAuthenticated(true);
+        // fetch user email first to verify token
+        fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` }} )
+          .then(r => {
+            if (!r.ok) throw new Error('me failed');
+            return r.json();
+          })
+          .then(d => {
+            setUserEmail(d?.email || null);
+            // only fetch config after confirming token works
             fetchConfig();
-            return;
-          }
-        }
-
-        // Regular JWT auth flow
-        const jwt = localStorage.getItem('jwt_token');
-        console.log('Auth restore: token present?', !!jwt);
-        if (jwt) {
-          apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${jwt}` }));
-          setIsAuthenticated(true);
-          // fetch user email first to verify token
-          fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` }} )
-            .then(r => {
-              if (!r.ok) throw new Error('me failed');
-              return r.json();
-            })
-            .then(d => {
-              setUserEmail(d?.email || null);
-              // only fetch config after confirming token works
-              fetchConfig();
-            })
-            .catch(err => {
-              console.log('Auth restore /auth/me failed, clearing token', err);
-              localStorage.removeItem('jwt_token');
-              setIsAuthenticated(false);
-            });
-        }
-      } catch (error) {
-        console.log('Auth initialization failed:', error);
+          })
+          .catch(err => {
+            console.log('Auth restore /auth/me failed, clearing token', err);
+            localStorage.removeItem('jwt_token');
+            setIsAuthenticated(false);
+          });
       }
-    };
-
-    initAuth();
+    } catch { /* ignore */ }
   }, [fetchConfig, DEV_MODE]);
 
   // ========================= Theme Handling =========================

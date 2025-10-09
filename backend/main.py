@@ -40,34 +40,26 @@ from auth_google import router as google_auth_router, get_current_user as origin
 # We want local development to ALWAYS work without Google OAuth / JWT.
 # Conditions for bypass:
 # 1. Explicit DEV_MODE=1 OR
-# 2. Running locally (no RENDER env var) AND FORCE_DEV_AUTH not disabled OR
-# 3. Google OAuth not configured (no GOOGLE_CLIENT_ID)
+# 2. Running locally (no RENDER env var) AND FORCE_DEV_AUTH not disabled
 # You can disable bypass by setting FORCE_DEV_AUTH=0 (even if running locally).
 DEV_MODE_FLAG = os.getenv("DEV_MODE", "0") == "1"
 LOCAL_ENV = not os.getenv("RENDER")
 FORCE_DEV_AUTH = os.getenv("FORCE_DEV_AUTH", "1") == "1"
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 DEV_STATIC_USER = os.getenv("DEV_STATIC_USER", "dev@example.com")
-
-# Enable dev auth if:
-# - Explicitly enabled with DEV_MODE=1, OR
-# - Running locally and FORCE_DEV_AUTH is not disabled, OR  
-# - Google OAuth is not configured (missing GOOGLE_CLIENT_ID)
-DEV_AUTH_ACTIVE = DEV_MODE_FLAG or (LOCAL_ENV and FORCE_DEV_AUTH) or not GOOGLE_CLIENT_ID
+DEV_AUTH_ACTIVE = DEV_MODE_FLAG or (LOCAL_ENV and FORCE_DEV_AUTH)
 
 if DEV_AUTH_ACTIVE:
     # Override dependency so every endpoint treats requests as authenticated.
     def get_current_user():  # type: ignore
         return DEV_STATIC_USER
-    reason = "DEV_MODE=1" if DEV_MODE_FLAG else ("LOCAL" if LOCAL_ENV else "NO_GOOGLE_OAUTH")
     logging.getLogger(__name__).info(
-        f"[DEV-AUTH] Bypass ACTIVE (user={DEV_STATIC_USER}) | Reason: {reason} | DEV_MODE={DEV_MODE_FLAG} LOCAL={LOCAL_ENV} GOOGLE_ID={'SET' if GOOGLE_CLIENT_ID else 'MISSING'}" 
+        f"[DEV-AUTH] Bypass ACTIVE (user={DEV_STATIC_USER}) | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH}" 
     )
 else:
     # Use the real auth dependency
     get_current_user = original_get_current_user  # type: ignore
     logging.getLogger(__name__).info(
-        f"[DEV-AUTH] Bypass DISABLED - Using Google OAuth | DEV_MODE={DEV_MODE_FLAG} LOCAL={LOCAL_ENV} GOOGLE_ID={'SET' if GOOGLE_CLIENT_ID else 'MISSING'}"
+        f"[DEV-AUTH] Bypass DISABLED | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH}"
     )
 # ----------------------------------------------------------------------------
 
@@ -232,9 +224,7 @@ async def health_check():
         "version": "2.0.0",
         "providers": provider_status,
         "uptime": "unknown",  # TODO: Track uptime
-        "timestamp": datetime.now().isoformat(),
-        "dev_auth_active": DEV_AUTH_ACTIVE,
-        "auth_required": not DEV_AUTH_ACTIVE
+        "timestamp": datetime.now().isoformat()
     }
 
 @api_router.get("/debug/auth")
@@ -551,7 +541,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             """Generate streaming response with cancellation support.
             Added: heartbeat every 10s, provider call global timeout, first token latency logging.
             """
-            logger.info(f"🔍 [STREAM] generate_response() started: provider={provider_id}, model={model_id}")
+            logger.info(f"[STREAM] generate_response() started: provider={provider_id}, model={model_id}")
             full_content = ""
             total_tokens_in = 0
             total_tokens_out = 0
@@ -576,10 +566,10 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     last_emit_ts = now
 
             try:
-                logger.info(f"🔍 [STREAM] About to call provider_manager.chat_completion: provider={provider_id}, model={model_id}")
+                logger.info(f"[STREAM] About to call provider_manager.chat_completion: provider={provider_id}, model={model_id}")
                 # Wrapped async generator with timeout
                 async def provider_stream():
-                    logger.info(f"🔍 [STREAM] Inside provider_stream(), calling chat_completion...")
+                    logger.info(f"[STREAM] Inside provider_stream(), calling chat_completion...")
                     async for response in provider_manager.chat_completion(
                         history, provider_id, model_id, params
                     ):
@@ -691,7 +681,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                 logger.error(f"Streaming error: {e}")
                 yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 
-        logger.info(f"🔍 [STREAM] About to create StreamingResponse for conversation {conversation_id}")
+        logger.info(f"[STREAM] About to create StreamingResponse for conversation {conversation_id}")
         return StreamingResponse(
             generate_response(),
             media_type="text/plain",

@@ -71,12 +71,15 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
   const getMaxTokens = () => {
     switch (currentProvider) {
       case 'deepseek':
-        return 8192;
+        return 32768;  // Increased from 8192
       case 'openai':
+        return 131072; // Increased to match GPT-5 max (128k)
       case 'anthropic':
-        return 32768;
+        return 32768;  // Good for Claude models
+      case 'gemini':
+        return 32768;  // Good for Gemini models
       default:
-        return 8192; // Conservative default
+        return 32768;  // Increased default
     }
   };
 
@@ -224,14 +227,6 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
                   </select>
                 </label>
                 <p className="text-xs text-gray-500 dark:text-gray-400">minimal = fastest (few/no reasoning tokens).</p>
-                {(localConfig.reasoning_effort === 'medium' || localConfig.reasoning_effort === 'high') && (
-                  <div className="mt-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
-                    <p className="text-xs text-yellow-800 dark:text-yellow-200">
-                      ⚠️ <strong>{localConfig.reasoning_effort}</strong> reasoning may take 5-15 minutes for complex queries. 
-                      The UI will show progress indicators while the model thinks.
-                    </p>
-                  </div>
-                )}
               </div>
             )}
 

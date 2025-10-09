@@ -44,8 +44,8 @@ class DeepSeekAdapter(BaseAdapter):
                 supports_vision=False,
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 0.27, "output_tokens": 1.10},  # Current pricing (cache miss)
-                max_output_tokens=8192,  # DeepSeek V3.1 max output
-                recommended_max_tokens=4096  # Recommended for quality
+                max_output_tokens=32768,  # Increased max output
+                recommended_max_tokens=16384  # Increased recommended
             ),
             ModelInfo(
                 id="deepseek-reasoner",
@@ -58,8 +58,8 @@ class DeepSeekAdapter(BaseAdapter):
                 supports_vision=False,
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 0.55, "output_tokens": 2.19},  # Current pricing (cache miss)
-                max_output_tokens=8192,  # DeepSeek V3.1 max output  
-                recommended_max_tokens=4096  # Recommended for reasoning tasks
+                max_output_tokens=32768,  # Increased max output  
+                recommended_max_tokens=16384  # Increased recommended for reasoning tasks
             )
         ]
 

@@ -29,12 +29,12 @@ ENV/
 env/
 .venv/
 
-# Environment variables
+# Environment variables (keep .env.production for deployment)
 .env
 .env.local
 .env.development.local
 .env.test.local
-.env.production.local
+# .env.production.local  # Comment out to include .env.production in repo
 
 # IDE
 .vscode/

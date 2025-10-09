@@ -1,11 +1,13 @@
 # Modern AI Chat Application Dockerfile for Render
 FROM python:3.11-slim
 
-# Declare build-time argument for the Google Client ID
-ARG VITE_GOOGLE_CLIENT_ID
+# Declare build-time arguments
+ARG VITE_GOOGLE_CLIENT_ID=""
+ARG VITE_DEV_MODE="1"
 
-# Set the environment variable for the build process
+# Set the environment variables for the build process
 ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
+ENV VITE_DEV_MODE=$VITE_DEV_MODE
 
 # Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \

@@ -44,13 +44,15 @@
   },
   "generation": {
     "temperature": 1,
-    "max_tokens": 32768,
+    "max_tokens": 131072,
     "top_p": 1,
     "frequency_penalty": 0,
     "presence_penalty": 0,
     "stream": true,
     "verbosity": "high",
     "reasoning_effort": "high",
+    "thinking_budget": -1,
+    "include_thoughts": true,
     "free_tool_calling": false
   },
   "ui": {

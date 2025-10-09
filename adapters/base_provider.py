@@ -54,7 +54,7 @@ class ModelInfo:
 class GenerationParams:
     """Parameters for text generation"""
     temperature: float = 0.7
-    max_tokens: int = 32768
+    max_tokens: int = 131072  # Increased default to ~32k for modern models
     top_p: float = 1.0
     top_k: Optional[int] = None
     frequency_penalty: float = 0.0
@@ -62,11 +62,11 @@ class GenerationParams:
     stop_sequences: Optional[List[str]] = None
     stream: bool = True
     # New Gemini thinking parameters
-    thinking_budget: Optional[int] = None  # -1 dynamic, 0 off, >0 fixed tokens, None means not requested
-    include_thoughts: bool = False  # Whether to request thought summary if API supports
+    thinking_budget: Optional[int] = -1  # Dynamic thinking mode by default for best reasoning
+    include_thoughts: bool = True  # Include thought summary by default for better insight
     # --- GPT-5 feature params ---
-    verbosity: Optional[str] = None  # 'low' | 'medium' | 'high'
-    reasoning_effort: Optional[str] = None  # 'minimal' | 'medium' | 'high'
+    verbosity: Optional[str] = "high"  # Default to 'high' for better reasoning output
+    reasoning_effort: Optional[str] = "high"  # Default to 'high' for best reasoning quality
     cfg_scale: Optional[float] = None  # Placeholder for future grammar guidance strength
     free_tool_calling: bool = False  # Enable free-form custom tool calls
     grammar_definition: Optional[str] = None  # Optional CFG definition (future)

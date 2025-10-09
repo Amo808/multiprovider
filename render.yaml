@@ -5,10 +5,8 @@ services:
     plan: starter
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    dockerBuildCommand: docker build --build-arg VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID} -t multichat-app .
+    dockerBuildCommand: docker build --build-arg VITE_GOOGLE_CLIENT_ID="" --build-arg VITE_DEV_MODE="1" -t multichat-app .
     envVars:
-      - key: DEV_MODE
-        value: "1"
       - key: OPENAI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY  
@@ -33,6 +31,15 @@ services:
         value: "False"
       - key: HOST
         value: "0.0.0.0"
+      # Dev mode settings for production (bypass Google Auth)
+      - key: DEV_MODE
+        value: "1"
+      - key: FORCE_DEV_AUTH
+        value: "1"
+      - key: BYPASS_GOOGLE_AUTH
+        value: "1"
+      - key: VITE_DEV_MODE
+        value: "1"
     buildCommand: ""
     startCommand: ""
     healthCheckPath: "/health"

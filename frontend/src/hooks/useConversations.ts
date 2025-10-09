@@ -11,9 +11,6 @@ interface ConversationState {
   deepResearchStage?: string; // Current Deep Research stage message
   lastHeartbeat?: number; // Timestamp of last heartbeat/activity
   connectionLost?: boolean; // Track if connection seems lost
-  reasoningWaitStart?: number; // New: when we entered reasoning wait phase
-  summaryApplied?: boolean; // New flag to indicate history was compressed
-  thoughtTokens?: number;   // Live thought token counter
 }
 
 interface ConversationsState {
@@ -63,39 +60,65 @@ export const useConversations = () => {
   useEffect(() => {
     const checkConnectionHealth = () => {
       const now = Date.now();
-      const HEARTBEAT_TIMEOUT = 60000; // 60 seconds without heartbeat = connection issue
-      const STREAMING_TIMEOUT = 300000; // 5 minutes total timeout for streaming requests
+      // More generous timeouts for reasoning models
+      const HEARTBEAT_TIMEOUT = 180000; // 3 minutes without heartbeat = connection issue (was 60s)
+      const REASONING_HEARTBEAT_TIMEOUT = 300000; // 5 minutes for reasoning models (GPT-5, o1, etc.)
+      const STREAMING_TIMEOUT = 1800000; // 30 minutes total timeout for streaming requests (was 5 minutes)
       
       setConversations(prev => {
         const updated = { ...prev };
-        let changed = false;
+        let hasUpdates = false;
         
-        Object.entries(updated).forEach(([cid, conv]) => {
-          if (conv.isStreaming && conv.lastHeartbeat) {
-            const delta = now - conv.lastHeartbeat;
-            const waitingReasoning = !!conv.reasoningWaitStart && !conv.currentResponse;
-            const reasoningElapsed = conv.reasoningWaitStart ? now - conv.reasoningWaitStart : 0;
-            if (waitingReasoning && reasoningElapsed < 240000) {
-              // Up to 4 minutes allow reasoning without flagging lost
-              return;
-            }
-            if (delta > STREAMING_TIMEOUT && !conv.connectionLost) {
-              updated[cid] = { ...conv, isStreaming: false, error: 'Request timed out after prolonged inactivity.', connectionLost: true, deepResearchStage: undefined };
-              changed = true;
-            } else if (delta > HEARTBEAT_TIMEOUT && !conv.connectionLost) {
-              updated[cid] = { ...conv, connectionLost: true, deepResearchStage: conv.deepResearchStage ? `⚠️ Connection issue. ${conv.deepResearchStage}` : '⚠️ Connection issue detected. Trying to reconnect...' };
-              changed = true;
+        Object.entries(updated).forEach(([conversationId, conversation]) => {
+          if (conversation.isStreaming && conversation.lastHeartbeat) {
+            const timeSinceHeartbeat = now - conversation.lastHeartbeat;
+            
+            // Check if this is a reasoning model (GPT-5, o1, etc.) or has reasoning stage message
+            const isReasoningModel = conversation.deepResearchStage?.includes('reasoning') || 
+                                   conversation.deepResearchStage?.includes('GPT-5') ||
+                                   conversation.deepResearchStage?.includes('thinking') ||
+                                   conversation.deepResearchStage?.includes('processing');
+            
+            const heartbeatTimeout = isReasoningModel ? REASONING_HEARTBEAT_TIMEOUT : HEARTBEAT_TIMEOUT;
+            const shouldMarkAsLost = timeSinceHeartbeat > heartbeatTimeout;
+            const shouldTimeout = timeSinceHeartbeat > STREAMING_TIMEOUT;
+            
+            if (shouldTimeout && !conversation.connectionLost) {
+              console.warn(`[${conversationId}] Streaming timeout (${Math.round(timeSinceHeartbeat/1000)}s), marking as failed`);
+              updated[conversationId] = {
+                ...conversation,
+                isStreaming: false,
+                error: 'Request timed out. The model may still be processing, but the connection was lost.',
+                connectionLost: true,
+                deepResearchStage: undefined
+              };
+              hasUpdates = true;
+            } else if (shouldMarkAsLost && !conversation.connectionLost) {
+              const minutes = Math.round(timeSinceHeartbeat/60000);
+              const message = isReasoningModel 
+                ? `🧠 Model is reasoning deeply... (${minutes}m elapsed)` 
+                : `⚠️ Connection issue detected. Trying to reconnect...`;
+              
+              console.warn(`[${conversationId}] ${isReasoningModel ? 'Long reasoning detected' : 'Connection seems lost'} (${Math.round(timeSinceHeartbeat/1000)}s since heartbeat)`);
+              updated[conversationId] = {
+                ...conversation,
+                connectionLost: !isReasoningModel, // Don't mark as lost for reasoning models
+                deepResearchStage: conversation.deepResearchStage 
+                  ? `${message}` 
+                  : message
+              };
+              hasUpdates = true;
             }
           }
         });
         
-        return changed ? updated : prev;
+        return hasUpdates ? updated : prev;
       });
     };
     
     // Check every 30 seconds
-    const intv = setInterval(checkConnectionHealth, 30000);
-    return () => clearInterval(intv);
+    const interval = setInterval(checkConnectionHealth, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // Auto-recovery for stuck requests
@@ -304,15 +327,14 @@ export const useConversations = () => {
       await apiClient.sendMessage(request, (chunk: ChatResponse) => {
         // Handle heartbeat messages - keep connection alive, update last activity
         if (chunk.heartbeat) {
-          const metaAny: any = chunk.meta || {};
+          console.log(`[${conversationId}] Heartbeat received:`, chunk.heartbeat);
           setConversations(prev => ({
             ...prev,
             [conversationId]: {
               ...prev[conversationId],
               lastHeartbeat: Date.now(),
-              reasoningWaitStart: metaAny.reasoning_wait && !prev[conversationId].reasoningWaitStart ? Date.now() : prev[conversationId].reasoningWaitStart,
-              deepResearchStage: chunk.stage_message || prev[conversationId].deepResearchStage,
-              thoughtTokens: metaAny.thought_tokens !== undefined ? metaAny.thought_tokens : prev[conversationId].thoughtTokens
+              // Keep current stage message if no new one provided
+              deepResearchStage: chunk.stage_message || prev[conversationId].deepResearchStage
             }
           }));
           return; // Don't process as regular content
@@ -365,7 +387,11 @@ export const useConversations = () => {
           console.log(`[${conversationId}] First content signal received`);
           setConversations(prev => ({
             ...prev,
-            [conversationId]: { ...prev[conversationId], deepResearchStage: undefined, lastHeartbeat: Date.now(), reasoningWaitStart: undefined }
+            [conversationId]: {
+              ...prev[conversationId],
+              deepResearchStage: undefined, // Clear stage as content starts
+              lastHeartbeat: Date.now()
+            }
           }));
           return;
         }
@@ -549,45 +575,12 @@ export const useConversations = () => {
     }));
   }, [activeRequests]);
 
-  // Conversation compression (client-side summarization without backend roundtrip)
-  const compressConversation = useCallback((conversationId: string) => {
-    setConversations(prev => {
-      const conv = prev[conversationId];
-      if (!conv || conv.isStreaming || conv.summaryApplied) return prev;
-      const MAX_PER_MESSAGE = 200;
-      const parts: string[] = [];
-      conv.messages.forEach(m => {
-        if (m.role === 'system') return; // skip existing system
-        const trimmed = m.content.replace(/\s+/g, ' ').slice(0, MAX_PER_MESSAGE);
-        parts.push(`${m.role.toUpperCase()}: ${trimmed}${m.content.length > MAX_PER_MESSAGE ? '…' : ''}`);
-      });
-      const summaryText = `Summary of previous ${conv.messages.length} messages (compressed client-side)\n---\n` + parts.join('\n');
-      const summaryMessage: Message = {
-        id: Date.now().toString(),
-        role: 'system',
-        content: summaryText,
-        timestamp: new Date().toISOString(),
-        meta: { summary: true }
-      } as any;
-      return {
-        ...prev,
-        [conversationId]: {
-          ...conv,
-            messages: [summaryMessage],
-            summaryApplied: true,
-            deepResearchStage: '✅ История сжата (client-side)'
-        }
-      };
-    });
-  }, []);
-
   return {
     getConversation,
     sendMessage,
     clearConversation,
     deleteConversation,
     stopStreaming,
-    recoverStuckRequest,
-    compressConversation
+    recoverStuckRequest
   };
 };
