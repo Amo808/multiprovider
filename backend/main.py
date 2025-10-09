@@ -41,25 +41,28 @@ from auth_google import router as google_auth_router, get_current_user as origin
 # Conditions for bypass:
 # 1. Explicit DEV_MODE=1 OR
 # 2. Running locally (no RENDER env var) AND FORCE_DEV_AUTH not disabled
+# 3. FORCE production dev mode if needed
 # You can disable bypass by setting FORCE_DEV_AUTH=0 (even if running locally).
 DEV_MODE_FLAG = os.getenv("DEV_MODE", "0") == "1"
 LOCAL_ENV = not os.getenv("RENDER")
 FORCE_DEV_AUTH = os.getenv("FORCE_DEV_AUTH", "1") == "1"
 DEV_STATIC_USER = os.getenv("DEV_STATIC_USER", "dev@example.com")
-DEV_AUTH_ACTIVE = DEV_MODE_FLAG or (LOCAL_ENV and FORCE_DEV_AUTH)
+# TEMPORARY: Force dev auth for this deployment until we configure OAuth
+PRODUCTION_DEV_MODE = os.getenv("BYPASS_GOOGLE_AUTH", "0") == "1"
+DEV_AUTH_ACTIVE = DEV_MODE_FLAG or (LOCAL_ENV and FORCE_DEV_AUTH) or PRODUCTION_DEV_MODE
 
 if DEV_AUTH_ACTIVE:
     # Override dependency so every endpoint treats requests as authenticated.
     def get_current_user():  # type: ignore
         return DEV_STATIC_USER
     logging.getLogger(__name__).info(
-        f"[DEV-AUTH] Bypass ACTIVE (user={DEV_STATIC_USER}) | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH}" 
+        f"[DEV-AUTH] Bypass ACTIVE (user={DEV_STATIC_USER}) | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH} PRODUCTION_DEV_MODE={PRODUCTION_DEV_MODE}" 
     )
 else:
     # Use the real auth dependency
     get_current_user = original_get_current_user  # type: ignore
     logging.getLogger(__name__).info(
-        f"[DEV-AUTH] Bypass DISABLED | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH}"
+        f"[DEV-AUTH] Bypass DISABLED | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH} PRODUCTION_DEV_MODE={PRODUCTION_DEV_MODE}"
     )
 # ----------------------------------------------------------------------------
 
