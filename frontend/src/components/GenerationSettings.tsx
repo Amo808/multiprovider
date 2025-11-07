@@ -69,8 +69,58 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   
-  // Keep track of previous provider to detect changes
+  // Keep track of previous provider and model to detect changes
   const previousProvider = useRef<ModelProvider | undefined>(currentProvider);
+  const previousModel = useRef<string | undefined>(currentModel?.id);
+
+  // Generate unique key for model-specific settings
+  const getModelKey = (provider?: ModelProvider, modelId?: string) => {
+    if (!provider || !modelId) return 'default';
+    return `${provider}-${modelId}`;
+  };
+
+  // Load model-specific settings from localStorage
+  const loadModelSettings = (provider?: ModelProvider, modelId?: string): Partial<GenerationConfig> => {
+    try {
+      const key = getModelKey(provider, modelId);
+      const saved = localStorage.getItem(`model-settings-${key}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        console.log(`LoadedModelSettings for ${key}:`, parsed);
+        return parsed;
+      }
+    } catch (error) {
+      console.warn('Failed to load model settings:', error);
+    }
+    return {};
+  };
+
+  // Save model-specific settings to localStorage
+  const saveModelSettings = (provider?: ModelProvider, modelId?: string, settings?: Partial<GenerationConfig>) => {
+    if (!provider || !modelId || !settings) return;
+    
+    try {
+      const key = getModelKey(provider, modelId);
+      // Only save the settings we want to remember per model
+      const settingsToSave = {
+        temperature: settings.temperature,
+        max_tokens: settings.max_tokens,
+        top_p: settings.top_p,
+        presence_penalty: settings.presence_penalty,
+        frequency_penalty: settings.frequency_penalty,
+        thinking_budget: settings.thinking_budget,
+        include_thoughts: settings.include_thoughts,
+        reasoning_effort: settings.reasoning_effort,
+        verbosity: settings.verbosity,
+        cfg_scale: settings.cfg_scale,
+        free_tool_calling: settings.free_tool_calling
+      };
+      localStorage.setItem(`model-settings-${key}`, JSON.stringify(settingsToSave));
+      console.log(`SavedModelSettings for ${key}:`, settingsToSave);
+    } catch (error) {
+      console.warn('Failed to save model settings:', error);
+    }
+  };
 
   // Get max tokens based on current model and provider
   const getMaxTokens = () => {
@@ -172,29 +222,53 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
     }
   }, [config, hasChanges, saving]);
 
-  // Separate effect to track provider changes and reset max_tokens
+  // Effect to handle provider/model changes with model-specific settings
   useEffect(() => {
-    if (previousProvider.current && previousProvider.current !== currentProvider) {
-      const recommendedTokens = getRecommendedMaxTokens();
-      console.log(`GenerationSettings: Provider changed from ${previousProvider.current} to ${currentProvider}, resetting max_tokens to ${recommendedTokens}`);
+    const currentModelId = currentModel?.id;
+    const hasProviderChanged = previousProvider.current && previousProvider.current !== currentProvider;
+    const hasModelChanged = previousModel.current && previousModel.current !== currentModelId;
+    
+    if (hasProviderChanged || hasModelChanged) {
+      console.log(`GenerationSettings: Model changed from ${previousProvider.current}/${previousModel.current} to ${currentProvider}/${currentModelId}`);
       
-      const newConfig = { ...localConfig, max_tokens: recommendedTokens };
+      // Save current settings before switching
+      if (previousProvider.current && previousModel.current) {
+        saveModelSettings(previousProvider.current, previousModel.current, localConfig);
+      }
+      
+      // Load saved settings for new model
+      const savedSettings = loadModelSettings(currentProvider, currentModelId);
+      
+      // Get default max_tokens (use MAXIMUM, not recommended)
+      const maxTokensLimit = getMaxTokens();
+      
+      // Create new config with saved settings or defaults
+      const newConfig = {
+        ...localConfig,
+        ...savedSettings,
+        // If no saved max_tokens, use maximum tokens (not recommended)
+        max_tokens: savedSettings.max_tokens || maxTokensLimit
+      };
+      
+      console.log(`GenerationSettings: Applying settings for ${currentProvider}/${currentModelId}:`, newConfig);
       setLocalConfig(newConfig);
-      onConfigChange({ max_tokens: recommendedTokens });
+      onConfigChange(newConfig);
     }
+    
+    // Update refs
     previousProvider.current = currentProvider;
-  }, [currentProvider]);
+    previousModel.current = currentModelId;
+  }, [currentProvider, currentModel?.id]);
 
   // Separate effect to validate max_tokens doesn't exceed limits
   useEffect(() => {
     const maxTokensLimit = getMaxTokens();
-    const recommendedTokens = getRecommendedMaxTokens();
     
     if (localConfig.max_tokens > maxTokensLimit) {
-      console.log(`GenerationSettings: max_tokens ${localConfig.max_tokens} exceeds limit ${maxTokensLimit}, correcting to ${recommendedTokens}`);
-      const correctedConfig = { ...localConfig, max_tokens: recommendedTokens };
+      console.log(`GenerationSettings: max_tokens ${localConfig.max_tokens} exceeds limit ${maxTokensLimit}, correcting to ${maxTokensLimit}`);
+      const correctedConfig = { ...localConfig, max_tokens: maxTokensLimit };
       setLocalConfig(correctedConfig);
-      onConfigChange({ max_tokens: recommendedTokens });
+      onConfigChange({ max_tokens: maxTokensLimit });
     }
   }, [currentModel, localConfig.max_tokens]);
 
@@ -215,6 +289,11 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
     setLocalConfig(newConfig);
     setHasChanges(true);
     onConfigChange({ [key]: value });
+    
+    // Auto-save model-specific settings on change (debounced via localStorage)
+    if (currentProvider && currentModel?.id) {
+      saveModelSettings(currentProvider, currentModel.id, newConfig);
+    }
   };
 
   const handleSave = async () => {
@@ -223,6 +302,12 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
         setSaving(true);
         await onSave(localConfig);
         setHasChanges(false);
+        
+        // Also save model-specific settings
+        if (currentProvider && currentModel?.id) {
+          saveModelSettings(currentProvider, currentModel.id, localConfig);
+        }
+        
         // Update the local config to match what was saved
         // This ensures the form shows the saved values
         setLocalConfig(localConfig);

@@ -1,6 +1,6 @@
 {
-  "activeProvider": "gemini",
-  "activeModel": "gemini-2.5-pro",
+  "activeProvider": "anthropic",
+  "activeModel": "claude-sonnet-4-5-20250929",
   "providers": {
     "deepseek": {
       "id": "deepseek",
@@ -561,7 +561,7 @@
   },
   "generation": {
     "temperature": 1,
-    "max_tokens": 4096,
+    "max_tokens": 64000,
     "top_p": 1,
     "frequency_penalty": 0,
     "presence_penalty": 0,
