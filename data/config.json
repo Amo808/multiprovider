@@ -1,6 +1,6 @@
 {
-  "activeProvider": "openai",
-  "activeModel": "o1-mini",
+  "activeProvider": "gemini",
+  "activeModel": "gemini-2.5-pro",
   "providers": {
     "deepseek": {
       "id": "deepseek",

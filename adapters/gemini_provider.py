@@ -77,11 +77,11 @@ class GeminiAdapter(BaseAdapter):
                 description="Fastest model optimized for cost-efficiency and high throughput",
                 pricing={"input_tokens": 0.10, "output_tokens": 0.40}
             ),
-            # Gemini 2.0 models (previous generation)
+            # Gemini 2.0 models (previous generation - NO THINKING SUPPORT)
             ModelInfo(
                 id="gemini-2.0-flash",
                 name="gemini-2.0-flash",
-                display_name="Gemini 2.0 Flash (Second Gen)",
+                display_name="Gemini 2.0 Flash (Second Gen) - No Reasoning",
                 provider=ModelProvider.GEMINI,
                 context_length=1000000,
                 supports_streaming=True,
@@ -90,54 +90,8 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Second-generation workhorse model with 1M token context",
+                description="Second-generation workhorse model with 1M token context (no reasoning support)",
                 pricing={"input_tokens": 0.15, "output_tokens": 0.60}
-            ),
-            # Legacy Gemini 1.5 models (still supported)
-            ModelInfo(
-                id="gemini-1.5-pro",
-                name="gemini-1.5-pro",
-                display_name="Gemini 1.5 Pro",
-                provider=ModelProvider.GEMINI,
-                context_length=2097152,  # 2M context window
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                max_output_tokens=8192,
-                recommended_max_tokens=4096,
-                description="Legacy Pro model with large context window",
-                pricing={"input_tokens": 1.25, "output_tokens": 5.00}
-            ),
-            ModelInfo(
-                id="gemini-1.5-flash",
-                name="gemini-1.5-flash",
-                display_name="Gemini 1.5 Flash",
-                provider=ModelProvider.GEMINI,
-                context_length=1048576,  # 1M context window
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                max_output_tokens=8192,
-                recommended_max_tokens=4096,
-                description="Legacy Flash model with good balance of speed and capability",
-                pricing={"input_tokens": 0.075, "output_tokens": 0.30}
-            ),
-            ModelInfo(
-                id="gemini-1.0-pro",
-                name="gemini-1.0-pro", 
-                display_name="Gemini 1.0 Pro",
-                provider=ModelProvider.GEMINI,
-                context_length=32768,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=False,
-                type=ModelType.CHAT,
-                max_output_tokens=2048,
-                recommended_max_tokens=1024,
-                description="Original Gemini model for basic tasks",
-                pricing={"input_tokens": 0.50, "output_tokens": 1.50}
             )
         ]
 
@@ -255,8 +209,12 @@ class GeminiAdapter(BaseAdapter):
                 "topP": params.top_p,
             }
         }
-        # Inject thinking config INSIDE generationConfig per latest docs
-        if params.thinking_budget is not None or params.include_thoughts:
+        
+        # Check if this model supports thinking/reasoning mode (only Gemini 2.5+ models)
+        model_supports_thinking = model.startswith("gemini-2.5") or "2.5" in model
+        
+        # Inject thinking config INSIDE generationConfig per latest docs - only for supported models
+        if (params.thinking_budget is not None or params.include_thoughts) and model_supports_thinking:
             thinking_cfg = {}
             if params.thinking_budget is not None:
                 thinking_cfg["thinkingBudget"] = params.thinking_budget  # -1 dynamic, 0 off, >0 fixed
@@ -264,7 +222,21 @@ class GeminiAdapter(BaseAdapter):
                 thinking_cfg["includeThoughts"] = True
             if thinking_cfg:
                 payload["generationConfig"]["thinkingConfig"] = thinking_cfg
-                self.logger.info(f"[Gemini] thinkingConfig injected: {thinking_cfg}")
+                self.logger.info(f"[Gemini] thinkingConfig injected for {model}: {thinking_cfg}")
+        elif (params.thinking_budget is not None or params.include_thoughts) and not model_supports_thinking:
+            # Log warning when thinking mode is requested but not supported
+            self.logger.warning(f"[Gemini] Thinking mode requested but not supported by {model}. Only Gemini 2.5+ models support reasoning mode.")
+            yield ChatResponse(
+                content=" (Note: Reasoning mode is only supported by Gemini 2.5+ models, proceeding with standard generation)",
+                done=False,
+                meta={
+                    "tokens_in": input_tokens,
+                    "tokens_out": 0,
+                    "provider": ModelProvider.GEMINI,
+                    "model": model,
+                    "warning": True
+                }
+            )
 
         if params.stop_sequences:
             payload["generationConfig"]["stopSequences"] = params.stop_sequences
@@ -294,204 +266,253 @@ class GeminiAdapter(BaseAdapter):
             safe_url = url.replace(self.api_key, "***API_KEY***") if self.api_key else url
             self.logger.info(f"Making request to: {safe_url}")
             
-            # Prepare retry mechanism if 'thinking' not yet supported
-            for attempt in range(2):
+            # Prepare retry mechanism for thinking config and overload errors
+            max_retries = 3
+            for attempt in range(max_retries):
                 safe_url = url.replace(self.api_key, "***API_KEY***") if self.api_key else url
-                self.logger.info(f"Making request to: {safe_url} (attempt {attempt+1}) payloadKeys={list(payload.keys())} genKeys={list(payload['generationConfig'].keys())}")
-                async with self.session.post(url, json=payload) as response:
-                    if response.status == 400:
-                        err_txt = await response.text()
-                        if attempt == 0 and ("Unknown name \"thinkingConfig\"" in err_txt or "Unknown name \"thinkingBudget\"" in err_txt):
-                            # Remove thinkingConfig and retry once
-                            if "thinkingConfig" in payload.get("generationConfig", {}):
-                                self.logger.warning("[Gemini] thinkingConfig rejected by API, retrying without it")
-                                del payload["generationConfig"]["thinkingConfig"]
-                                continue
-                    # Normal processing continues below
-                    if response.status != 200:
-                        error_text = await response.text()
-                        self.logger.error(f"Gemini API error: {response.status} - {error_text}")
-                        yield ChatResponse(
-                            error=f"API Error {response.status}: {error_text}",
-                            meta={"provider": ModelProvider.GEMINI, "model": model}
-                        )
-                        return
-
-                    if not params.stream:
-                        # Handle non-streaming response
-                        data = await response.json()
-                        candidates = data.get("candidates", [])
-                        usage_metadata = data.get("usageMetadata", {})
-                        # Extract thought token counts if present
-                        thoughts_tokens = usage_metadata.get("thoughtTokens") or usage_metadata.get("thought_token_count") or usage_metadata.get("thoughtsTokenCount")
-                        thought_budget_used = usage_metadata.get("thinkingTokenCount") or usage_metadata.get("thinking_token_count")
-                        if candidates and candidates[0].get("content"):
-                            content = candidates[0]["content"]["parts"][0]["text"]
-                            tokens_in = usage_metadata.get("promptTokenCount", input_tokens)
-                            tokens_out = usage_metadata.get("candidatesTokenCount", self.estimate_tokens(content))
-                            meta_extra = {
-                                "tokens_in": tokens_in,
-                                "tokens_out": tokens_out,
-                                "estimated_cost": self._calculate_cost(tokens_in, tokens_out, model),
-                                "provider": ModelProvider.GEMINI,
-                                "model": model,
-                                "thinking_budget": params.thinking_budget,
-                                "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
-                            }
-                            if thoughts_tokens is not None:
-                                meta_extra["thought_tokens"] = thoughts_tokens
-                            if thought_budget_used is not None:
-                                meta_extra["thinking_tokens_used"] = thought_budget_used
-                            yield ChatResponse(
-                                content=content,
-                                done=True,
-                                meta=meta_extra
-                            )
-                        else:
-                            yield ChatResponse(
-                                error="No valid response from Gemini",
-                                meta={"provider": ModelProvider.GEMINI, "model": model}
-                            )
-                        return
-
-                    # Streaming branch with infinite patience for Gemini responses
-                    text_buffer = ""
-                    json_buffer = ""
-                    bracket_count = 0
-                    in_json = False
-                    last_activity = asyncio.get_event_loop().time()
-                    heartbeat_counter = 0
-                    empty_chunks_count = 0
-                    heartbeat_interval = 15  # Send heartbeat every 15 seconds
-                    
-                    # Check if this is a reasoning request that may take longer
-                    is_reasoning_request = (params.thinking_budget is not None and params.thinking_budget != 0) or params.include_thoughts
-                    if is_reasoning_request:
-                        self.logger.info(f"[Gemini] Reasoning request detected, will wait as long as needed")
-                    
-                    async for chunk in response.content.iter_chunked(1024):
-                        current_time = asyncio.get_event_loop().time()
-                        
-                        # Handle empty chunks - never give up, just track and send heartbeats
-                        if not chunk:
-                            empty_chunks_count += 1
-                            
-                            # Send heartbeat every 15 seconds of no data, but never stop waiting
-                            if current_time - last_activity > heartbeat_interval:
-                                heartbeat_counter += 1
-                                silence_duration = current_time - last_activity
-                                
-                                if silence_duration < 60:
-                                    heartbeat_msg = f" (Model thinking... {silence_duration:.0f}s)"
-                                elif silence_duration < 300:  # 5 minutes
-                                    heartbeat_msg = f" (Deep reasoning in progress... {silence_duration:.0f}s)"
-                                elif silence_duration < 900:  # 15 minutes  
-                                    heartbeat_msg = f" (Complex reasoning... {silence_duration:.0f}s - still waiting)"
-                                else:  # 15+ minutes
-                                    heartbeat_msg = f" (Extensive reasoning... {silence_duration:.0f}s - we will wait as long as needed)"
-                                
+                self.logger.info(f"Making request to: {safe_url} (attempt {attempt+1}/{max_retries}) payloadKeys={list(payload.keys())} genKeys={list(payload['generationConfig'].keys())}")
+                
+                try:
+                    async with self.session.post(url, json=payload) as response:
+                        # Handle 503 Service Unavailable (overloaded model)
+                        if response.status == 503:
+                            error_text = await response.text()
+                            self.logger.warning(f"[Gemini] Model overloaded (503), attempt {attempt+1}/{max_retries}")
+                            if attempt < max_retries - 1:
+                                # Wait before retry (exponential backoff)
+                                wait_time = (2 ** attempt) * 2  # 2s, 4s, 8s
+                                self.logger.info(f"[Gemini] Waiting {wait_time}s before retry...")
                                 yield ChatResponse(
-                                    content="",
+                                    content=f" (Model overloaded, retrying in {wait_time}s...)",
                                     done=False,
-                                    heartbeat="Processing... connection active",
                                     meta={
-                                        "tokens_in": input_tokens,
-                                        "tokens_out": self.estimate_tokens(accumulated_content),
                                         "provider": ModelProvider.GEMINI,
                                         "model": model,
-                                        "silence_duration": silence_duration,
-                                        "empty_chunks": empty_chunks_count
-                                    },
-                                    stage_message=heartbeat_msg
+                                        "retry_attempt": attempt + 1,
+                                        "warning": True
+                                    }
                                 )
-                                last_activity = current_time
-                            continue
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
+                                # Final attempt failed
+                                yield ChatResponse(
+                                    error=f"API Error 503: Model is overloaded after {max_retries} attempts. Please try again later or use a different model.",
+                                    meta={"provider": ModelProvider.GEMINI, "model": model}
+                                )
+                                return
                         
-                        # Reset counters on receiving data
+                        # Handle 400 errors (thinking config)
+                        if response.status == 400:
+                            err_txt = await response.text()
+                            if attempt == 0 and ("Unknown name \"thinkingConfig\"" in err_txt or "Unknown name \"thinkingBudget\"" in err_txt):
+                                # Remove thinkingConfig and retry once
+                                if "thinkingConfig" in payload.get("generationConfig", {}):
+                                    self.logger.warning("[Gemini] thinkingConfig rejected by API, retrying without it")
+                                    del payload["generationConfig"]["thinkingConfig"]
+                                    continue
+                        
+                        # Check for success status
+                        if response.status != 200:
+                            error_text = await response.text()
+                            self.logger.error(f"Gemini API error: {response.status} - {error_text}")
+                            yield ChatResponse(
+                                error=f"API Error {response.status}: {error_text}",
+                                meta={"provider": ModelProvider.GEMINI, "model": model}
+                            )
+                            return
+
+                        if not params.stream:
+                            # Handle non-streaming response
+                            data = await response.json()
+                            candidates = data.get("candidates", [])
+                            usage_metadata = data.get("usageMetadata", {})
+                            # Extract thought token counts if present
+                            thoughts_tokens = usage_metadata.get("thoughtTokens") or usage_metadata.get("thought_token_count") or usage_metadata.get("thoughtsTokenCount")
+                            thought_budget_used = usage_metadata.get("thinkingTokenCount") or usage_metadata.get("thinking_token_count")
+                            if candidates and candidates[0].get("content"):
+                                content = candidates[0]["content"]["parts"][0]["text"]
+                                tokens_in = usage_metadata.get("promptTokenCount", input_tokens)
+                                tokens_out = usage_metadata.get("candidatesTokenCount", self.estimate_tokens(content))
+                                meta_extra = {
+                                    "tokens_in": tokens_in,
+                                    "tokens_out": tokens_out,
+                                    "estimated_cost": self._calculate_cost(tokens_in, tokens_out, model),
+                                    "provider": ModelProvider.GEMINI,
+                                    "model": model,
+                                    "thinking_budget": params.thinking_budget,
+                                    "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
+                                }
+                                if thoughts_tokens is not None:
+                                    meta_extra["thought_tokens"] = thoughts_tokens
+                                if thought_budget_used is not None:
+                                    meta_extra["thinking_tokens_used"] = thought_budget_used
+                                yield ChatResponse(
+                                    content=content,
+                                    done=True,
+                                    meta=meta_extra
+                                )
+                            else:
+                                yield ChatResponse(
+                                    error="No valid response from Gemini",
+                                    meta={"provider": ModelProvider.GEMINI, "model": model}
+                                )
+                            return
+
+                        # Streaming branch with infinite patience for Gemini responses
+                        text_buffer = ""
+                        json_buffer = ""
+                        bracket_count = 0
+                        in_json = False
+                        last_activity = asyncio.get_event_loop().time()
+                        heartbeat_counter = 0
                         empty_chunks_count = 0
-                        last_activity = current_time
+                        heartbeat_interval = 15  # Send heartbeat every 15 seconds
                         
-                        text_buffer += chunk.decode('utf-8', errors='ignore')
-                        i = 0
-                        while i < len(text_buffer):
-                            char = text_buffer[i]
-                            if char == '{' and not in_json:
-                                in_json = True
-                                bracket_count = 1
-                                json_buffer = char
-                            elif in_json:
-                                json_buffer += char
-                                if char == '{':
-                                    bracket_count += 1
-                                elif char == '}':
-                                    bracket_count -= 1
-                                    if bracket_count == 0:
-                                        try:
-                                            json_response = json.loads(json_buffer)
-                                            candidates = json_response.get("candidates", [])
-                                            if candidates:
-                                                candidate = candidates[0]
-                                                content_part = candidate.get("content", {})
-                                                parts = content_part.get("parts", [])
-                                                if parts and "text" in parts[0]:
-                                                    content = parts[0]["text"]
-                                                    accumulated_content += content
-                                                    tokens_out = self.estimate_tokens(accumulated_content)
-                                                    yield ChatResponse(
-                                                        content=content,
-                                                        done=False,
-                                                        meta={
+                        # Check if this is a reasoning request that may take longer
+                        is_reasoning_request = (params.thinking_budget is not None and params.thinking_budget != 0) or params.include_thoughts
+                        if is_reasoning_request:
+                            self.logger.info(f"[Gemini] Reasoning request detected, will wait as long as needed")
+                        
+                        async for chunk in response.content.iter_chunked(1024):
+                            current_time = asyncio.get_event_loop().time()
+                            
+                            # Handle empty chunks - never give up, just track and send heartbeats
+                            if not chunk:
+                                empty_chunks_count += 1
+                                
+                                # Send heartbeat every 15 seconds of no data, but never stop waiting
+                                if current_time - last_activity > heartbeat_interval:
+                                    heartbeat_counter += 1
+                                    silence_duration = current_time - last_activity
+                                    
+                                    if silence_duration < 60:
+                                        heartbeat_msg = f" (Model thinking... {silence_duration:.0f}s)"
+                                    elif silence_duration < 300:  # 5 minutes
+                                        heartbeat_msg = f" (Deep reasoning in progress... {silence_duration:.0f}s)"
+                                    elif silence_duration < 900:  # 15 minutes  
+                                        heartbeat_msg = f" (Complex reasoning... {silence_duration:.0f}s - still waiting)"
+                                    else:  # 15+ minutes
+                                        heartbeat_msg = f" (Extensive reasoning... {silence_duration:.0f}s - we will wait as long as needed)"
+                                    
+                                    yield ChatResponse(
+                                        content="",
+                                        done=False,
+                                        heartbeat="Processing... connection active",
+                                        meta={
+                                            "tokens_in": input_tokens,
+                                            "tokens_out": self.estimate_tokens(accumulated_content),
+                                            "provider": ModelProvider.GEMINI,
+                                            "model": model,
+                                            "silence_duration": silence_duration,
+                                            "empty_chunks": empty_chunks_count
+                                        },
+                                        stage_message=heartbeat_msg
+                                    )
+                                    last_activity = current_time
+                                continue
+                            
+                            # Reset counters on receiving data
+                            empty_chunks_count = 0
+                            last_activity = current_time
+                            
+                            text_buffer += chunk.decode('utf-8', errors='ignore')
+                            i = 0
+                            while i < len(text_buffer):
+                                char = text_buffer[i]
+                                if char == '{' and not in_json:
+                                    in_json = True
+                                    bracket_count = 1
+                                    json_buffer = char
+                                elif in_json:
+                                    json_buffer += char
+                                    if char == '{':
+                                        bracket_count += 1
+                                    elif char == '}':
+                                        bracket_count -= 1
+                                        if bracket_count == 0:
+                                            try:
+                                                json_response = json.loads(json_buffer)
+                                                candidates = json_response.get("candidates", [])
+                                                if candidates:
+                                                    candidate = candidates[0]
+                                                    content_part = candidate.get("content", {})
+                                                    parts = content_part.get("parts", [])
+                                                    if parts and "text" in parts[0]:
+                                                        content = parts[0]["text"]
+                                                        accumulated_content += content
+                                                        tokens_out = self.estimate_tokens(accumulated_content)
+                                                        yield ChatResponse(
+                                                            content=content,
+                                                            done=False,
+                                                            meta={
+                                                                "tokens_in": input_tokens,
+                                                                "tokens_out": tokens_out,
+                                                                "estimated_cost": self._calculate_cost(input_tokens, tokens_out, model),
+                                                                "provider": ModelProvider.GEMINI,
+                                                                "model": model,
+                                                                "thinking_budget": params.thinking_budget,
+                                                                "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
+                                                            }
+                                                        )
+                                                    finish_reason = candidate.get("finishReason")
+                                                    if finish_reason:
+                                                        self.logger.info(f"Gemini response finished with reason: {finish_reason}")
+                                                        final_output_tokens = self.estimate_tokens(accumulated_content)
+                                                        # Extract usage metadata if present in streaming chunk
+                                                        usage_meta_stream = json_response.get("usageMetadata", {})
+                                                        thoughts_tokens_s = usage_meta_stream.get("thoughtTokens") or usage_meta_stream.get("thought_token_count") or usage_meta_stream.get("thoughtsTokenCount")
+                                                        thought_budget_used_s = usage_meta_stream.get("thinkingTokenCount") or usage_meta_stream.get("thinking_token_count")
+                                                        final_meta = {
                                                             "tokens_in": input_tokens,
-                                                            "tokens_out": tokens_out,
-                                                            "estimated_cost": self._calculate_cost(input_tokens, tokens_out, model),
+                                                            "tokens_out": final_output_tokens,
+                                                            "total_tokens": input_tokens + final_output_tokens,
+                                                            "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
                                                             "provider": ModelProvider.GEMINI,
                                                             "model": model,
                                                             "thinking_budget": params.thinking_budget,
                                                             "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
                                                         }
-                                                    )
-                                                finish_reason = candidate.get("finishReason")
-                                                if finish_reason:
-                                                    self.logger.info(f"Gemini response finished with reason: {finish_reason}")
-                                                    final_output_tokens = self.estimate_tokens(accumulated_content)
-                                                    # Extract usage metadata if present in streaming chunk
-                                                    usage_meta_stream = json_response.get("usageMetadata", {})
-                                                    thoughts_tokens_s = usage_meta_stream.get("thoughtTokens") or usage_meta_stream.get("thought_token_count") or usage_meta_stream.get("thoughtsTokenCount")
-                                                    thought_budget_used_s = usage_meta_stream.get("thinkingTokenCount") or usage_meta_stream.get("thinking_token_count")
-                                                    final_meta = {
-                                                        "tokens_in": input_tokens,
-                                                        "tokens_out": final_output_tokens,
-                                                        "total_tokens": input_tokens + final_output_tokens,
-                                                        "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
-                                                        "provider": ModelProvider.GEMINI,
-                                                        "model": model,
-                                                        "thinking_budget": params.thinking_budget,
-                                                        "dynamic_thinking": params.thinking_budget == -1 if params.thinking_budget is not None else None
-                                                    }
-                                                    if thoughts_tokens_s is not None:
-                                                        final_meta["thought_tokens"] = thoughts_tokens_s
-                                                    if thought_budget_used_s is not None:
-                                                        final_meta["thinking_tokens_used"] = thought_budget_used_s
-                                                    yield ChatResponse(
-                                                        content="",
-                                                        done=True,
-                                                        meta=final_meta
-                                                    )
-                                                    return
-                                        except json.JSONDecodeError as e:
-                                            self.logger.warning(f"Failed to parse JSON object: {json_buffer[:100]}... - {e}")
-                                        except Exception as e:
-                                            self.logger.error(f"Error processing streaming response: {e}")
-                                        in_json = False
-                                        json_buffer = ""
-                                        bracket_count = 0
-                            i += 1
-                        if in_json:
-                            text_buffer = ""
-                        else:
-                            text_buffer = text_buffer[i:]
-                # End attempt loop
-                break  # only reach here if no retry condition triggered
+                                                        if thoughts_tokens_s is not None:
+                                                            final_meta["thought_tokens"] = thoughts_tokens_s
+                                                        if thought_budget_used_s is not None:
+                                                            final_meta["thinking_tokens_used"] = thought_budget_used_s
+                                                        yield ChatResponse(
+                                                            content="",
+                                                            done=True,
+                                                            meta=final_meta
+                                                        )
+                                                        return
+                                            except json.JSONDecodeError as e:
+                                                self.logger.warning(f"Failed to parse JSON object: {json_buffer[:100]}... - {e}")
+                                            except Exception as e:
+                                                self.logger.error(f"Error processing streaming response: {e}")
+                                            in_json = False
+                                            json_buffer = ""
+                                            bracket_count = 0
+                                i += 1
+                            if in_json:
+                                text_buffer = ""
+                            else:
+                                text_buffer = text_buffer[i:]
+                        
+                        # End of successful attempt - break out of retry loop
+                        break
+
+                except aiohttp.ClientError as e:
+                    # Network/connection errors
+                    self.logger.warning(f"[Gemini] Network error on attempt {attempt+1}/{max_retries}: {e}")
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) * 1
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        yield ChatResponse(
+                            error=f"Network error: {str(e)}",
+                            meta={"provider": ModelProvider.GEMINI, "model": model}
+                        )
+                        return
+                        
         except Exception as e:
             self.logger.error(f"Error in Gemini API call: {e}")
             yield ChatResponse(
