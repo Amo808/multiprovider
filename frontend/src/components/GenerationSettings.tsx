@@ -147,7 +147,49 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
         }
         return 8192; // deepseek-chat: 8K max
       case 'openai':
-        return 131072; // GPT-5 supports up to 128k tokens
+        // OpenAI model-specific limits from official docs (Nov 2025)
+        const modelId = currentModel?.id?.toLowerCase() || '';
+        const modelName = currentModel?.name?.toLowerCase() || '';
+        
+        // GPT-5 series - high limits
+        if (modelId.includes('gpt-5') || modelName.includes('gpt-5')) {
+          return 131072; // GPT-5: 128K output tokens
+        }
+        
+        // GPT-4.1 series - medium-high limits  
+        if (modelId.includes('gpt-4.1') || modelName.includes('gpt-4.1')) {
+          return 65536; // GPT-4.1: 64K output tokens
+        }
+        
+        // O3/O4 reasoning series
+        if (modelId.includes('o3') || modelId.includes('o4') || 
+            modelName.includes('o3') || modelName.includes('o4')) {
+          return 65536; // O3/O4: 64K output tokens
+        }
+        
+        // O1 reasoning series 
+        if (modelId.includes('o1') || modelName.includes('o1')) {
+          return 32768; // O1: 32K output tokens
+        }
+        
+        // GPT-4o series - IMPORTANT: Limited to 16K!
+        if (modelId.includes('gpt-4o') || modelName.includes('gpt-4o')) {
+          return 16384; // GPT-4o: 16K output tokens (API enforced!)
+        }
+        
+        // GPT-4 Turbo and legacy GPT-4
+        if (modelId.includes('gpt-4-turbo') || modelName.includes('gpt-4-turbo') ||
+            modelId.includes('gpt-4') || modelName.includes('gpt-4')) {
+          return 16384; // GPT-4/Turbo: 16K output tokens
+        }
+        
+        // GPT-3.5 series
+        if (modelId.includes('gpt-3.5') || modelName.includes('gpt-3.5')) {
+          return 4096; // GPT-3.5: 4K output tokens
+        }
+        
+        // Conservative fallback for unknown OpenAI models
+        return 16384;
       case 'anthropic':
         // Claude models official limits from Anthropic docs:
         // Claude Opus 4.1: 32K max output tokens
@@ -182,7 +224,47 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
         }
         return 4096; // deepseek-chat: DEFAULT 4K
       case 'openai':
-        return 4096; // Reasonable default for most use cases
+        // OpenAI recommended defaults by model series
+        const modelId = currentModel?.id?.toLowerCase() || '';
+        const modelName = currentModel?.name?.toLowerCase() || '';
+        
+        // GPT-5 series - can handle larger outputs
+        if (modelId.includes('gpt-5') || modelName.includes('gpt-5')) {
+          return 8192; // GPT-5: reasonable default for most tasks
+        }
+        
+        // GPT-4.1 series
+        if (modelId.includes('gpt-4.1') || modelName.includes('gpt-4.1')) {
+          return 6144; // GPT-4.1: balanced default
+        }
+        
+        // O3/O4 reasoning models - often need longer outputs
+        if (modelId.includes('o3') || modelId.includes('o4') || 
+            modelName.includes('o3') || modelName.includes('o4')) {
+          return 8192; // Reasoning models: higher default for complex responses
+        }
+        
+        // O1 reasoning series
+        if (modelId.includes('o1') || modelName.includes('o1')) {
+          return 6144; // O1: medium default for reasoning
+        }
+        
+        // GPT-4o series - conservative due to 16K limit
+        if (modelId.includes('gpt-4o') || modelName.includes('gpt-4o')) {
+          return 4096; // GPT-4o: conservative default (limit is 16K)
+        }
+        
+        // GPT-4 and GPT-4 Turbo
+        if (modelId.includes('gpt-4') || modelName.includes('gpt-4')) {
+          return 4096; // GPT-4: standard default
+        }
+        
+        // GPT-3.5
+        if (modelId.includes('gpt-3.5') || modelName.includes('gpt-3.5')) {
+          return 2048; // GPT-3.5: smaller default
+        }
+        
+        return 4096; // Conservative default for unknown OpenAI models
       case 'anthropic':
         // Claude recommended defaults based on model type:
         if (currentModel?.name?.toLowerCase().includes('opus') || 
