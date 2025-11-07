@@ -243,7 +243,12 @@ function App() {
   const handleGenerationConfigChange = useCallback((newConfig: Partial<GenerationConfig>) => {
     // Update local config state immediately
     console.log('Generation config changed:', newConfig);
-  }, []);
+    
+    // Update the generation config immediately (not just on save)
+    updateGenerationConfig(newConfig).catch(error => {
+      console.error('Failed to update generation config:', error);
+    });
+  }, [updateGenerationConfig]);
 
   const handleSaveGenerationSettings = async (settingsToSave: GenerationConfig) => {
     try {
@@ -620,6 +625,7 @@ function App() {
             <GenerationSettings
               config={config.generation}
               currentProvider={selectedProvider}
+              currentModel={selectedModel}
               onConfigChange={handleGenerationConfigChange}
               onSave={handleSaveGenerationSettings}
               isOpen={showGenerationSettings}

@@ -33,60 +33,51 @@ class AnthropicAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
-            # Latest Claude 4 models
+            # Latest Claude 4.5 models (November 2025)
+            ModelInfo(
+                id="claude-sonnet-4-5-20250929",
+                name="claude-sonnet-4-5-20250929",
+                display_name="Claude Sonnet 4.5",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,  # 1M tokens available with beta header
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=64000,  # 64K max output
+                recommended_max_tokens=8192,  # Recommended default
+                pricing={"input_tokens": 3.00, "output_tokens": 15.00}  # per 1M tokens
+            ),
+            ModelInfo(
+                id="claude-haiku-4-5-20251001",
+                name="claude-haiku-4-5-20251001", 
+                display_name="Claude Haiku 4.5",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=64000,  # 64K max output
+                recommended_max_tokens=4096,  # Recommended default for speed
+                pricing={"input_tokens": 1.00, "output_tokens": 5.00}  # per 1M tokens
+            ),
+            # Claude 4.1 Opus (updated limits)
             ModelInfo(
                 id="claude-opus-4-1-20250805",
                 name="claude-opus-4-1-20250805",
                 display_name="Claude Opus 4.1",
                 provider=ModelProvider.ANTHROPIC,
-                context_length=1000000,
+                context_length=200000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=32768,  # Added max output
-                recommended_max_tokens=16384,  # Added recommended
-                pricing={"input_tokens": 30.00, "output_tokens": 150.00}  # estimated per 1M tokens
+                max_output_tokens=32000,  # EXACTLY 32K max (API enforced)
+                recommended_max_tokens=8192,  # Higher default for complex reasoning
+                pricing={"input_tokens": 15.00, "output_tokens": 75.00}  # per 1M tokens
             ),
-            ModelInfo(
-                id="claude-opus-4-20250514",
-                name="claude-opus-4-20250514",
-                display_name="Claude Opus 4",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=500000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                max_output_tokens=32768,  # Added max output
-                recommended_max_tokens=16384,  # Added recommended
-                pricing={"input_tokens": 25.00, "output_tokens": 125.00}  # estimated per 1M tokens
-            ),
-            ModelInfo(
-                id="claude-sonnet-4-20250514",
-                name="claude-sonnet-4-20250514",
-                display_name="Claude Sonnet 4",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=500000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 15.00, "output_tokens": 75.00}  # estimated per 1M tokens
-            ),
-            ModelInfo(
-                id="claude-3-7-sonnet-20250219",
-                name="claude-3-7-sonnet-20250219",
-                display_name="Claude Sonnet 3.7",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=300000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 5.00, "output_tokens": 25.00}  # estimated per 1M tokens
-            ),
-            # Claude 3.5 models
+            # Legacy Claude 3.5 models (still supported)
             ModelInfo(
                 id="claude-3-5-sonnet-20241022",
                 name="claude-3-5-sonnet-20241022",
@@ -147,6 +138,49 @@ class AnthropicAdapter(BaseAdapter):
                 supports_vision=True,
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 0.25, "output_tokens": 1.25}  # per 1M tokens
+            ),
+            # Aliases for convenience (point to latest snapshots)
+            ModelInfo(
+                id="claude-sonnet-4-5",
+                name="claude-sonnet-4-5",
+                display_name="Claude Sonnet 4.5 (Latest)",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=64000,
+                recommended_max_tokens=8192,
+                pricing={"input_tokens": 3.00, "output_tokens": 15.00}
+            ),
+            ModelInfo(
+                id="claude-haiku-4-5",
+                name="claude-haiku-4-5",
+                display_name="Claude Haiku 4.5 (Latest)",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=64000,
+                recommended_max_tokens=4096,
+                pricing={"input_tokens": 1.00, "output_tokens": 5.00}
+            ),
+            ModelInfo(
+                id="claude-opus-4-1",
+                name="claude-opus-4-1",
+                display_name="Claude Opus 4.1 (Latest)",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=32000,
+                recommended_max_tokens=8192,
+                pricing={"input_tokens": 15.00, "output_tokens": 75.00}
             )
         ]
 
@@ -169,7 +203,7 @@ class AnthropicAdapter(BaseAdapter):
     async def chat_completion(
         self,
         messages: List[Message],
-        model: str = "claude-3-5-sonnet-20241022",
+        model: str = "claude-sonnet-4-5-20250929",
         params: GenerationParams = None,
         **kwargs
     ) -> AsyncGenerator[ChatResponse, None]:

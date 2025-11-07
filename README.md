@@ -1,131 +1,115 @@
 # AI Chat - Multi-Provider Assistant
 
-[![GitHub stars](https://img.shields.io/github/stars/Amo808/multiprovider?style=social)](https://github.com/Amo808/multiprovider)
-[![Deploy to Render](https://img.shields.io/badge/Deploy%20to-Render-46E3B7.svg)](https://render.com/deploy?repo=https://github.com/Amo808/multiprovider)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+🚀 **Professional AI chat application** with support for multiple providers and GPT-5 optimized features.
 
-Professional AI chat application with support for multiple providers (OpenAI, DeepSeek, Anthropic, Gemini).
+## ✨ Key Features
+- **Multi-Provider Support**: OpenAI (GPT-5), DeepSeek, Anthropic, Gemini
+- **Smart Token Limits**: Auto-adjusts max_tokens based on model capabilities
+- **Extended Timeouts**: 5+ minute support for complex reasoning tasks
+- **Real-time Streaming**: Live responses with heartbeat monitoring
+- **Conversation History**: Persistent chat sessions
+- **Modern UI**: React + Tailwind with dark/light themes
+- **Dev Mode**: Bypass authentication for quick testing
 
-## ⏰ Infinite Patience for Long AI Responses
-This application is designed to **wait as long as needed** for AI responses, even if they take 15+ minutes. Perfect for:
-- **GPT-5 reasoning tasks** with high complexity  
-- **OpenAI o1/o3 models** with extended thinking time
-- **Complex analysis** that requires deep processing
-- **Long-form content generation**
+## ⚡ Quick Start
 
-The system sends heartbeat messages every 15 seconds to keep the connection alive and shows progressive status updates so you always know the AI is working.
+### 1. Install Dependencies
+```bash
+# Backend
+cd backend
+python -m venv .venv
+.venv\Scripts\activate  # Windows
+pip install -r requirements.txt
 
-## 🔐 Authentication (Google OAuth + JWT)
-The application now uses **Google OAuth 2.0** for login. After Google sign-in the backend issues a short-lived **JWT** used for all `/api/*` calls.
-
-Environment variables required:
+# Frontend  
+cd ../frontend
+npm install
 ```
+
+### 2. Run Application
+```bash
+# Terminal 1: Backend (from backend folder)
+.venv\Scripts\python main.py --timeout 300
+
+# Terminal 2: Frontend (from frontend folder)
+npm run dev
+```
+
+### 3. Access App
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
+
+## 🔧 Configuration
+
+### Environment Variables (.env)
+```bash
+# AI Provider API Keys
+OPENAI_API_KEY=your_openai_key
+DEEPSEEK_API_KEY=your_deepseek_key  
+ANTHROPIC_API_KEY=your_anthropic_key
+GEMINI_API_KEY=your_gemini_key
+
+# Authentication (optional for dev)
 GOOGLE_CLIENT_ID=your_google_client_id
-JWT_SECRET=strong_random_string
-JWT_EXPIRES=60   # minutes (optional)
+JWT_SECRET=your_jwt_secret
+
+# Dev Mode (bypass Google Auth)
+DEV_MODE=1
+FORCE_DEV_AUTH=1
+BYPASS_GOOGLE_AUTH=1
+
+# App Settings
+PORT=8000
+CORS_ORIGINS=http://localhost:3000
 ```
-Frontend build also needs:
-```
+
+### Frontend (.env.local)
+```bash
 VITE_GOOGLE_CLIENT_ID=your_google_client_id
+VITE_DEV_MODE=1
 ```
-Legacy password auth has been removed.
 
-## 🚀 Quick Start
+## 🔧 Dev Mode Setup
+For quick testing without Google OAuth:
+1. Set the dev mode variables in `.env` as shown above
+2. Set `VITE_DEV_MODE=1` in `frontend/.env.local`
+3. App will bypass login and use `dev@example.com` user
 
-### Prerequisites
-- **Python**: 3.8+
-- **Node.js**: 16+
-- **Git**: Latest version
+## 🚀 Production Deployment
 
-### Local Development
-
-1. **Clone & Setup**
-   ```bash
-   git clone https://github.com/Amo808/multiprovider.git
-   cd multiprovider
-   ```
-
-2. **Backend Setup**
-   ```bash
-   cd backend
-   python -m venv .venv
-   # Windows
-   .venv\Scripts\activate
-   # macOS/Linux  
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   python main.py
-   ```
-
-3. **Frontend Setup** (new terminal)
-   ```bash
-   cd frontend
-   npm install
-   # create .env.local with VITE_GOOGLE_CLIENT_ID
-   echo "VITE_GOOGLE_CLIENT_ID=your_google_client_id" > .env.local
-   npm run dev
-   ```
-
-4. **Access Application**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8000
-   - API Docs: http://localhost:8000/docs
-
-## Features
-
-✅ **Google OAuth Login**  
-✅ **Multi-Provider Support**: OpenAI, DeepSeek, Anthropic, Gemini  
-✅ **Real-time Chat**: Streaming responses  
-✅ **Conversation History**: Persistent sessions  
-✅ **Provider Management**: API key configuration & testing  
-✅ **Modern UI**: React + Tailwind, dark/light themes  
-
-## Deployment
-
-### Render
-Add the following environment variables in the Render service:
-```
-OPENAI_API_KEY=...
-DEEPSEEK_API_KEY=...
-ANTHROPIC_API_KEY=...
-GOOGLE_CLIENT_ID=...
-JWT_SECRET=... (generate with: openssl rand -hex 32)
-JWT_EXPIRES=60
-```
-Frontend build: ensure `VITE_GOOGLE_CLIENT_ID` is set (either baked into Docker build or passed at build time).
-
-### Docker (Full Stack)
+### Docker (Recommended)
 ```bash
 docker-compose up --build
 ```
 
-## Configuration
-Environment variables (partial):
+### Manual Deployment
+1. Set environment variables
+2. Build frontend: `npm run build`
+3. Start backend with production settings
+4. Configure reverse proxy (nginx/Apache)
+
+## 📁 Project Structure
 ```
-OPENAI_API_KEY=your_openai_key
-DEEPSEEK_API_KEY=your_deepseek_key
-ANTHROPIC_API_KEY=your_anthropic_key
-GOOGLE_CLIENT_ID=your_google_client_id
-JWT_SECRET=your_jwt_secret
-CORS_ORIGINS=http://localhost:3000
+multiprovider/
+├── backend/          # Python FastAPI server
+├── frontend/         # React TypeScript app
+├── adapters/         # AI provider adapters  
+├── storage/          # Database & session storage
+├── data/            # Configuration files
+└── logs/            # Application logs
 ```
 
-## Provider Setup
-1. Login via Google
-2. Open Provider Settings
-3. Enter API keys
-4. Test connection / Refresh models
-5. Start chatting
+## 🛠️ Development
 
-## Documentation
-- Development: `RUN_INSTRUCTIONS.md`
-- Deployment: `DEPLOYMENT.md`
-- Auth (legacy note): `DEPLOY_AUTH.md`
+### Adding New AI Providers
+1. Create adapter in `adapters/` folder
+2. Register in `provider_manager.py`
+3. Add configuration to `data/providers_config.json`
 
-## Roadmap
-- Optional refresh tokens
-- User roles & usage limits
-- Usage analytics endpoint
+### API Documentation
+- Interactive docs: http://localhost:8000/docs
+- OpenAPI schema: http://localhost:8000/openapi.json
 
-## License
-MIT
+## 📄 License
+MIT License - see LICENSE file for details

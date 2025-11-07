@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sliders, RotateCcw, Save } from 'lucide-react';
-import { GenerationConfig, ModelProvider } from '../types';
+import { GenerationConfig, ModelProvider, ModelInfo } from '../types';
 
 interface GenerationSettingsProps {
   config: GenerationConfig;
   currentProvider?: ModelProvider;
+  currentModel?: ModelInfo;
   onConfigChange: (config: Partial<GenerationConfig>) => void;
   onSave?: (config: GenerationConfig) => Promise<void>;
   onReset?: () => void;
@@ -57,6 +58,7 @@ const Slider: React.FC<SliderProps> = ({ label, value, min, max, step, onChange,
 export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
   config,
   currentProvider,
+  currentModel,
   onConfigChange,
   onSave,
   onReset,
@@ -66,21 +68,96 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
   const [localConfig, setLocalConfig] = useState<GenerationConfig>(config);
   const [hasChanges, setHasChanges] = useState(false);
   const [saving, setSaving] = useState(false);
+  
+  // Keep track of previous provider to detect changes
+  const previousProvider = useRef<ModelProvider | undefined>(currentProvider);
 
-  // Get max tokens based on provider
+  // Get max tokens based on current model and provider
   const getMaxTokens = () => {
+    // First priority: use model-specific max_output_tokens if available
+    if (currentModel?.max_output_tokens) {
+      return currentModel.max_output_tokens;
+    }
+    
+    // Second priority: use model-specific recommended max
+    if (currentModel?.recommended_max_tokens) {
+      return currentModel.recommended_max_tokens;
+    }
+    
+    // Third priority: provider-specific defaults based on official documentation
     switch (currentProvider) {
       case 'deepseek':
-        return 32768;  // Increased from 8192
+        // DeepSeek official limits from API docs:
+        // deepseek-chat (Non-thinking): DEFAULT 4K, MAXIMUM 8K
+        // deepseek-reasoner (Thinking): DEFAULT 32K, MAXIMUM 64K
+        if (currentModel?.name?.toLowerCase().includes('reasoner') || 
+            currentModel?.id?.toLowerCase().includes('reasoner') ||
+            currentModel?.name?.toLowerCase().includes('r1')) {
+          return 65536; // deepseek-reasoner: 64K max
+        }
+        return 8192; // deepseek-chat: 8K max
       case 'openai':
-        return 131072; // Increased to match GPT-5 max (128k)
+        return 131072; // GPT-5 supports up to 128k tokens
       case 'anthropic':
-        return 32768;  // Good for Claude models
+        // Claude models official limits from Anthropic docs:
+        // Claude Opus 4.1: 32K max output tokens
+        // Claude Sonnet 4.5 & Haiku 4.5: 64K max output tokens
+        if (currentModel?.name?.toLowerCase().includes('opus') || 
+            currentModel?.id?.toLowerCase().includes('opus')) {
+          return 32000; // Claude Opus: exactly 32K max (API enforced)
+        }
+        if (currentModel?.name?.toLowerCase().includes('sonnet') || 
+            currentModel?.id?.toLowerCase().includes('sonnet') ||
+            currentModel?.name?.toLowerCase().includes('haiku') || 
+            currentModel?.id?.toLowerCase().includes('haiku')) {
+          return 64000; // Claude Sonnet 4.5 & Haiku 4.5: 64K max
+        }
+        return 64000; // Default for newer Claude models
       case 'gemini':
-        return 32768;  // Good for Gemini models
+        return 32768;  // Gemini models limit
       default:
-        return 32768;  // Increased default
+        return 8192;   // Conservative default
     }
+  };
+
+  // Get recommended default max tokens based on model type
+  const getRecommendedMaxTokens = () => {
+    switch (currentProvider) {
+      case 'deepseek':
+        // DeepSeek recommendations from docs:
+        if (currentModel?.name?.toLowerCase().includes('reasoner') || 
+            currentModel?.id?.toLowerCase().includes('reasoner') ||
+            currentModel?.name?.toLowerCase().includes('r1')) {
+          return 32768; // deepseek-reasoner: DEFAULT 32K
+        }
+        return 4096; // deepseek-chat: DEFAULT 4K
+      case 'openai':
+        return 4096; // Reasonable default for most use cases
+      case 'anthropic':
+        // Claude recommended defaults based on model type:
+        if (currentModel?.name?.toLowerCase().includes('opus') || 
+            currentModel?.id?.toLowerCase().includes('opus')) {
+          return 8192; // Claude Opus: higher default for complex reasoning tasks
+        }
+        if (currentModel?.name?.toLowerCase().includes('sonnet') || 
+            currentModel?.id?.toLowerCase().includes('sonnet')) {
+          return 8192; // Claude Sonnet: good balance for coding and agents
+        }
+        if (currentModel?.name?.toLowerCase().includes('haiku') || 
+            currentModel?.id?.toLowerCase().includes('haiku')) {
+          return 4096; // Claude Haiku: optimized for speed, smaller outputs
+        }
+        return 6144; // Default for other Claude models
+      case 'gemini':
+        return 4096; // Reasonable default
+      default:
+        return 4096; // Conservative default
+    }
+  };
+
+  // Get minimum tokens
+  const getMinTokens = () => {
+    return 1; // Universal minimum
   };
 
   useEffect(() => {
@@ -94,6 +171,44 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
       console.log('GenerationSettings: Skipping config update - hasChanges:', hasChanges, 'saving:', saving);
     }
   }, [config, hasChanges, saving]);
+
+  // Separate effect to track provider changes and reset max_tokens
+  useEffect(() => {
+    if (previousProvider.current && previousProvider.current !== currentProvider) {
+      const recommendedTokens = getRecommendedMaxTokens();
+      console.log(`GenerationSettings: Provider changed from ${previousProvider.current} to ${currentProvider}, resetting max_tokens to ${recommendedTokens}`);
+      
+      const newConfig = { ...localConfig, max_tokens: recommendedTokens };
+      setLocalConfig(newConfig);
+      onConfigChange({ max_tokens: recommendedTokens });
+    }
+    previousProvider.current = currentProvider;
+  }, [currentProvider]);
+
+  // Separate effect to validate max_tokens doesn't exceed limits
+  useEffect(() => {
+    const maxTokensLimit = getMaxTokens();
+    const recommendedTokens = getRecommendedMaxTokens();
+    
+    if (localConfig.max_tokens > maxTokensLimit) {
+      console.log(`GenerationSettings: max_tokens ${localConfig.max_tokens} exceeds limit ${maxTokensLimit}, correcting to ${recommendedTokens}`);
+      const correctedConfig = { ...localConfig, max_tokens: recommendedTokens };
+      setLocalConfig(correctedConfig);
+      onConfigChange({ max_tokens: recommendedTokens });
+    }
+  }, [currentModel, localConfig.max_tokens]);
+
+  // Debug logging
+  useEffect(() => {
+    console.log('GenerationSettings Debug:', {
+      currentProvider,
+      previousProvider: previousProvider.current,
+      currentMaxTokens: localConfig.max_tokens,
+      recommendedTokens: getRecommendedMaxTokens(),
+      maxTokens: getMaxTokens(),
+      modelName: currentModel?.name
+    });
+  }, [currentProvider, currentModel, localConfig.max_tokens]);
 
   const handleChange = (key: keyof GenerationConfig, value: any) => {
     const newConfig = { ...localConfig, [key]: value };
@@ -356,15 +471,34 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
             )}
 
             {/* Max Tokens */}
-            <Slider
-              label="Max Tokens"
-              value={localConfig.max_tokens}
-              min={1}
-              max={getMaxTokens()}
-              step={1}
-              onChange={(value) => handleChange('max_tokens', value)}
-              description={`Maximum number of tokens to generate (${currentProvider || 'current provider'} limit: ${getMaxTokens()}).`}
-            />
+            <div className="space-y-2">
+              <Slider
+                label="Max Tokens"
+                value={localConfig.max_tokens}
+                min={getMinTokens()}
+                max={getMaxTokens()}
+                step={1}
+                onChange={(value) => handleChange('max_tokens', value)}
+                description={`Model: ${currentModel?.name || currentProvider || 'Unknown'} | Recommended: ${getRecommendedMaxTokens()} | Maximum: ${getMaxTokens()}`}
+              />
+              {/* Quick preset buttons */}
+              <div className="flex items-center space-x-2 pt-1">
+                <button
+                  onClick={() => handleChange('max_tokens', getRecommendedMaxTokens())}
+                  className="px-2 py-1 text-xs rounded border border-green-300 dark:border-green-600 text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/30"
+                  title={`Set to recommended default: ${getRecommendedMaxTokens()}`}
+                >
+                  Default ({getRecommendedMaxTokens()})
+                </button>
+                <button
+                  onClick={() => handleChange('max_tokens', getMaxTokens())}
+                  className="px-2 py-1 text-xs rounded border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                  title={`Set to maximum: ${getMaxTokens()}`}
+                >
+                  Max ({getMaxTokens()})
+                </button>
+              </div>
+            </div>
 
             {/* Top P */}
             <Slider
