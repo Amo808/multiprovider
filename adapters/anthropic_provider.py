@@ -77,44 +77,7 @@ class AnthropicAdapter(BaseAdapter):
                 recommended_max_tokens=8192,  # Higher default for complex reasoning
                 pricing={"input_tokens": 15.00, "output_tokens": 75.00}  # per 1M tokens
             ),
-            # Legacy Claude 3.5 models (still supported)
-            ModelInfo(
-                id="claude-3-5-sonnet-20241022",
-                name="claude-3-5-sonnet-20241022",
-                display_name="Claude 3.5 Sonnet (New)",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=200000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 3.00, "output_tokens": 15.00}  # per 1M tokens
-            ),
-            ModelInfo(
-                id="claude-3-5-haiku-20241022",
-                name="claude-3-5-haiku-20241022",
-                display_name="Claude 3.5 Haiku",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=200000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=False,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 1.00, "output_tokens": 5.00}  # per 1M tokens
-            ),
-            ModelInfo(
-                id="claude-3-5-sonnet-20240620",
-                name="claude-3-5-sonnet-20240620",
-                display_name="Claude 3.5 Sonnet (Old)",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=200000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 3.00, "output_tokens": 15.00}  # per 1M tokens
-            ),
-            # Claude 3 models
+            # Claude 3 models (legacy but still working)
             ModelInfo(
                 id="claude-3-opus-20240229",
                 name="claude-3-opus-20240229",
