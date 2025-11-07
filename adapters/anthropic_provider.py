@@ -26,6 +26,18 @@ class AnthropicAdapter(BaseAdapter):
             self.logger.warning("Failed to load GPT-4 tokenizer, using cl100k_base")
             self.tokenizer = tiktoken.get_encoding("cl100k_base")
 
+    # --- Added helper to detect models enforcing single sampling param ---
+    def _single_sampling_model(self, model_id: str) -> bool:
+        """Return True if Anthropic model requires only one of temperature OR top_p.
+        Claude 4.x / 4.5 (opus/sonnet/haiku) enforce mutual exclusivity.
+        We detect by substrings to cover snapshot IDs (e.g. claude-haiku-4-5-20251001)."""
+        patterns = [
+            "claude-opus-4", "claude-sonnet-4", "claude-haiku-4",  # generic 4.x
+            "claude-opus-4-1", "claude-sonnet-4-1", "claude-haiku-4-1",  # 4.1
+            "claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"  # 4.5
+        ]
+        return any(p in model_id for p in patterns)
+
     @property
     def name(self) -> str:
         return "Anthropic"
@@ -208,20 +220,24 @@ class AnthropicAdapter(BaseAdapter):
         }
 
         # For newer Claude models (Claude 4 series), use only temperature OR top_p, not both
-        is_claude_4_series = any(claude_4_id in model for claude_4_id in [
-            "claude-opus-4", "claude-sonnet-4", "claude-4", "claude-3-7-sonnet"
-        ])
+        is_claude_4_series = self._single_sampling_model(model)
         
         if is_claude_4_series:
-            # For Claude 4 series: prefer temperature over top_p
-            if params.temperature is not None:
+            # If user supplied both, choose temperature (higher control) and drop top_p
+            user_set_temperature = params.temperature is not None
+            user_set_top_p = params.top_p is not None
+            if user_set_temperature and user_set_top_p:
+                self.logger.warning(
+                    f"Anthropic: both temperature and top_p provided for {model}. Sending only temperature per API requirements."
+                )
+            if user_set_temperature:
                 payload["temperature"] = params.temperature
-                self.logger.info(f"Using temperature={params.temperature} for Claude 4 model: {model}")
-            elif params.top_p is not None:
+                # Ensure top_p not present
+                payload.pop("top_p", None)
+            elif user_set_top_p:
                 payload["top_p"] = params.top_p
-                self.logger.info(f"Using top_p={params.top_p} for Claude 4 model: {model}")
             else:
-                # Default to temperature for Claude 4
+                # Default to temperature when neither explicitly set
                 payload["temperature"] = 0.7
         else:
             # For older Claude models: can use both parameters
