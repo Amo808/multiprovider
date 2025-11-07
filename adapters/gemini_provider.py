@@ -31,42 +31,41 @@ class GeminiAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
-            # Latest Gemini 2.5 models (November 2025)
+            # Latest Gemini 2.5 models (November 2025) 
+            ModelInfo(
+                id="gemini-2.5-pro",
+                name="gemini-2.5-pro",
+                display_name="Gemini 2.5 Pro (Most Advanced)",
+                provider=ModelProvider.GEMINI,
+                context_length=2000000,  # 2M context window
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=8192,
+                recommended_max_tokens=4096,
+                description="State-of-the-art thinking model for complex problems in code, math, and STEM",
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00}  # Per million tokens
+            ),
             ModelInfo(
                 id="gemini-2.5-flash",
                 name="gemini-2.5-flash",
-                display_name="Gemini 2.5 Flash",
+                display_name="Gemini 2.5 Flash (Best Price-Performance)",
                 provider=ModelProvider.GEMINI,
                 context_length=1000000,  # 1M context window
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=32768,
-                recommended_max_tokens=8192,
-                description="Best price-performance model with comprehensive capabilities and reasoning",
-                pricing={"input_tokens": 0.30, "output_tokens": 2.50}
+                max_output_tokens=8192,
+                recommended_max_tokens=4096,
+                description="Best price-performance model with thinking capabilities",
+                pricing={"input_tokens": 0.30, "output_tokens": 1.20}  # Per million tokens
             ),
             ModelInfo(
                 id="gemini-2.5-flash-lite",
                 name="gemini-2.5-flash-lite", 
-                display_name="Gemini 2.5 Flash Lite",
-                provider=ModelProvider.GEMINI,
-                context_length=1000000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                max_output_tokens=32768,
-                recommended_max_tokens=4096,
-                description="Fastest and most cost-effective model optimized for high throughput",
-                pricing={"input_tokens": 0.10, "output_tokens": 0.40}
-            ),
-            # Gemini 2.0 models (second generation)
-            ModelInfo(
-                id="gemini-2.0-flash-exp",
-                name="gemini-2.0-flash-exp",
-                display_name="Gemini 2.0 Flash (Experimental)",
+                display_name="Gemini 2.5 Flash-Lite (Ultra Fast)",
                 provider=ModelProvider.GEMINI,
                 context_length=1000000,
                 supports_streaming=True,
@@ -75,8 +74,24 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Experimental second-generation workhorse model",
+                description="Fastest model optimized for cost-efficiency and high throughput",
                 pricing={"input_tokens": 0.10, "output_tokens": 0.40}
+            ),
+            # Gemini 2.0 models (previous generation)
+            ModelInfo(
+                id="gemini-2.0-flash",
+                name="gemini-2.0-flash",
+                display_name="Gemini 2.0 Flash (Second Gen)",
+                provider=ModelProvider.GEMINI,
+                context_length=1000000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=8192,
+                recommended_max_tokens=4096,
+                description="Second-generation workhorse model with 1M token context",
+                pricing={"input_tokens": 0.15, "output_tokens": 0.60}
             ),
             # Legacy Gemini 1.5 models (still supported)
             ModelInfo(
