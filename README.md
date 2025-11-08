@@ -1,115 +1,209 @@
-# AI Chat - Multi-Provider Assistant
+# 🚀 AI Chat - Multi-Provider Assistant
 
-🚀 **Professional AI chat application** with support for multiple providers and GPT-5 optimized features.
+Профессиональное AI чат-приложение с поддержкой множества провайдеров и расширенными возможностями.
 
-## ✨ Key Features
-- **Multi-Provider Support**: OpenAI (GPT-5), DeepSeek, Anthropic, Gemini
-- **Smart Token Limits**: Auto-adjusts max_tokens based on model capabilities
-- **Extended Timeouts**: 5+ minute support for complex reasoning tasks
-- **Real-time Streaming**: Live responses with heartbeat monitoring
-- **Conversation History**: Persistent chat sessions
-- **Modern UI**: React + Tailwind with dark/light themes
-- **Dev Mode**: Bypass authentication for quick testing
+## ✨ Основные возможности
 
-## ⚡ Quick Start
+- **Мульти-провайдер поддержка**: OpenAI (GPT-4o, GPT-5), DeepSeek, Anthropic (Claude), Google Gemini
+- **Умные лимиты токенов**: Автоматическая настройка max_tokens для каждой модели
+- **Расширенные таймауты**: До 5+ минут для сложных задач
+- **Потоковая передача**: Живые ответы с мониторингом соединения
+- **История разговоров**: Постоянное сохранение чатов
+- **Современный UI**: React + Tailwind с темной/светлой темами
+- **Dev режим**: Автоматический вход для разработки
 
-### 1. Install Dependencies
+## 🚀 Быстрый старт
+
+### Шаг 1: Клонирование и настройка
+
 ```bash
-# Backend
-cd backend
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-pip install -r requirements.txt
+# Клонировать репозиторий
+git clone <your-repository-url>
+cd multiprovider
+```
 
-# Frontend  
-cd ../frontend
+### Шаг 2: Настройка Backend
+
+```bash
+# Перейти в папку backend
+cd backend
+
+# Создать виртуальное окружение
+python -m venv .venv
+
+# Активировать виртуальное окружение (Windows)
+.venv\Scripts\Activate.ps1
+
+# Установить зависимости
+pip install -r requirements.txt
+```
+
+### Шаг 3: Настройка Frontend
+
+```bash
+# Перейти в папку frontend (из корня проекта)
+cd frontend
+
+# Установить зависимости
 npm install
 ```
 
-### 2. Run Application
-```bash
-# Terminal 1: Backend (from backend folder)
-.venv\Scripts\python main.py --timeout 300
+### Шаг 4: Настройка переменных окружения
 
-# Terminal 2: Frontend (from frontend folder)
-npm run dev
-```
+Создайте файл `.env` в папке `backend`:
 
-### 3. Access App
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-
-## 🔧 Configuration
-
-### Environment Variables (.env)
-```bash
+```env
 # AI Provider API Keys
-OPENAI_API_KEY=your_openai_key
-DEEPSEEK_API_KEY=your_deepseek_key  
 ANTHROPIC_API_KEY=your_anthropic_key
+DEEPSEEK_API_KEY=your_deepseek_key
 GEMINI_API_KEY=your_gemini_key
+OPENAI_API_KEY=your_openai_key
 
-# Authentication (optional for dev)
-GOOGLE_CLIENT_ID=your_google_client_id
-JWT_SECRET=your_jwt_secret
-
-# Dev Mode (bypass Google Auth)
+# Dev Mode (для разработки)
 DEV_MODE=1
 FORCE_DEV_AUTH=1
 BYPASS_GOOGLE_AUTH=1
+
+# Authentication (опционально)
+GOOGLE_CLIENT_ID=your_google_client_id
+JWT_SECRET=your_jwt_secret
 
 # App Settings
 PORT=8000
 CORS_ORIGINS=http://localhost:3000
 ```
 
-### Frontend (.env.local)
-```bash
-VITE_GOOGLE_CLIENT_ID=your_google_client_id
+Создайте файл `.env.local` в папке `frontend`:
+
+```env
+# Dev Mode для frontend
 VITE_DEV_MODE=1
+VITE_GOOGLE_CLIENT_ID=your_google_client_id
+
+# Если нужен полный набор переменных для frontend
+BYPASS_GOOGLE_AUTH=1
+FORCE_DEV_AUTH=1
 ```
 
-## 🔧 Dev Mode Setup
-For quick testing without Google OAuth:
-1. Set the dev mode variables in `.env` as shown above
-2. Set `VITE_DEV_MODE=1` in `frontend/.env.local`
-3. App will bypass login and use `dev@example.com` user
+### Шаг 5: Создание папки logs
 
-## 🚀 Production Deployment
-
-### Docker (Recommended)
 ```bash
-docker-compose up --build
+# Из корня проекта
+mkdir logs
 ```
 
-### Manual Deployment
-1. Set environment variables
-2. Build frontend: `npm run build`
-3. Start backend with production settings
-4. Configure reverse proxy (nginx/Apache)
+### Шаг 6: Запуск приложения
 
-## 📁 Project Structure
+**Backend** (из папки `backend`):
+```bash
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+python main.py --timeout 300
+```
+
+**Frontend** (из папки `frontend`):
+```bash
+# Через cmd (работает стабильнее)
+cmd /c "npm run dev"
+```
+
+### Шаг 7: Доступ к приложению
+
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8000  
+- **API Docs**: http://localhost:8000/docs
+
+## 🛠️ Устранение неполадок
+
+### Проблема: npm run dev не работает в PowerShell
+
+**Решение**: Используйте cmd
+```bash
+cmd /c "cd /d C:\path\to\frontend && npm run dev"
+```
+
+### Проблема: Python не найден
+
+**Решение**: Используйте полный путь
+```bash
+C:\path\to\backend\.venv\Scripts\python.exe main.py --timeout 300
+```
+
+### Проблема: Отсутствуют зависимости vite
+
+**Решение**: Установите недостающие пакеты
+```bash
+npm install @vitejs/plugin-react-swc vite-tsconfig-paths vite-plugin-svgr
+```
+
+### Проблема: Все еще показывает Google Auth
+
+**Решение**: Проверьте переменные окружения
+1. Убедитесь, что `.env` и `.env.local` файлы созданы правильно
+2. Перезапустите оба сервера после изменения .env файлов
+3. Проверьте, что `DEV_MODE=1` и `FORCE_DEV_AUTH=1` установлены
+
+## � Структура проекта
+
 ```
 multiprovider/
-├── backend/          # Python FastAPI server
-├── frontend/         # React TypeScript app
-├── adapters/         # AI provider adapters  
-├── storage/          # Database & session storage
-├── data/            # Configuration files
-└── logs/            # Application logs
+├── backend/          # Python FastAPI сервер
+│   ├── .venv/       # Виртуальное окружение Python
+│   ├── .env         # Переменные окружения backend
+│   ├── main.py      # Основной файл сервера
+│   └── requirements.txt
+├── frontend/         # React TypeScript приложение  
+│   ├── node_modules/
+│   ├── .env.local   # Переменные окружения frontend
+│   ├── package.json
+│   └── src/
+├── adapters/         # AI провайдер адаптеры
+├── storage/          # База данных и хранилище сессий
+├── data/            # Конфигурационные файлы
+└── logs/            # Логи приложения
 ```
 
-## 🛠️ Development
+## � Режимы работы
 
-### Adding New AI Providers
-1. Create adapter in `adapters/` folder
-2. Register in `provider_manager.py`
-3. Add configuration to `data/providers_config.json`
+### Dev режим (рекомендуется для разработки)
+- Автоматический вход как `dev@example.com`
+- Отключение Google OAuth
+- Упрощенная настройка
 
-### API Documentation
-- Interactive docs: http://localhost:8000/docs
-- OpenAPI schema: http://localhost:8000/openapi.json
+### Production режим
+- Полная Google OAuth авторизация
+- Безопасные переменные окружения
+- Docker deployment
 
-## 📄 License
-MIT License - see LICENSE file for details
+## 📦 Основные команды
+
+```bash
+# Backend
+cd backend
+.venv\Scripts\Activate.ps1
+python main.py --timeout 300
+
+# Frontend  
+cd frontend
+cmd /c "npm run dev"
+
+# Установка зависимостей заново (если проблемы)
+cd frontend
+rm -rf node_modules package-lock.json
+npm install
+
+# Проверка API
+curl http://localhost:8000/health
+```
+
+## 🔑 API ключи
+
+Получите API ключи от:
+- **OpenAI**: https://platform.openai.com/api-keys
+- **Anthropic**: https://console.anthropic.com/
+- **DeepSeek**: https://platform.deepseek.com/
+- **Google AI**: https://aistudio.google.com/app/apikey
+
+## 📄 Лицензия
+
+MIT License - смотрите LICENSE файл для деталей.

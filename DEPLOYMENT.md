@@ -1,72 +1,89 @@
 # 🚀 Deployment Guide
 
-## Local Development
+## 📋 Быстрые команды для запуска
 
-### Quick Start
+### Windows PowerShell
+
 ```bash
-# Backend (from backend folder)
-.venv\Scripts\python main.py --timeout 300
+# 1. Backend (из папки backend)
+cd backend
+.venv\Scripts\Activate.ps1
+python main.py --timeout 300
 
-# Frontend (from frontend folder)  
-npm run dev
+# 2. Frontend (из папки frontend) 
+cd frontend
+cmd /c "npm run dev"
 ```
 
-### Expected URLs
-- Frontend: http://localhost:3000
-- Backend: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+### Ожидаемые URL
+- **Frontend**: http://localhost:3000
+- **Backend**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
 
-## Production Deployment
+## 🛠️ Если что-то не работает
 
-### Docker (Recommended)
+### Frontend не запускается через npm run dev
+
+**Проблема**: PowerShell не видит npm скрипт
+
+**Решение**: Используйте cmd
+```bash
+cmd /c "cd /d C:\Users\Amo\Desktop\multech\multiprovider\frontend && npm run dev"
+```
+
+### Python не найден
+
+**Проблема**: Virtual environment не активирован
+
+**Решение**: Используйте полный путь
+```bash
+C:\Users\Amo\Desktop\multech\multiprovider\backend\.venv\Scripts\python.exe main.py --timeout 300
+```
+
+### Отсутствуют зависимости
+
+```bash
+# Frontend
+cd frontend
+npm install @vitejs/plugin-react-swc vite-tsconfig-paths vite-plugin-svgr
+
+# Backend  
+cd backend
+pip install -r requirements.txt
+```
+
+### Google Auth все еще активен
+
+1. Проверьте `.env` файлы
+2. Перезапустите оба сервера
+3. Убедитесь что `DEV_MODE=1` и `FORCE_DEV_AUTH=1`
+
+## 🐳 Production с Docker
+
 ```bash
 docker-compose up --build
 ```
 
-### Manual Production Setup
+## 📦 Полная переустановка (если все сломалось)
 
-1. **Environment Variables**
 ```bash
-OPENAI_API_KEY=your_key_here
-JWT_SECRET=your_jwt_secret
-GOOGLE_CLIENT_ID=your_client_id
-PORT=8000
-```
+# 1. Остановить все процессы
+taskkill /f /im python.exe
+taskkill /f /im node.exe
 
-2. **Build & Deploy**
-```bash
-# Frontend build
-cd frontend && npm run build
+# 2. Frontend
+cd frontend
+rm -rf node_modules package-lock.json
+npm install
 
-# Backend with Gunicorn
+# 3. Backend
 cd backend
-gunicorn main:app \
-  --bind 0.0.0.0:$PORT \
-  --workers 2 \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --timeout 300
-```
+rm -rf .venv
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 
-## Key Features
-- ✅ Extended 300s timeout for GPT-5 reasoning
-- ✅ Heartbeat system prevents connection drops
-- ✅ Dev mode bypass for quick testing
-- ✅ Multi-provider support (OpenAI, DeepSeek, Anthropic, Gemini)
-- ✅ Real-time streaming responses
-
-## Troubleshooting
-
-### Common Issues
-1. **Build fails**: Check all dependencies installed
-2. **API errors**: Verify API keys in environment
-3. **Connection timeout**: Ensure 300s timeout configured
-4. **Auth issues**: Enable dev mode for testing
-
-### Debug Commands
-```bash
-# Test backend health
-curl http://localhost:8000/health
-
-# Check config
-curl http://localhost:8000/api/config
+# 4. Запустить заново
+# Backend: python main.py --timeout 300
+# Frontend: cmd /c "npm run dev"
 ```
