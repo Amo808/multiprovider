@@ -1,6 +1,6 @@
 {
-  "activeProvider": "anthropic",
-  "activeModel": "claude-sonnet-4-5-20250929",
+  "activeProvider": "deepseek",
+  "activeModel": "deepseek-chat",
   "providers": {
     "deepseek": {
       "id": "deepseek",
