@@ -43,3 +43,20 @@ npm-debug.log
 # Cache files
 .cache/
 
+# Documentation cleanup - exclude temporary documentation
+*_FIX.md
+*_SUMMARY.md
+RELEASE_*.md
+FINAL_*.md
+THINKING_*.md
+SETUP.md
+
+# Backup and temporary files
+*.backup
+*.bak
+*duplicate*.zip
+*_BACKUP.*
+
+# Package locks that might cause issues
+package-lock.json
+
