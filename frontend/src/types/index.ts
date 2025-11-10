@@ -135,7 +135,7 @@ export interface GenerationConfig {
   cfg_scale?: number;
   free_tool_calling?: boolean;
   grammar_definition?: string;
-  tools?: any[]; // tool schema objects
+  tools?: Array<Record<string, unknown>>; // was any[]
 }
 
 export interface UIConfig {
@@ -174,7 +174,7 @@ export interface ModelCard {
   enabled: boolean;
   isCustom?: boolean;
   deploymentName?: string; // Azure
-  params?: Record<string, any>;
+  params?: Record<string, unknown>; // was Record<string, any>
 }
 
 // API Request/Response Types

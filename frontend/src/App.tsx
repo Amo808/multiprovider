@@ -1,32 +1,36 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Settings, Sun, Moon, Monitor, Menu, X } from 'lucide-react';
 import { 
-  ModelSelector, 
   ChatInterface, 
-  GenerationSettings, 
   ProviderManager,
   UnlockModal,
   LoginModal,
   ConversationHistory,
   useConfig,
-  useHealth,
   useConversations,
   ModelInfo,
   ModelProvider,
-  GenerationConfig
+  GenerationSettings
 } from './components';
+import { TopNavigation } from './components/TopNavigation';
+import { CommandPalette } from './components/CommandPalette';
+import { ToastProvider } from './components/ToastProvider';
+import TokenCounter from './components/TokenCounter';
+import { PresetPrompts } from './components/PresetPrompts';
 import { apiClient } from './services/api';
+import { Button } from './components/ui/button';
+import { useTokenUsage } from './hooks/useTokenUsage';
+import { useHealth } from './components';
+
+interface Conversation { id: string; title: string; updatedAt: string }
 
 function App() {
   // ========================= State Management =========================
   const [selectedModel, setSelectedModel] = useState<ModelInfo | undefined>();
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | undefined>();
   const [showProviderManager, setShowProviderManager] = useState(false);
-  const [showGenerationSettings, setShowGenerationSettings] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
-  const [showHistory, setShowHistory] = useState(true);
   const [currentConversationId, setCurrentConversationId] = useState<string>('default');
-  const [conversations, setConversations] = useState<Array<{id: string, title: string, updatedAt: string}>>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>(() => {
     // Load theme from localStorage or default to 'auto'
     try {
@@ -40,6 +44,11 @@ function App() {
   const [pendingMessage, setPendingMessage] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [showCommand, setShowCommand] = useState(false);
+  const [showHistory, setShowHistory] = useState(true);
+  const [showGenerationSettings, setShowGenerationSettings] = useState(false);
+  const { health } = useHealth();
+  const { usage: tokenUsage, update: updateTokenUsage } = useTokenUsage();
 
   const DEV_MODE = (import.meta as any).env?.VITE_DEV_MODE === '1';
 
@@ -50,9 +59,12 @@ function App() {
   };
 
   // ========================= Hooks =========================
-  const { config, loading: configLoading, error: configError, updateConfig, updateGenerationConfig, fetchConfig } = useConfig({ skipInitialFetch: true });
-  const { health } = useHealth();
+  const { config, loading: configLoading, error: configError, updateConfig, fetchConfig, updateGenerationConfig } = useConfig();
   const { deleteConversation: deleteConversationMessages } = useConversations();
+  // System prompt per provider+model map
+  const [systemPrompts, setSystemPrompts] = useState<Record<string,string>>({});
+  const activeSystemPromptKey = `${selectedProvider||''}:${selectedModel?.id||''}`;
+  const activeSystemPrompt = systemPrompts[activeSystemPromptKey] || '';
 
   // ========================= Auth Restore =========================
   useEffect(() => {
@@ -229,47 +241,6 @@ function App() {
     }
   }, [selectedProvider, config, updateConfig]);
 
-  const handleProviderChange = useCallback(async (provider: ModelProvider) => {
-    setSelectedProvider(provider);
-    if (config) {
-      try {
-        await updateConfig({ activeProvider: provider });
-      } catch (error) {
-        console.error('Failed to update config:', error);
-      }
-    }
-  }, [config, updateConfig]);
-
-  const handleGenerationConfigChange = useCallback((newConfig: Partial<GenerationConfig>) => {
-    // Update local config state immediately
-    console.log('Generation config changed:', newConfig);
-    
-    // Update the generation config immediately (not just on save)
-    updateGenerationConfig(newConfig).catch(error => {
-      console.error('Failed to update generation config:', error);
-    });
-  }, [updateGenerationConfig]);
-
-  const handleSaveGenerationSettings = async (settingsToSave: GenerationConfig) => {
-    try {
-      console.log('Saving generation settings:', settingsToSave);
-      await updateGenerationConfig(settingsToSave);
-      console.log('Generation settings saved successfully');
-    } catch (error) {
-      console.error('Failed to save generation settings:', error);
-    }
-  };
-
-  // Handle API key missing error
-  const handleApiKeyMissing = (message: string) => {
-    console.log('App: API key missing callback called with message:', message);
-    console.log('App: Current selectedProvider:', selectedProvider);
-    console.log('App: Setting showUnlockModal to true');
-    setPendingMessage(message);
-    setShowUnlockModal(true);
-    console.log('App: Modal state updated, showUnlockModal should be true');
-  };
-
   // Handle successful API key input
   const handleUnlockSuccess = async (apiKey: string) => {
     console.log('App: handleUnlockSuccess called with provider:', selectedProvider);
@@ -442,7 +413,6 @@ function App() {
     const conversation = conversations.find(conv => conv.id === conversationId);
     if (conversation && conversation.title === 'New Conversation') {
       const newTitle = message.length > 50 ? message.substring(0, 50) + '...' : message;
-      
       try {
         await fetch(`/api/conversations/${conversationId}/title`, {
           method: 'PUT',
@@ -452,35 +422,11 @@ function App() {
       } catch (error) {
         console.error('Failed to update conversation title in backend:', error);
       }
-      
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === conversationId 
-            ? { ...conv, title: newTitle, updatedAt: new Date().toISOString() }
-            : conv
-        )
-      );
+      setConversations(prev => prev.map(conv => conv.id === conversationId ? { ...conv, title: newTitle, updatedAt: new Date().toISOString() } : conv));
     } else if (conversation) {
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === conversationId 
-            ? { ...conv, updatedAt: new Date().toISOString() }
-            : conv
-        )
-      );
+      setConversations(prev => prev.map(conv => conv.id === conversationId ? { ...conv, updatedAt: new Date().toISOString() } : conv));
     }
-  };
-
-  const toggleHistorySidebar = () => {
-    setShowHistory(!showHistory);
-  };
-
-  const getThemeIcon = () => {
-    switch (theme) {
-      case 'light': return <Sun size={16} />;
-      case 'dark': return <Moon size={16} />;
-      default: return <Monitor size={16} />;
-    }
+    // removed naive placeholder token update (now real aggregation handled via ChatInterface onTokenUsageUpdate)
   };
 
   // ========================= Auth Handlers =========================
@@ -557,6 +503,15 @@ function App() {
     (window as any).handleGoogleCredential = handleGoogleCredential;
   }, [handleGoogleCredential]);
 
+  // ========================= Keyboard Shortcuts =========================
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setShowCommand(true); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   // ========================= Loading / Auth UI =========================
   if (!isAuthenticated && !DEV_MODE) {
     return (
@@ -592,86 +547,56 @@ function App() {
   // ========================= Main UI =========================
   return (
     <div className="h-screen bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden">
-      {/* Header */}
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex-shrink-0">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <button onClick={() => setShowSidebar(!showSidebar)} className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 lg:hidden">
-              {showSidebar ? <X size={20}/> : <Menu size={20}/>}
-            </button>
-            <button onClick={toggleHistorySidebar} className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 hidden lg:block" title="Toggle conversation history">
-              <Menu size={20}/>
-            </button>
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">AI</span>
-              </div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Multi-Provider Chat</h1>
-            </div>
-          </div>
-          <div className="flex items-center space-x-3">
-            {health && (
-              <div className={`px-2 py-1 rounded-full text-xs font-medium ${health.status === 'healthy' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>{health.status}</div>
-            )}
-            <div className="hidden sm:block min-w-[300px]">
-              <ModelSelector
-                selectedModel={selectedModel}
-                selectedProvider={selectedProvider}
-                onModelChange={handleModelChange}
-                onProviderChange={handleProviderChange}
-                onManageProviders={() => setShowProviderManager(true)}
-              />
-            </div>
-            <GenerationSettings
-              config={config.generation}
-              currentProvider={selectedProvider}
-              currentModel={selectedModel}
-              onConfigChange={handleGenerationConfigChange}
-              onSave={handleSaveGenerationSettings}
-              isOpen={showGenerationSettings}
-              onToggle={() => setShowGenerationSettings(!showGenerationSettings)}
-            />
-            <button onClick={toggleTheme} className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700" title={`Theme: ${theme}`}>{getThemeIcon()}</button>
-            {userEmail && <span className="text-xs text-gray-500 dark:text-gray-400 hidden md:inline">{userEmail}</span>}
-            <button
-              onClick={() => { localStorage.removeItem('jwt_token'); setIsAuthenticated(false); setUserEmail(null); }}
-              className="p-2 text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30"
-              title="Logout"
-            >
-              <span className="text-xs font-medium">Logout</span>
-            </button>
-            <button onClick={() => setShowProviderManager(true)} className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700" title="Manage Providers">
-              <Settings size={16}/>
-            </button>
-          </div>
-        </div>
-        <div className="sm:hidden mt-3">
-          <ModelSelector
-            selectedModel={selectedModel}
-            selectedProvider={selectedProvider}
-            onModelChange={handleModelChange}
-            onProviderChange={handleProviderChange}
-            onManageProviders={() => setShowProviderManager(true)}
+      <ToastProvider />
+      <TopNavigation
+        config={config}
+        selectedModel={selectedModel}
+        selectedProvider={selectedProvider}
+        userEmail={userEmail}
+        theme={theme}
+        onThemeToggle={toggleTheme}
+        onSettingsClick={() => setShowProviderManager(true)}
+        onLogout={() => { localStorage.removeItem('jwt_token'); setIsAuthenticated(false); setUserEmail(null); }}
+        onMenuToggle={() => setShowSidebar(prev => !prev)}
+        onGenSettings={() => setShowGenerationSettings(s => !s)}
+        onSelectModel={handleModelChange}
+        onChangeGeneration={async (patch) => {
+          try { await updateGenerationConfig(patch); } catch(e){ console.error(e); }
+        }}
+        systemPrompt={activeSystemPrompt}
+        onChangeSystemPrompt={(p: string) => { setSystemPrompts(prev => ({ ...prev, [activeSystemPromptKey]: p })); }}
+      />
+      {showGenerationSettings && (
+        <div className="absolute top-16 right-4 z-40">
+          <GenerationSettings
+            config={config.generation}
+            currentProvider={selectedProvider}
+            currentModel={selectedModel}
+            onConfigChange={() => {}}
+            onSave={async (gc: any) => { await apiClient.updateGenerationConfig(gc); }}
+            isOpen={true}
+            onToggle={() => setShowGenerationSettings(false)}
           />
         </div>
-      </header>
-
+      )}
+      <div className="flex items-center gap-2 px-4 py-1 text-xs border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700">{showHistory ? 'Hide' : 'Show'} History</button>
+        {health && <span className={`px-2 py-1 rounded-full ${health.status === 'healthy' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'}`}>API {health.status}</span>}
+      </div>
       <main className="flex-1 flex min-h-0 overflow-hidden">
         {showHistory && (
-          <div className="hidden lg:block">
-            <ConversationHistory
-              conversations={conversations}
-              currentConversationId={currentConversationId}
-              onNewConversation={handleNewConversation}
-              onSelectConversation={handleSelectConversation}
-              onRenameConversation={handleRenameConversation}
-              onDeleteConversation={handleDeleteConversation}
-            />
-          </div>
+          <ConversationHistory
+            conversations={conversations}
+            currentConversationId={currentConversationId}
+            onNewConversation={handleNewConversation}
+            onSelectConversation={handleSelectConversation}
+            onRenameConversation={handleRenameConversation}
+            onDeleteConversation={handleDeleteConversation}
+          />
         )}
         {showSidebar && (
           <div className="fixed inset-0 z-50 lg:hidden">
-            <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setShowSidebar(false)} />
+            <div className="absolute inset-0 bg-black/50" onClick={() => setShowSidebar(false)} />
             <div className="relative w-80 h-full bg-white dark:bg-gray-800 overflow-hidden flex flex-col">
               <div className="flex-1 overflow-y-auto">
                 <ConversationHistory
@@ -683,25 +608,27 @@ function App() {
                   onDeleteConversation={handleDeleteConversation}
                 />
               </div>
-              <div className="border-t border-gray-200 dark:border-gray-700 p-4">
-                <div className="space-y-2">
-                  <button onClick={() => { setShowProviderManager(true); setShowSidebar(false); }} className="w-full text-left px-3 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">Manage Providers</button>
-                  <button onClick={() => { setShowGenerationSettings(true); setShowSidebar(false); }} className="w-full text-left px-3 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">Generation Settings</button>
-                </div>
+              <div className="border-t border-gray-200 dark:border-gray-700 p-4 space-y-2">
+                <Button variant="ghost" className="w-full justify-start" onClick={() => { setShowProviderManager(true); setShowSidebar(false); }}>Manage Providers</Button>
               </div>
             </div>
           </div>
         )}
         <div className="flex-1 flex flex-col min-h-0">
           {currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
-            <ChatInterface
-              selectedModel={selectedModel}
-              selectedProvider={selectedProvider}
-              generationConfig={config.generation}
-              onApiKeyMissing={handleApiKeyMissing}
-              conversationId={currentConversationId}
-              onMessageSent={handleUpdateConversationTitle}
-            />
+            <>
+              <ChatInterface
+                selectedModel={selectedModel}
+                selectedProvider={selectedProvider}
+                generationConfig={config.generation}
+                conversationId={currentConversationId}
+                onMessageSent={handleUpdateConversationTitle}
+                onTokenUsageUpdate={updateTokenUsage}
+                systemPrompt={activeSystemPrompt}
+              />
+              <div className="px-4 pb-3"><TokenCounter usage={tokenUsage} model={selectedModel?.display_name} maxTokens={selectedModel?.max_output_tokens || selectedModel?.context_length} /></div>
+              <div className="px-4 pb-3"><PresetPrompts onInsert={(t: string) => { const ev = new CustomEvent('insert-preset', { detail: t }); window.dispatchEvent(ev); }} /></div>
+            </>
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
@@ -712,21 +639,21 @@ function App() {
           )}
         </div>
       </main>
-
       {showProviderManager && (
-        <div className="fixed inset-0 z-50">
-          <ProviderManager onClose={() => setShowProviderManager(false)} />
-        </div>
+        <div className="fixed inset-0 z-50"><ProviderManager onClose={() => setShowProviderManager(false)} /></div>
       )}
-
       {showUnlockModal && selectedProvider && (
-        <UnlockModal
-          isOpen={showUnlockModal}
-          provider={selectedProvider}
-          onClose={handleUnlockCancel}
-          onSubmit={handleUnlockSuccess}
-        />
+        <UnlockModal isOpen={showUnlockModal} provider={selectedProvider} onClose={handleUnlockCancel} onSubmit={handleUnlockSuccess} />
       )}
+      <CommandPalette
+        open={showCommand}
+        onOpenChange={setShowCommand}
+        models={selectedProvider ? config.providers[selectedProvider].models : []}
+        onSelectModel={handleModelChange}
+        onNewConversation={handleNewConversation}
+        onClearCurrent={() => { const ev = new Event('clear-current-conversation'); window.dispatchEvent(ev); }}
+        onOpenSettings={() => setShowProviderManager(true)}
+      />
     </div>
   );
 }

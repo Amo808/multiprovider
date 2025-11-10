@@ -1,5 +1,4 @@
 // Core Components
-export { ModelSelector } from './ModelSelector';
 export { ChatInterface } from './ChatInterface';
 export { GenerationSettings } from './GenerationSettings';
 export { ProviderManager } from './ProviderManager';
@@ -9,6 +8,11 @@ export { ConversationHistory } from './ConversationHistory';
 export { ContextViewer } from './ContextViewer';
 export { default as TokenCounter } from './TokenCounter';
 export { default as MessageTokenInfo } from './MessageTokenInfo';
+export { CommandPalette } from './CommandPalette';
+export { ToastProvider } from './ToastProvider';
+export { TokenProgress } from './TokenProgress';
+export { PresetPrompts } from './PresetPrompts';
+export { UnifiedModelMenu } from './UnifiedModelMenu';
 
 // Hooks
 export * from '../hooks/useApi';
