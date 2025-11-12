@@ -22,9 +22,12 @@ WORKDIR /app
 
 # Copy and build frontend first
 COPY frontend/package*.json ./frontend/
-RUN cd frontend && npm install --legacy-peer-deps
+RUN cd frontend && rm -rf node_modules package-lock.json
+RUN cd frontend && npm install --legacy-peer-deps --no-optional
 
 COPY frontend/ ./frontend/
+RUN cd frontend && rm -rf node_modules/.cache
+RUN cd frontend && npm rebuild --verbose
 RUN cd frontend && npm run build
 
 # Copy Python modules and backend files
