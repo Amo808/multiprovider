@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff, Key, CheckCircle, AlertCircle } from 'lucide-react';
-import { ModelProvider } from '../types';
+import { ModelProvider, ProviderConfig } from '../types';
 import { apiClient } from '../services/api';
 
 interface ApiKeySettingsProps {
-  provider: any;
+  provider: ProviderConfig;
   onClose?: () => void;
   onSave?: (providerId: ModelProvider, apiKey: string) => void;
 }
@@ -23,7 +23,7 @@ export const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({
   // Load current API key (masked)
   useEffect(() => {
     // This would typically fetch from config, but for now just show placeholder
-    if (provider.config_valid) {
+    if (provider.enabled && provider.keyVaults?.apiKey) {
       setApiKey('••••••••••••••••••••••••••••••••');
     }
   }, [provider]);

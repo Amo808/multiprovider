@@ -9,6 +9,7 @@ import {
   useConversations,
   ModelInfo,
   ModelProvider,
+  GenerationConfig,
   GenerationSettings
 } from './components';
 import { TopNavigation } from './components/TopNavigation';
@@ -50,12 +51,12 @@ function App() {
   const { health } = useHealth();
   const { usage: tokenUsage, update: updateTokenUsage } = useTokenUsage();
 
-  const DEV_MODE = (import.meta as any).env?.VITE_DEV_MODE === '1';
+  const DEV_MODE = import.meta.env.VITE_DEV_MODE === '1';
 
   // Helper to get auth headers (avoid TypeScript private access)
   const getAuthHeaders = () => {
-    // @ts-ignore accessing internal for convenience
-    return apiClient['getHeaders'] ? (apiClient as any).getHeaders() : {};
+    // @ts-expect-error accessing internal for convenience
+    return apiClient['getHeaders'] ? (apiClient as { getHeaders: () => Record<string, string> }).getHeaders() : {};
   };
 
   // ========================= Hooks =========================
@@ -148,9 +149,15 @@ function App() {
         const data = await response.json();
         const { conversations: backendConversations } = data;
         
+interface BackendConversation {
+  id: string;
+  title?: string;
+  updated_at?: string;
+}
+
         if (backendConversations && backendConversations.length > 0) {
           // Transform backend data to frontend format
-            const transformedConversations = backendConversations.map((conv: any) => ({
+            const transformedConversations = backendConversations.map((conv: BackendConversation) => ({
             id: conv.id,
             title: conv.title || 'Untitled Conversation',
             updatedAt: conv.updated_at || new Date().toISOString()
@@ -158,7 +165,7 @@ function App() {
           setConversations(transformedConversations);
           
           // Set current conversation to the most recent one if default is empty
-          const defaultConv = transformedConversations.find((c: any) => c.id === 'default');
+          const defaultConv = transformedConversations.find((c: Conversation) => c.id === 'default');
           if (defaultConv) {
             setCurrentConversationId('default');
           } else if (transformedConversations.length > 0) {
@@ -429,8 +436,12 @@ function App() {
     // removed naive placeholder token update (now real aggregation handled via ChatInterface onTokenUsageUpdate)
   };
 
+interface GoogleCredentialResponse {
+  credential?: string;
+}
+
   // ========================= Auth Handlers =========================
-  const handleGoogleCredential = useCallback(async (resp: any) => {
+  const handleGoogleCredential = useCallback(async (resp: GoogleCredentialResponse) => {
     console.log('[GIS] credential received', resp ? Object.keys(resp) : 'no resp');
     try {
       if (!resp?.credential) {
@@ -483,24 +494,24 @@ function App() {
         console.log('[GIS] fetching config...');
         await fetchConfig();
         console.log('[GIS] auth flow completed successfully');
-      } catch (fetchError: any) {
+      } catch (fetchError: unknown) {
         clearTimeout(timeoutId);
-        if (fetchError?.name === 'AbortError') {
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
           console.error('[GIS] request timed out after 10 seconds');
           throw new Error('Authentication request timed out');
         }
         throw fetchError;
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('[GIS] Google login error', e);
       // Можно показать пользователю ошибку
-      alert(`Login failed: ${e?.message || 'Unknown error'}`);
+      alert(`Login failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
   }, [fetchConfig]);
 
   // Expose callback only (initialization handled inside LoginModal)
   useEffect(() => {
-    (window as any).handleGoogleCredential = handleGoogleCredential;
+    (window as unknown as Window & { handleGoogleCredential: typeof handleGoogleCredential }).handleGoogleCredential = handleGoogleCredential;
   }, [handleGoogleCredential]);
 
   // ========================= Keyboard Shortcuts =========================
@@ -573,7 +584,7 @@ function App() {
             currentProvider={selectedProvider}
             currentModel={selectedModel}
             onConfigChange={() => {}}
-            onSave={async (gc: any) => { await apiClient.updateGenerationConfig(gc); }}
+            onSave={async (gc: GenerationConfig) => { await apiClient.updateGenerationConfig(gc); }}
             isOpen={true}
             onToggle={() => setShowGenerationSettings(false)}
           />

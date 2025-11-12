@@ -11,22 +11,40 @@ export type ModelProvider =
 
 export type ModelType = 'chat' | 'embedding' | 'image' | 'audio';
 
+export interface GoogleCredentialResponse {
+  credential?: string;
+  clientId?: string;
+  select_by?: string;
+}
+
+export interface ConversationData {
+  id: string;
+  title: string;
+  updated_at: string;
+  created_at?: string;
+}
+
+export interface ExtendedMessageMeta {
+  tokens_in?: number;
+  tokens_out?: number;
+  model?: string;
+  provider?: ModelProvider;
+  estimated_cost?: number;
+  deep_research?: boolean;
+  stage?: string;
+  progress?: number;
+  reasoning?: boolean;
+  thought_tokens?: number; // Gemini thought tokens
+  thinking_tokens_used?: number; // Gemini effective thinking usage
+  tool_calls?: { call_id: string; name?: string; input?: string }[]; // Responses API tool calls
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: string;
-  meta?: {
-    tokens_in?: number;
-    tokens_out?: number;
-    model?: string;
-    provider?: ModelProvider;
-    estimated_cost?: number;
-    deep_research?: boolean;
-    stage?: string;
-    progress?: number;
-    reasoning?: boolean;
-  };
+  meta?: ExtendedMessageMeta;
 }
 
 export interface ChatResponse {

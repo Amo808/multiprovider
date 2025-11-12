@@ -8,7 +8,9 @@ import {
   Message,
   ChatResponse,
   SendMessageRequest,
-  GenerationConfig
+  GenerationConfig,
+  HealthResponse,
+  ConversationData
 } from '../types';
 
 // Provider hooks
@@ -31,15 +33,11 @@ export const useProviders = () => {
   }, []);
 
   const toggleProvider = useCallback(async (providerId: ModelProvider, enabled: boolean) => {
-    try {
-      const updatedProvider = await apiClient.toggleProvider(providerId, enabled);
-      setProviders(prev => 
-        prev.map(p => p.id === providerId ? updatedProvider : p)
-      );
-      return updatedProvider;
-    } catch (err) {
-      throw err;
-    }
+    const updatedProvider = await apiClient.toggleProvider(providerId, enabled);
+    setProviders(prev => 
+      prev.map(p => p.id === providerId ? updatedProvider : p)
+    );
+    return updatedProvider;
   }, []);
 
   const refreshModels = useCallback(async (providerId: ModelProvider) => {
@@ -58,7 +56,7 @@ export const useProviders = () => {
           loading: false, 
           error: undefined,
           connected: true,
-          modelsCount: (response as any).models_count || response.models?.length || 0
+          modelsCount: response.models?.length || 0
         } : p)
       );
       
@@ -152,15 +150,11 @@ export const useModels = (providerId?: ModelProvider) => {
   }, [providerId]);
 
   const toggleModel = useCallback(async (modelProviderId: ModelProvider, modelId: string, enabled: boolean) => {
-    try {
-      const updatedModel = await apiClient.toggleModel(modelProviderId, modelId, enabled);
-      setModels(prev => 
-        prev.map(m => m.id === modelId && m.provider === modelProviderId ? updatedModel : m)
-      );
-      return updatedModel;
-    } catch (err) {
-      throw err;
-    }
+    const updatedModel = await apiClient.toggleModel(modelProviderId, modelId, enabled);
+    setModels(prev => 
+      prev.map(m => m.id === modelId && m.provider === modelProviderId ? updatedModel : m)
+    );
+    return updatedModel;
   }, []);
 
   useEffect(() => {
@@ -213,35 +207,28 @@ export const useConfig = (options?: UseConfigOptions) => {
   }, []);
 
   const updateGenerationConfig = useCallback(async (generationConfig: Partial<GenerationConfig>) => {
-    try {
-      const updatedGenerationConfig = await apiClient.updateGenerationConfig(generationConfig);
-      if (config) {
-        setConfig({
-          ...config,
-          generation: { ...config.generation, ...updatedGenerationConfig }
-        });
-      }
-      return updatedGenerationConfig;
-    } catch (err) {
-      throw err;
+    const updatedGenerationConfig = await apiClient.updateGenerationConfig(generationConfig);
+    if (config) {
+      setConfig({
+        ...config,
+        generation: { ...config.generation, ...updatedGenerationConfig }
+      });
     }
+    return updatedGenerationConfig;
   }, [config]);
 
   const resetConfig = useCallback(async () => {
-    try {
-      const resetConfig = await apiClient.resetConfig();
-      setConfig(resetConfig);
-      return resetConfig;
-    } catch (err) {
-      throw err;
-    }
+    const resetConfig = await apiClient.resetConfig();
+    setConfig(resetConfig);
+    return resetConfig;
   }, []);
 
   useEffect(() => {
     if (!options?.skipInitialFetch) {
       fetchConfig();
     } else {
-      console.log('useConfig: skipping initial fetch until auth ready');
+      console.log('useConfig: skipping initial fetch until auth ready (set loading false)');
+      setLoading(false);
     }
   }, [fetchConfig, options?.skipInitialFetch]);
 
@@ -365,12 +352,8 @@ export const useChat = () => {
   }, []);
 
   const clearHistory = useCallback(async (conversationId?: string) => {
-    try {
-      await apiClient.clearHistory(conversationId);
-      setMessages([]);
-    } catch (err) {
-      throw err;
-    }
+    await apiClient.clearHistory(conversationId);
+    setMessages([]);
   }, []);
 
   return {
@@ -387,7 +370,7 @@ export const useChat = () => {
 
 // Health hook
 export const useHealth = (interval: number = 30000) => {
-  const [health, setHealth] = useState<any>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -421,7 +404,7 @@ export const useHealth = (interval: number = 30000) => {
 
 // Conversations hook
 export const useConversations = () => {
-  const [conversations, setConversations] = useState<any[]>([]);
+  const [conversations, setConversations] = useState<ConversationData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -440,31 +423,23 @@ export const useConversations = () => {
   }, []);
 
   const deleteConversation = useCallback(async (conversationId: string) => {
-    try {
-      await apiClient.deleteConversation(conversationId);
-      setConversations(prev => {
-        // Ensure prev is an array
-        if (!Array.isArray(prev)) {
-          console.warn('Conversations state is not an array:', prev);
-          return [];
-        }
-        return prev.filter(c => c.id !== conversationId);
-      });
-    } catch (err) {
-      throw err;
-    }
+    await apiClient.deleteConversation(conversationId);
+    setConversations(prev => {
+      // Ensure prev is an array
+      if (!Array.isArray(prev)) {
+        console.warn('Conversations state is not an array:', prev);
+        return [];
+      }
+      return prev.filter(c => c.id !== conversationId);
+    });
   }, []);
 
   const renameConversation = useCallback(async (conversationId: string, title: string) => {
-    try {
-      const updated = await apiClient.renameConversation(conversationId, title);
-      setConversations(prev => 
-        prev.map(c => c.id === conversationId ? { ...c, title } : c)
-      );
-      return updated;
-    } catch (err) {
-      throw err;
-    }
+    const updated = await apiClient.renameConversation(conversationId, title);
+    setConversations(prev => 
+      prev.map(c => c.id === conversationId ? { ...c, title } : c)
+    );
+    return updated;
   }, []);
 
   useEffect(() => {

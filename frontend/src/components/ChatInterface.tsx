@@ -4,6 +4,7 @@ import { Message, ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig
 import { useConversations } from '../hooks/useConversations';
 import { ContextViewer } from './ContextViewer';
 import { Button } from './ui/button';
+import { estimateCostForMessage } from '../lib/pricing';
 
 interface ChatInterfaceProps {
   selectedModel?: ModelInfo;
@@ -13,6 +14,8 @@ interface ChatInterfaceProps {
   onApiKeyMissing?: (message: string) => void;
   conversationId?: string;
   onMessageSent?: (conversationId: string, message: string) => void;
+  onTokenUsageUpdate?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number }) => void; // NEW
+  systemPrompt?: string; // NEW
 }
 
 const MessageBubble: React.FC<{
@@ -21,7 +24,9 @@ const MessageBubble: React.FC<{
   isStreaming?: boolean;
   currentResponse?: string;
   deepResearchStage?: string;
-}> = ({ message, selectedModel, isStreaming = false, currentResponse = '', deepResearchStage }) => {
+  onQuote?: (text: string) => void;
+  onSummarize?: (text: string) => void;
+}> = ({ message, selectedModel, isStreaming = false, currentResponse = '', deepResearchStage, onQuote, onSummarize }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -184,6 +189,13 @@ const MessageBubble: React.FC<{
               <Copy size={14} />
             </button>
           )}
+          {/* Action bar */}
+          {!isUser && displayContent && !isStreaming && (
+            <div className="absolute -bottom-8 left-0 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+              <button onClick={() => onQuote?.(displayContent)} className="px-2 py-1 text-[10px] rounded bg-muted hover:bg-muted/80">Quote</button>
+              <button onClick={() => onSummarize?.(displayContent)} className="px-2 py-1 text-[10px] rounded bg-muted hover:bg-muted/80">Summarize</button>
+            </div>
+          )}
         </div>
 
         {/* Message Meta */}
@@ -203,19 +215,19 @@ const MessageBubble: React.FC<{
                   ↓{message.meta.tokens_out}
                 </span>
               )}
-              { (message.meta as any)?.thought_tokens !== undefined && (
-                <span className="text-purple-600 dark:text-purple-400" title={`Thinking (thought) tokens: ${(message.meta as any).thought_tokens}`}>
-                  Θ{(message.meta as any).thought_tokens}
+              { message.meta?.thought_tokens !== undefined && (
+                <span className="text-purple-600 dark:text-purple-400" title={`Thinking (thought) tokens: ${message.meta.thought_tokens}`}>
+                  Θ{message.meta.thought_tokens}
                 </span>
               )}
-              { (message.meta as any)?.thinking_tokens_used !== undefined && (
-                <span className="text-purple-600 dark:text-purple-400" title={`Thinking tokens actually used: ${(message.meta as any).thinking_tokens_used}`}>
-                  used:{(message.meta as any).thinking_tokens_used}
+              { message.meta?.thinking_tokens_used !== undefined && (
+                <span className="text-purple-600 dark:text-purple-400" title={`Thinking tokens actually used: ${message.meta.thinking_tokens_used}`}>
+                  used:{message.meta.thinking_tokens_used}
                 </span>
               )}
-              { (message.meta as any)?.tool_calls && Array.isArray((message.meta as any).tool_calls) && (message.meta as any).tool_calls.length > 0 && (
+              { message.meta?.tool_calls && Array.isArray(message.meta.tool_calls) && message.meta.tool_calls.length > 0 && (
                 <span className="text-orange-600 dark:text-orange-400" title="Tool calls executed">
-                  tools:{(message.meta as any).tool_calls.length}
+                  tools:{message.meta.tool_calls.length}
                 </span>
               )}
               {message.meta.estimated_cost ? (
@@ -247,11 +259,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   selectedProvider,
   generationConfig,
   onApiKeyMissing,
-  conversationId: propConversationId,
-  onMessageSent
+  conversationId: incomingConversationId,
+  onMessageSent,
+  onTokenUsageUpdate, // NEW
+  systemPrompt // NEW
 }) => {
   const [inputValue, setInputValue] = useState('');
-  const conversationId = propConversationId || `conversation-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const conversationId = incomingConversationId || `conversation-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -259,6 +273,28 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const { getConversation, sendMessage, clearConversation, stopStreaming, recoverStuckRequest } = useConversations();
   const conversationState = getConversation(conversationId);
   const { messages, isStreaming, error, currentResponse, deepResearchStage, connectionLost, lastHeartbeat } = conversationState;
+
+  // NEW: aggregate token usage whenever messages change
+  useEffect(() => {
+    if (!messages.length) return;
+    const totals = messages.reduce((acc, m) => {
+      const meta = m.meta;
+      if (meta) {
+        if (meta.tokens_in) acc.prompt += meta.tokens_in;
+        if (meta.tokens_out) acc.completion += meta.tokens_out;
+        // compute cost if not provided
+        const cost = meta.estimated_cost !== undefined ? meta.estimated_cost : estimateCostForMessage(selectedModel?.id, meta);
+        if (cost) acc.cost += cost;
+      }
+      return acc;
+    }, { prompt: 0, completion: 0, cost: 0 });
+    onTokenUsageUpdate?.({
+      prompt_tokens: totals.prompt,
+      completion_tokens: totals.completion,
+      total_tokens: totals.prompt + totals.completion,
+      estimated_cost: totals.cost || undefined
+    });
+  }, [messages, onTokenUsageUpdate, selectedModel?.id]);
 
   // Custom message handler with API key error handling
   const handleSendMessage = async (request: SendMessageRequest) => {
@@ -306,6 +342,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [inputValue]);
 
+  // Preset insertion via window event
+  useEffect(() => {
+    const handler = (e: CustomEvent<string>) => {
+      if (e.detail) {
+        setInputValue(v => (v ? v + '\n' : '') + e.detail);
+      }
+    };
+    window.addEventListener('insert-preset', handler as EventListener);
+    return () => window.removeEventListener('insert-preset', handler as EventListener);
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -321,7 +368,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       provider: selectedProvider,
       model: selectedModel.id,
       conversation_id: conversationId,
-      config: generationConfig
+      config: generationConfig,
+      ...(systemPrompt && systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {})
     };
 
     setInputValue('');
@@ -405,6 +453,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 isStreaming={isStreaming && index === messages.length - 1}
                 currentResponse={currentResponse}
                 deepResearchStage={index === messages.length - 1 ? deepResearchStage : undefined}
+                onQuote={(text) => setInputValue(prev => prev ? prev + '\n> ' + text : '> ' + text)}
+                onSummarize={(text) => setInputValue(prev => prev ? prev + '\nSummarize: ' + text.slice(0, 400) : 'Summarize: ' + text.slice(0, 400))}
               />
             ))}
           </div>

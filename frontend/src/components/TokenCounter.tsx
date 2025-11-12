@@ -1,5 +1,5 @@
-import React from 'react';
-import { Calculator, Zap, DollarSign } from 'lucide-react';
+import React, { useState } from 'react';
+import { cn } from '../lib/utils';
 
 interface TokenUsage {
   prompt_tokens: number;
@@ -19,93 +19,38 @@ const TokenCounter: React.FC<TokenCounterProps> = ({
   usage, 
   model, 
   maxTokens,
-  className = "" 
+  className = ""
 }) => {
+  const [open, setOpen] = useState(false);
   if (!usage) return null;
-
   const { prompt_tokens, completion_tokens, total_tokens, estimated_cost } = usage;
   const tokenPercentage = maxTokens ? (completion_tokens / maxTokens) * 100 : 0;
-
   return (
-    <div className={`bg-gray-50 dark:bg-gray-800 rounded-lg p-3 text-xs space-y-2 ${className}`}>
-      {/* Header */}
-      <div className="flex items-center gap-2 font-medium text-gray-700 dark:text-gray-300">
-        <Calculator className="w-4 h-4" />
-        <span>Token Usage</span>
-        {model && (
-          <span className="text-gray-500 dark:text-gray-400">({model})</span>
-        )}
-      </div>
-
-      {/* Token Stats */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="text-center">
-          <div className="text-blue-600 dark:text-blue-400 font-medium">
-            {prompt_tokens.toLocaleString()}
+    <div className={cn('relative', className)}>
+      <button onClick={() => setOpen(o=>!o)} className="px-2 py-1 text-[11px] rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center gap-1">
+        📊 <span>{open ? 'Hide' : 'Usage'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 w-full max-w-xl shadow-lg text-[11px] space-y-2">
+          <div className="flex items-center flex-wrap gap-2">
+            <div className="font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1">Token Usage {model && <span className="text-gray-500 dark:text-gray-400">({model})</span>}</div>
+            <div className="ml-auto flex items-center gap-4">
+              <div className="flex items-center gap-1"><span className="text-blue-600 dark:text-blue-400 font-semibold">{prompt_tokens.toLocaleString()}</span><span className="text-gray-500">In</span></div>
+              <div className="flex items-center gap-1"><span className="text-green-600 dark:text-green-400 font-semibold">{completion_tokens.toLocaleString()}</span><span className="text-gray-500">Out</span></div>
+              <div className="flex items-center gap-1"><span className="text-gray-800 dark:text-gray-200 font-semibold">{total_tokens.toLocaleString()}</span><span className="text-gray-500">Total</span></div>
+              {estimated_cost !== undefined && <div className="flex items-center gap-1 text-gray-600 dark:text-gray-400"><span>$</span><span>{estimated_cost.toFixed(5)}</span></div>}
+            </div>
           </div>
-          <div className="text-gray-500 dark:text-gray-400">Input</div>
-        </div>
-        
-        <div className="text-center">
-          <div className="text-green-600 dark:text-green-400 font-medium">
-            {completion_tokens.toLocaleString()}
-          </div>
-          <div className="text-gray-500 dark:text-gray-400">Output</div>
-        </div>
-        
-        <div className="text-center">
-          <div className="text-gray-700 dark:text-gray-300 font-medium">
-            {total_tokens.toLocaleString()}
-          </div>
-          <div className="text-gray-500 dark:text-gray-400">Total</div>
-        </div>
-      </div>
-
-      {/* Progress Bar for Output Tokens */}
-      {maxTokens && (
-        <div className="space-y-1">
-          <div className="flex justify-between text-gray-500 dark:text-gray-400">
-            <span>Output Progress</span>
-            <span>{tokenPercentage.toFixed(1)}%</span>
-          </div>
-          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-            <div 
-              className={`h-2 rounded-full transition-all duration-300 ${
-                tokenPercentage > 90 
-                  ? 'bg-red-500' 
-                  : tokenPercentage > 70 
-                    ? 'bg-yellow-500' 
-                    : 'bg-green-500'
-              }`}
-              style={{ width: `${Math.min(tokenPercentage, 100)}%` }}
-            />
-          </div>
-          <div className="text-gray-500 dark:text-gray-400 text-center">
-            {completion_tokens.toLocaleString()} / {maxTokens.toLocaleString()} tokens
-          </div>
+          {maxTokens && (
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div className={`${tokenPercentage>90?'bg-red-500':tokenPercentage>70?'bg-yellow-500':'bg-green-500'} h-full transition-all`} style={{width: `${Math.min(tokenPercentage,100)}%`}} />
+              </div>
+              <span className="text-gray-500 dark:text-gray-400 min-w-[90px] text-right">{completion_tokens.toLocaleString()} / {maxTokens.toLocaleString()}</span>
+            </div>
+          )}
         </div>
       )}
-
-      {/* Cost Estimate */}
-      {estimated_cost !== undefined && (
-        <div className="flex items-center justify-center gap-1 text-gray-600 dark:text-gray-400 pt-1 border-t border-gray-200 dark:border-gray-700">
-          <DollarSign className="w-3 h-3" />
-          <span>Est. Cost: ${estimated_cost.toFixed(6)}</span>
-        </div>
-      )}
-
-      {/* Performance Indicator */}
-      <div className="flex items-center justify-center gap-1 text-gray-500 dark:text-gray-400">
-        <Zap className="w-3 h-3" />
-        <span>
-          {completion_tokens > 1000 
-            ? 'Long Response' 
-            : completion_tokens > 500 
-              ? 'Medium Response' 
-              : 'Short Response'
-          }
-        </span>
-      </div>
     </div>
   );
 };

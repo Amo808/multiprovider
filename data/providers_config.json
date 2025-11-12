@@ -2,7 +2,7 @@
   "providers": {
     "deepseek": {
       "name": "DeepSeek",
-      "enabled": false,
+      "enabled": true,
       "base_url": "https://api.deepseek.com",
       "endpoint": null,
       "region": null,
@@ -12,7 +12,7 @@
     },
     "openai": {
       "name": "OpenAI",
-      "enabled": false,
+      "enabled": true,
       "base_url": "https://api.openai.com/v1",
       "endpoint": null,
       "region": null,
@@ -22,7 +22,7 @@
     },
     "anthropic": {
       "name": "Anthropic",
-      "enabled": false,
+      "enabled": true,
       "base_url": "https://api.anthropic.com",
       "endpoint": null,
       "region": null,
@@ -32,7 +32,7 @@
     },
     "gemini": {
       "name": "Google Gemini",
-      "enabled": false,
+      "enabled": true,
       "base_url": "https://generativelanguage.googleapis.com",
       "endpoint": null,
       "region": null,
@@ -48,7 +48,27 @@
       "region": null,
       "api_version": null,
       "extra_params": {},
-      "api_key_env": null
+      "api_key_env": "OLLAMA_API_KEY"
+    },
+    "groq": {
+      "name": "Groq",
+      "enabled": false,
+      "base_url": "https://api.groq.com/openai/v1",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "GROQ_API_KEY"
+    },
+    "mistral": {
+      "name": "Mistral AI",
+      "enabled": false,
+      "base_url": "https://api.mistral.ai/v1",
+      "endpoint": null,
+      "region": null,
+      "api_version": null,
+      "extra_params": {},
+      "api_key_env": "MISTRAL_API_KEY"
     }
   }
 }

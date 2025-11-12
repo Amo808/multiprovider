@@ -1,6 +1,6 @@
 {
-  "activeProvider": "deepseek",
-  "activeModel": "deepseek-chat",
+  "activeProvider": "gemini",
+  "activeModel": "gemini-2.5-pro",
   "providers": {
     "deepseek": {
       "id": "deepseek",
@@ -560,8 +560,8 @@
     }
   },
   "generation": {
-    "temperature": 1,
-    "max_tokens": 64000,
+    "temperature": 1.5,
+    "max_tokens": 8192,
     "top_p": 1,
     "frequency_penalty": 0,
     "presence_penalty": 0,
