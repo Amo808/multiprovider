@@ -20,7 +20,13 @@ cmd /c "npm run dev"
 - **Backend**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
 
-## 🛠️ Если что-то не работает
+## � Системные требования
+
+- **Node.js**: v18.20.8+ (для Vite 5.4.0)
+- **Python**: 3.8+
+- **npm**: 10.8.2+
+
+## �🛠️ Если что-то не работает
 
 ### Frontend не запускается через npm run dev
 
@@ -45,12 +51,27 @@ C:\Users\Amo\Desktop\multech\multiprovider\backend\.venv\Scripts\python.exe main
 ```bash
 # Frontend
 cd frontend
-npm install @vitejs/plugin-react-swc vite-tsconfig-paths vite-plugin-svgr
+npm install --legacy-peer-deps
 
 # Backend  
 cd backend
 pip install -r requirements.txt
 ```
+
+### Docker build не работает
+
+**Проблема**: `npm ci` не может установить зависимости
+
+**Решение**: Используется `npm install --legacy-peer-deps` в Dockerfile
+
+### Версии React типов конфликтуют
+
+**Проблема**: @types/react и @types/react-dom несовместимы
+
+**Решение**: Зафиксированы совместимые версии в package.json:
+- @types/react: ^18.2.55
+- @types/react-dom: ^18.2.22
+- vite: ^5.4.0
 
 ### Google Auth все еще активен
 
