@@ -60,9 +60,22 @@ pip install -r requirements.txt
 
 ### Docker build не работает
 
-**Проблема**: `npm ci` не может установить зависимости
+**Проблема**: `npm ci` не может установить зависимости или Rollup ошибка
 
-**Решение**: Используется `npm install --legacy-peer-deps` в Dockerfile
+**Решения**:
+1. **Rollup/Vite ошибка**: Зафиксированы совместимые версии в package.json:
+   - vite: 5.4.0 (вместо 7.2.2)
+   - rollup: 4.24.0
+   - Node.js v18.20.8 совместим
+
+2. **npm ci ошибка**: Используется `npm install --legacy-peer-deps --no-optional` в Dockerfile
+
+3. **Если все еще не работает**:
+```bash
+# Очистка и пересборка
+docker system prune -f
+docker-compose build --no-cache
+```
 
 ### Версии React типов конфликтуют
 
@@ -70,8 +83,17 @@ pip install -r requirements.txt
 
 **Решение**: Зафиксированы совместимые версии в package.json:
 - @types/react: ^18.2.55
-- @types/react-dom: ^18.2.22
-- vite: ^5.4.0
+- @types/react-dom: ^18.3.7 (вместо ^19.2.2)
+- vite: 5.4.0 (стабильная версия)
+- rollup: 4.24.0 (совместимая с vite 5.4.0)
+
+**Если проблема повторяется**:
+```bash
+cd frontend
+rm -rf node_modules package-lock.json
+npm install --legacy-peer-deps
+npm run build
+```
 
 ### Google Auth все еще активен
 

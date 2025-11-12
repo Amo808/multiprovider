@@ -22,12 +22,15 @@ WORKDIR /app
 
 # Copy and build frontend first
 COPY frontend/package*.json ./frontend/
-RUN cd frontend && rm -rf node_modules package-lock.json
-RUN cd frontend && npm install --legacy-peer-deps --no-optional
+
+# Clean install with proper Rollup handling
+RUN cd frontend && \
+    rm -rf node_modules package-lock.json && \
+    npm install --legacy-peer-deps && \
+    npm install @rollup/rollup-linux-x64-gnu@4.24.0 --save-optional --no-save --silent || true
 
 COPY frontend/ ./frontend/
-RUN cd frontend && rm -rf node_modules/.cache
-RUN cd frontend && npm rebuild --verbose
+RUN cd frontend && npm run build
 RUN cd frontend && npm run build
 
 # Copy Python modules and backend files
