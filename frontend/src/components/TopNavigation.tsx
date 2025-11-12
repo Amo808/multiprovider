@@ -38,9 +38,9 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({ config, selectedMo
       <Button variant="ghost" size="sm" onClick={onGenSettings} className="px-2 text-xs">Generation</Button>
       {m && (
         <div className="hidden md:flex items-center gap-1 text-[11px]">
-          {m.context_length && <span className="px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-800">⚪ {m.context_length.toLocaleString()} tks</span>}
-          {m.streaming && <span className="px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-800">• Streaming</span>}
-          {m.vision && <span className="px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-800">• Vision</span>}
+          {m.context_length && <span className="px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200">⚪ {m.context_length.toLocaleString()} tks</span>}
+          {m.streaming && <span className="px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200">• Streaming</span>}
+          {m.vision && <span className="px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200">• Vision</span>}
         </div>
       )}
       <div className="ml-auto flex items-center gap-2">

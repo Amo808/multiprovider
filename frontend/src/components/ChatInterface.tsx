@@ -581,11 +581,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </form>
 
         {/* Status Bar */}
-        <div className="mt-3 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+        <div className="mt-3 flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
           <div className="flex items-center space-x-4">
             {selectedModel && selectedProvider && (
               <>
-                <span>
+                <span className="font-medium">
                   Model: {selectedModel.display_name} ({selectedProvider.toUpperCase()})
                 </span>
                 <span>•</span>
@@ -595,31 +595,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 {generationConfig.verbosity && (
                   <>
                     <span>•</span>
-                    <span title="Verbosity hint to GPT-5" className="text-indigo-600 dark:text-indigo-400">Verbosity: {generationConfig.verbosity}</span>
+                    <span title="Verbosity hint to GPT-5" className="text-indigo-600 dark:text-indigo-400 font-medium">Verbosity: {generationConfig.verbosity}</span>
                   </>
                 )}
                 {generationConfig.reasoning_effort && (
                   <>
                     <span>•</span>
-                    <span title="Reasoning effort" className="text-purple-600 dark:text-purple-400">Reasoning: {generationConfig.reasoning_effort}</span>
+                    <span title="Reasoning effort" className="text-purple-600 dark:text-purple-400 font-medium">Reasoning: {generationConfig.reasoning_effort}</span>
                   </>
                 )}
                 {generationConfig.thinking_budget !== undefined && selectedProvider === 'gemini' && (
                   <>
                     <span>•</span>
-                    <span title="Gemini thinking budget" className="text-purple-600 dark:text-purple-400">ThinkBudget: {generationConfig.thinking_budget}</span>
+                    <span title="Gemini thinking budget" className="text-purple-600 dark:text-purple-400 font-medium">ThinkBudget: {generationConfig.thinking_budget}</span>
                   </>
                 )}
                 {generationConfig.stream && (
                   <>
                     <span>•</span>
-                    <span className="text-green-600 dark:text-green-400">Streaming enabled</span>
+                    <span className="text-green-600 dark:text-green-400 font-medium">Streaming enabled</span>
                   </>
                 )}
               </>
             )}
           </div>
-          <div>
+          <div className="font-medium">
             {messages.length > 0 && (
               <span>{messages.length} message{messages.length !== 1 ? 's' : ''}</span>
             )}

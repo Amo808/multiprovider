@@ -27,7 +27,7 @@ const TokenCounter: React.FC<TokenCounterProps> = ({
   const tokenPercentage = maxTokens ? (completion_tokens / maxTokens) * 100 : 0;
   return (
     <div className={cn('relative', className)}>
-      <button onClick={() => setOpen(o=>!o)} className="px-2 py-1 text-[11px] rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center gap-1">
+      <button onClick={() => setOpen(o=>!o)} className="px-2 py-1 text-[11px] rounded-md bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600 flex items-center gap-1">
         📊 <span>{open ? 'Hide' : 'Usage'}</span>
       </button>
       {open && (

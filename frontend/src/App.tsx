@@ -590,9 +590,9 @@ interface GoogleCredentialResponse {
           />
         </div>
       )}
-      <div className="flex items-center gap-2 px-4 py-1 text-xs border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700">{showHistory ? 'Hide' : 'Show'} History</button>
-        {health && <span className={`px-2 py-1 rounded-full ${health.status === 'healthy' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'}`}>API {health.status}</span>}
+      <div className="flex items-center gap-2 px-4 py-1 text-xs border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+        <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium">{showHistory ? 'Hide' : 'Show'} History</button>
+        {health && <span className={`px-2 py-1 rounded-full font-medium ${health.status === 'healthy' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'}`}>API {health.status}</span>}
       </div>
       <main className="flex-1 flex min-h-0 overflow-hidden">
         {showHistory && (

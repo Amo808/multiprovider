@@ -64,11 +64,11 @@ pip install -r requirements.txt
 
 **Решения**:
 1. **Rollup/Vite ошибка**: Зафиксированы совместимые версии в package.json:
-   - vite: 5.4.0 (вместо 7.2.2)
+   - vite: 5.4.0 (совместимо с Node.js 18.20.8)
    - rollup: 4.24.0
-   - Node.js v18.20.8 совместим
+   - @rollup/rollup-linux-x64-gnu: 4.24.0 (опциональная зависимость для Docker)
 
-2. **npm ci ошибка**: Используется `npm install --legacy-peer-deps --no-optional` в Dockerfile
+2. **npm ci ошибка**: Используется `npm install --legacy-peer-deps` в Dockerfile
 
 3. **Если все еще не работает**:
 ```bash
@@ -78,6 +78,14 @@ docker-compose build --no-cache
 ```
 
 ### Версии React типов конфликтуют
+
+**Проблема**: @types/react версии 18.x vs 19.x конфликт
+
+**Решение**: Зафиксированы совместимые версии:
+```bash
+cd frontend
+npm install @types/react@18.2.55 @types/react-dom@18.3.7 --save-dev --save-exact
+```
 
 **Проблема**: @types/react и @types/react-dom несовместимы
 
