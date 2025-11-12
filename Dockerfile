@@ -22,7 +22,7 @@ WORKDIR /app
 
 # Copy and build frontend first
 COPY frontend/package*.json ./frontend/
-RUN cd frontend && npm ci
+RUN cd frontend && npm install --legacy-peer-deps
 
 COPY frontend/ ./frontend/
 RUN cd frontend && npm run build
