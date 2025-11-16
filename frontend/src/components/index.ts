@@ -13,6 +13,7 @@ export { ToastProvider } from './ToastProvider';
 export { TokenProgress } from './TokenProgress';
 export { PresetPrompts } from './PresetPrompts';
 export { UnifiedModelMenu } from './UnifiedModelMenu';
+export { Logo } from './Logo';
 
 // Hooks
 export * from '../hooks/useApi';

@@ -15,10 +15,8 @@ import {
 import { TopNavigation } from './components/TopNavigation';
 import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider } from './components/ToastProvider';
-import TokenCounter from './components/TokenCounter';
 import { PresetPrompts } from './components/PresetPrompts';
 import { apiClient } from './services/api';
-import { Button } from './components/ui/button';
 import { useTokenUsage } from './hooks/useTokenUsage';
 import { useHealth } from './components';
 
@@ -29,7 +27,6 @@ function App() {
   const [selectedModel, setSelectedModel] = useState<ModelInfo | undefined>();
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | undefined>();
   const [showProviderManager, setShowProviderManager] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(false);
   const [currentConversationId, setCurrentConversationId] = useState<string>('default');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>(() => {
@@ -114,19 +111,51 @@ function App() {
   // ========================= Theme Handling =========================
   useEffect(() => {
     const root = document.documentElement;
+    const body = document.body;
+    const appElement = document.getElementById('root');
     console.log(`Applying theme: ${theme}`);
+    
+    // Remove all theme classes first
+    root.classList.remove('dark', 'light');
+    body.classList.remove('dark', 'light');
+    if (appElement) appElement.classList.remove('dark', 'light');
+    
+    // Clear any forced styles
+    root.style.backgroundColor = '';
+    body.style.backgroundColor = '';
+    root.style.color = '';
+    body.style.color = '';
+    if (appElement) {
+      appElement.style.backgroundColor = '';
+      appElement.style.color = '';
+    }
     
     if (theme === 'auto') {
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       console.log(`Auto theme - system prefers dark: ${prefersDark}`);
-      root.classList.toggle('dark', prefersDark);
-    } else {
-      const isDark = theme === 'dark';
-      console.log(`Manual theme - applying dark: ${isDark}`);
-      root.classList.toggle('dark', isDark);
+      if (prefersDark) {
+        root.classList.add('dark');
+        body.classList.add('dark');
+        if (appElement) appElement.classList.add('dark');
+      } else {
+        root.classList.add('light');
+        body.classList.add('light');
+        if (appElement) appElement.classList.add('light');
+      }
+    } else if (theme === 'dark') {
+      console.log(`Manual dark theme - applying dark mode`);
+      root.classList.add('dark');
+      body.classList.add('dark');
+      if (appElement) appElement.classList.add('dark');
+    } else if (theme === 'light') {
+      console.log(`Manual light theme - applying light mode`);
+      root.classList.add('light');
+      body.classList.add('light');
+      if (appElement) appElement.classList.add('light');
     }
     
     console.log(`Root element classes: ${root.className}`);
+    console.log(`Body element classes: ${body.className}`);
     
     // Save theme to localStorage
     try {
@@ -536,18 +565,18 @@ interface GoogleCredentialResponse {
 
   if (configLoading || !config) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <div className="text-center">
           {configError ? (
             <>
               <div className="text-red-500 text-6xl mb-4">⚠️</div>
               <p className="text-red-600 dark:text-red-400 mb-2">Failed to load configuration</p>
-              <p className="text-gray-600 dark:text-gray-400 text-sm">{configError}</p>
+              <p className="text-muted-foreground text-sm">{configError}</p>
             </>
           ) : (
             <>
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-gray-600 dark:text-gray-400">Loading configuration...</p>
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+              <p className="text-muted-foreground">Loading configuration...</p>
             </>
           )}
         </div>
@@ -557,7 +586,7 @@ interface GoogleCredentialResponse {
 
   // ========================= Main UI =========================
   return (
-    <div className="h-screen bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden">
+    <div className="h-screen bg-background text-foreground flex flex-col overflow-hidden">
       <ToastProvider />
       <TopNavigation
         config={config}
@@ -568,14 +597,14 @@ interface GoogleCredentialResponse {
         onThemeToggle={toggleTheme}
         onSettingsClick={() => setShowProviderManager(true)}
         onLogout={() => { localStorage.removeItem('jwt_token'); setIsAuthenticated(false); setUserEmail(null); }}
-        onMenuToggle={() => setShowSidebar(prev => !prev)}
-        onGenSettings={() => setShowGenerationSettings(s => !s)}
         onSelectModel={handleModelChange}
+        onGenSettings={() => setShowGenerationSettings(s => !s)}
         onChangeGeneration={async (patch) => {
           try { await updateGenerationConfig(patch); } catch(e){ console.error(e); }
         }}
         systemPrompt={activeSystemPrompt}
         onChangeSystemPrompt={(p: string) => { setSystemPrompts(prev => ({ ...prev, [activeSystemPromptKey]: p })); }}
+        tokenUsage={tokenUsage}
       />
       {showGenerationSettings && (
         <div className="absolute top-16 right-4 z-40">
@@ -590,8 +619,8 @@ interface GoogleCredentialResponse {
           />
         </div>
       )}
-      <div className="flex items-center gap-2 px-4 py-1 text-xs border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
-        <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium">{showHistory ? 'Hide' : 'Show'} History</button>
+      <div className="flex items-center gap-2 px-4 py-1 text-xs border-b border-border bg-background">
+        <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium">{showHistory ? 'Hide' : 'Show'} History</button>
         {health && <span className={`px-2 py-1 rounded-full font-medium ${health.status === 'healthy' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'}`}>API {health.status}</span>}
       </div>
       <main className="flex-1 flex min-h-0 overflow-hidden">
@@ -605,26 +634,6 @@ interface GoogleCredentialResponse {
             onDeleteConversation={handleDeleteConversation}
           />
         )}
-        {showSidebar && (
-          <div className="fixed inset-0 z-50 lg:hidden">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setShowSidebar(false)} />
-            <div className="relative w-80 h-full bg-white dark:bg-gray-800 overflow-hidden flex flex-col">
-              <div className="flex-1 overflow-y-auto">
-                <ConversationHistory
-                  conversations={conversations}
-                  currentConversationId={currentConversationId}
-                  onNewConversation={handleNewConversation}
-                  onSelectConversation={(id: string) => { handleSelectConversation(id); setShowSidebar(false); }}
-                  onRenameConversation={handleRenameConversation}
-                  onDeleteConversation={handleDeleteConversation}
-                />
-              </div>
-              <div className="border-t border-gray-200 dark:border-gray-700 p-4 space-y-2">
-                <Button variant="ghost" className="w-full justify-start" onClick={() => { setShowProviderManager(true); setShowSidebar(false); }}>Manage Providers</Button>
-              </div>
-            </div>
-          </div>
-        )}
         <div className="flex-1 flex flex-col min-h-0">
           {currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
             <>
@@ -637,14 +646,13 @@ interface GoogleCredentialResponse {
                 onTokenUsageUpdate={updateTokenUsage}
                 systemPrompt={activeSystemPrompt}
               />
-              <div className="px-4 pb-3"><TokenCounter usage={tokenUsage} model={selectedModel?.display_name} maxTokens={selectedModel?.max_output_tokens || selectedModel?.context_length} /></div>
               <div className="px-4 pb-3"><PresetPrompts onInsert={(t: string) => { const ev = new CustomEvent('insert-preset', { detail: t }); window.dispatchEvent(ev); }} /></div>
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                <p className="text-gray-600 dark:text-gray-400">Loading conversation...</p>
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Loading conversation...</p>
               </div>
             </div>
           )}

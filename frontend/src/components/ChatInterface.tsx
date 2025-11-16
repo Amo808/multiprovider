@@ -24,9 +24,7 @@ const MessageBubble: React.FC<{
   isStreaming?: boolean;
   currentResponse?: string;
   deepResearchStage?: string;
-  onQuote?: (text: string) => void;
-  onSummarize?: (text: string) => void;
-}> = ({ message, selectedModel, isStreaming = false, currentResponse = '', deepResearchStage, onQuote, onSummarize }) => {
+}> = ({ message, selectedModel, isStreaming = false, currentResponse = '', deepResearchStage }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -156,11 +154,11 @@ const MessageBubble: React.FC<{
                   <span className="text-sm">💭 Generating response...</span>
                 </div>
               ) : (
-                <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
+                <div className="flex items-center space-x-2 text-muted-foreground">
                   <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
                   <span className="text-sm">⏳ Preparing...</span>
                 </div>
@@ -181,27 +179,20 @@ const MessageBubble: React.FC<{
               onClick={handleCopy}
               className={`absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md ${
                 isUser 
-                  ? 'text-blue-200 hover:text-white hover:bg-blue-700' 
-                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                  ? 'text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary/20' 
+                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
               }`}
               title={copied ? 'Copied!' : 'Copy message'}
             >
               <Copy size={14} />
             </button>
           )}
-          {/* Action bar */}
-          {!isUser && displayContent && !isStreaming && (
-            <div className="absolute -bottom-8 left-0 flex gap-1 opacity-0 group-hover:opacity-100 transition">
-              <button onClick={() => onQuote?.(displayContent)} className="px-2 py-1 text-[10px] rounded bg-muted hover:bg-muted/80">Quote</button>
-              <button onClick={() => onSummarize?.(displayContent)} className="px-2 py-1 text-[10px] rounded bg-muted hover:bg-muted/80">Summarize</button>
-            </div>
-          )}
         </div>
 
         {/* Message Meta */}
         {message.meta && !isUser && (message.meta.tokens_in || message.meta.tokens_out || isStreaming) && (
           <div className="mt-1 flex items-center space-x-2 text-xs">
-            <div className="text-gray-400 dark:text-gray-500">
+            <div className="text-muted-foreground">
               {new Date(message.timestamp).toLocaleTimeString()}
             </div>
             <div className="flex items-center space-x-1">
@@ -235,7 +226,7 @@ const MessageBubble: React.FC<{
                   ${message.meta.estimated_cost.toFixed(4)}
                 </span>
               ) : (isStreaming || (message.content && !message.meta.estimated_cost)) ? (
-                <span className="text-gray-500 dark:text-gray-400 animate-pulse">
+                <span className="text-muted-foreground animate-pulse">
                   calculating cost...
                 </span>
               ) : null}
@@ -245,7 +236,7 @@ const MessageBubble: React.FC<{
 
         {/* Show timestamp only if no meta info shown above */}
         {(!message.meta || isUser || (!message.meta.tokens_in && !message.meta.tokens_out && !isStreaming)) && (
-          <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+          <div className="mt-1 text-xs text-muted-foreground">
             {new Date(message.timestamp).toLocaleTimeString()}
           </div>
         )}
@@ -409,34 +400,34 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const canSend = inputValue.trim() && !isStreaming && selectedModel && selectedProvider;
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-white dark:bg-gray-900">
+    <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-md mx-auto px-4">
-              <Bot size={64} className="mx-auto mb-4 text-gray-300 dark:text-gray-600" />
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                Welcome to AI Chat
+              <Bot size={64} className="mx-auto mb-4 text-muted-foreground" />
+              <h2 className="text-2xl font-bold text-foreground mb-2">
+                Welcome to MULTECH AI
               </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">
+              <p className="text-muted-foreground mb-6">
                 Start a conversation with your AI assistant. Choose a model and begin chatting!
               </p>
               {selectedModel && selectedProvider ? (
-                <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+                <div className="bg-secondary rounded-lg p-4">
                   <div className="flex items-center justify-center space-x-2 text-sm">
-                    <span className="text-gray-600 dark:text-gray-400">Ready with</span>
-                    <span className="font-medium text-gray-900 dark:text-white">
+                    <span className="text-muted-foreground">Ready with</span>
+                    <span className="font-medium text-foreground">
                       {selectedModel.display_name}
                     </span>
-                    <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
+                    <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs rounded-full">
                       {selectedProvider.toUpperCase()}
                     </span>
                   </div>
                 </div>
               ) : (
-                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-                  <p className="text-yellow-800 dark:text-yellow-200 text-sm">
+                <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+                  <p className="text-destructive text-sm">
                     Please select a model to start chatting
                   </p>
                 </div>
@@ -453,8 +444,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 isStreaming={isStreaming && index === messages.length - 1}
                 currentResponse={currentResponse}
                 deepResearchStage={index === messages.length - 1 ? deepResearchStage : undefined}
-                onQuote={(text) => setInputValue(prev => prev ? prev + '\n> ' + text : '> ' + text)}
-                onSummarize={(text) => setInputValue(prev => prev ? prev + '\nSummarize: ' + text.slice(0, 400) : 'Summarize: ' + text.slice(0, 400))}
               />
             ))}
           </div>
@@ -510,10 +499,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
 
         {error && (
-          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+          <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
             <div className="flex items-center space-x-2">
-              <AlertCircle size={16} className="text-red-600 dark:text-red-400" />
-              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+              <AlertCircle size={16} className="text-destructive" />
+              <p className="text-sm text-destructive">{error}</p>
             </div>
           </div>
         )}
@@ -530,7 +519,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   ? "Type your message... (Press Enter to send, Shift+Enter for new line)"
                   : "Select a model first..."
               }
-              className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-white"
+              className="w-full px-4 py-3 border border-input rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-input bg-background text-foreground placeholder:text-muted-foreground"
               rows={1}
               style={{ minHeight: '48px', maxHeight: '200px' }}
               disabled={!selectedModel || isStreaming}
@@ -581,45 +570,45 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </form>
 
         {/* Status Bar */}
-        <div className="mt-3 flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
-          <div className="flex items-center space-x-4">
+        <div className="mt-3 flex items-center justify-between text-xs bg-secondary rounded-md p-2 border border-border">
+          <div className="flex items-center space-x-4 text-secondary-foreground">
             {selectedModel && selectedProvider && (
               <>
-                <span className="font-medium">
+                <span className="font-semibold text-foreground">
                   Model: {selectedModel.display_name} ({selectedProvider.toUpperCase()})
                 </span>
-                <span>•</span>
-                <span>
+                <span className="text-muted-foreground">•</span>
+                <span className="text-muted-foreground">
                   Context: {selectedModel.context_length.toLocaleString()} tokens
                 </span>
                 {generationConfig.verbosity && (
                   <>
-                    <span>•</span>
-                    <span title="Verbosity hint to GPT-5" className="text-indigo-600 dark:text-indigo-400 font-medium">Verbosity: {generationConfig.verbosity}</span>
+                    <span className="text-muted-foreground">•</span>
+                    <span title="Verbosity hint to GPT-5" className="px-2 py-1 bg-primary/10 text-primary rounded-full font-medium">Verbosity: {generationConfig.verbosity}</span>
                   </>
                 )}
                 {generationConfig.reasoning_effort && (
                   <>
-                    <span>•</span>
-                    <span title="Reasoning effort" className="text-purple-600 dark:text-purple-400 font-medium">Reasoning: {generationConfig.reasoning_effort}</span>
+                    <span className="text-muted-foreground">•</span>
+                    <span title="Reasoning effort" className="px-2 py-1 bg-primary/10 text-primary rounded-full font-medium">Reasoning: {generationConfig.reasoning_effort}</span>
                   </>
                 )}
                 {generationConfig.thinking_budget !== undefined && selectedProvider === 'gemini' && (
                   <>
-                    <span>•</span>
-                    <span title="Gemini thinking budget" className="text-purple-600 dark:text-purple-400 font-medium">ThinkBudget: {generationConfig.thinking_budget}</span>
+                    <span className="text-muted-foreground">•</span>
+                    <span title="Gemini thinking budget" className="px-2 py-1 bg-primary/10 text-primary rounded-full font-medium">ThinkBudget: {generationConfig.thinking_budget}</span>
                   </>
                 )}
                 {generationConfig.stream && (
                   <>
-                    <span>•</span>
-                    <span className="text-green-600 dark:text-green-400 font-medium">Streaming enabled</span>
+                    <span className="text-muted-foreground">•</span>
+                    <span className="px-2 py-1 bg-green-500/10 text-green-600 dark:text-green-400 rounded-full font-medium">Streaming enabled</span>
                   </>
                 )}
               </>
             )}
           </div>
-          <div className="font-medium">
+          <div className="font-medium text-foreground">
             {messages.length > 0 && (
               <span>{messages.length} message{messages.length !== 1 ? 's' : ''}</span>
             )}

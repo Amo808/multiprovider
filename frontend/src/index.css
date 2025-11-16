@@ -2,7 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom styles */
 @layer base {
   html {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -14,10 +13,10 @@
   }
   
   body {
-    @apply bg-gray-50 text-gray-900;
     margin: 0;
     padding: 0;
   }
+  
   :root {
     --background: 0 0% 100%;
     --foreground: 240 10% 3.9%;
@@ -45,26 +44,28 @@
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
   }
+  
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
+    color-scheme: dark;
+    --background: 210 17% 11%; /* slate-900 */
+    --foreground: 210 40% 98%; /* slate-50 */
+    --card: 210 17% 11%; /* slate-900 */
+    --card-foreground: 210 40% 98%; /* slate-50 */
+    --popover: 210 17% 11%; /* slate-900 */
+    --popover-foreground: 210 40% 98%; /* slate-50 */
+    --primary: 217.2 91.2% 59.8%; /* blue-500 */
+    --primary-foreground: 0 0% 98%; /* white */
+    --secondary: 215 20% 21%; /* slate-700 */
+    --secondary-foreground: 210 40% 98%; /* slate-50 */
+    --muted: 215 20% 21%; /* slate-700 */
+    --muted-foreground: 215.4 16.3% 56.9%; /* slate-400 */
+    --accent: 215 20% 21%; /* slate-700 */
+    --accent-foreground: 210 40% 98%; /* slate-50 */
     --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 215 20% 21%; /* slate-700 */
+    --input: 215 20% 21%; /* slate-700 */
+    --ring: 212.7 26.8% 83.9%;
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;
     --chart-3: 30 80% 55%;
@@ -74,18 +75,49 @@
 }
 
 @layer components {
+  /* Base message styles */
   .chat-message {
     @apply mb-4 p-4 rounded-lg;
   }
   
+  /* Light theme styles */
   .user-message {
-    @apply bg-primary-100 ml-8;
+    @apply mb-4 p-4 rounded-lg ml-8;
+    background-color: rgb(219, 234, 254); /* light blue */
+    border: 1px solid rgb(147, 197, 253);
   }
   
   .assistant-message {
-    @apply bg-white border border-gray-200 mr-8;
+    @apply mb-4 p-4 rounded-lg mr-8;
+    background-color: white;
+    border: 1px solid rgb(229, 231, 235);
+  }
+
+  /* Dark theme overrides - Clean styling without extra borders */
+  .dark .chat-message {
+    background-color: rgb(51, 65, 85) !important;
+    border: 1px solid rgba(71, 85, 105, 0.3) !important;
+    color: rgb(226, 232, 240) !important;
+    border-radius: 0.75rem !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.2) !important;
   }
   
+  .dark .user-message {
+    background-color: rgb(59, 130, 246) !important;
+    border: 1px solid rgba(96, 165, 250, 0.3) !important;
+    color: white !important;
+    border-radius: 0.75rem !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.2) !important;
+  }
+  
+  .dark .assistant-message {
+    background-color: rgb(51, 65, 85) !important;
+    border: 1px solid rgba(71, 85, 105, 0.3) !important;
+    color: rgb(226, 232, 240) !important;
+    border-radius: 0.75rem !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.2) !important;
+  }
+
   .streaming-cursor {
     @apply inline-block w-2 h-5 bg-primary-500 animate-pulse ml-1;
   }
@@ -135,13 +167,59 @@ pre code {
   background: #f1f1f1;
 }
 
+.dark ::-webkit-scrollbar-track {
+  background: #374151;
+}
+
 ::-webkit-scrollbar-thumb {
   background: #c1c1c1;
   border-radius: 3px;
 }
 
+.dark ::-webkit-scrollbar-thumb {
+  background: #6b7280;
+  border-radius: 3px;
+}
+
 ::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Clean button styling for dark mode - no ugly borders */
+.dark button[type="button"],
+.dark .btn-secondary {
+  background-color: transparent !important;
+  color: rgb(226, 232, 240) !important;
+  border: none !important;
+}
+
+.dark button[type="button"]:hover,
+.dark .btn-secondary:hover {
+  background-color: rgba(71, 85, 105, 0.3) !important;
+}
+
+/* Clean outline buttons in dark mode */
+.dark button[class*="outline"],
+.dark [class*="outline"] button {
+  border: none !important;
+  background-color: transparent !important;
+  color: rgb(203, 213, 225) !important;
+}
+
+.dark button[class*="outline"]:hover,
+.dark [class*="outline"] button:hover {
+  background-color: rgba(71, 85, 105, 0.3) !important;
+}
+
+/* Remove focus outlines that create squares */
+.dark button:focus,
+.dark button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 

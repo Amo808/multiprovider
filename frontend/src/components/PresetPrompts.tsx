@@ -2,7 +2,6 @@ import React from 'react';
 import { Button } from './ui/button';
 
 const presets = [
-  'Summarize the following text:',
   'Explain this like I am five:',
   'Generate 5 creative taglines about AI innovation.',
   'List pros and cons of using server-side streaming.',

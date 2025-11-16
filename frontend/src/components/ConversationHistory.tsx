@@ -67,16 +67,16 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
   };
 
   return (
-    <div className="w-80 h-full bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+    <div className="w-80 h-full bg-background border-r border-border flex flex-col">
       {/* Header */}
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+      <div className="p-4 border-b border-border">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+          <h2 className="text-lg font-semibold text-foreground">
             Conversations
           </h2>
           <button
             onClick={onNewConversation}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors"
             title="New Conversation"
           >
             <Plus size={18} />
@@ -92,8 +92,8 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
               key={conversation.id}
               className={`group relative flex items-center p-3 rounded-lg cursor-pointer transition-colors ${
                 conversation.id === currentConversationId
-                  ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500'
-                  : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+                  ? 'bg-primary/10 border-l-2 border-primary'
+                  : 'hover:bg-secondary'
               }`}
             >
               <div
@@ -101,7 +101,7 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
                 onClick={() => onSelectConversation(conversation.id)}
               >
                 <div className="flex items-center space-x-2">
-                  <MessageSquare size={16} className="text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                  <MessageSquare size={16} className="text-muted-foreground flex-shrink-0" />
                   {editingId === conversation.id ? (
                     <div className="flex-1 flex items-center space-x-2">
                       <input
@@ -112,7 +112,7 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
                           if (e.key === 'Enter') handleSaveEdit();
                           if (e.key === 'Escape') handleCancelEdit();
                         }}
-                        className="flex-1 px-2 py-1 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white"
+                        className="flex-1 px-2 py-1 text-sm bg-background border border-border rounded text-foreground"
                         autoFocus
                       />
                       <button
@@ -136,10 +136,10 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
                     </div>
                   ) : (
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                      <div className="text-sm font-medium text-foreground truncate">
                         {conversation.title}
                       </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                      <div className="text-xs text-muted-foreground">
                         {formatTime(conversation.updatedAt)}
                       </div>
                     </div>
@@ -154,19 +154,19 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
                       e.stopPropagation();
                       setShowDropdown(showDropdown === conversation.id ? null : conversation.id);
                     }}
-                    className="p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     <MoreHorizontal size={14} />
                   </button>
 
                   {showDropdown === conversation.id && (
-                    <div className="absolute right-0 top-8 z-50 w-32 bg-white dark:bg-gray-700 rounded-md shadow-lg border border-gray-200 dark:border-gray-600 py-1">
+                    <div className="absolute right-0 top-8 z-50 w-32 bg-popover rounded-md shadow-lg border border-border py-1">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           handleStartEdit(conversation);
                         }}
-                        className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center space-x-2"
+                        className="w-full px-3 py-2 text-left text-sm text-popover-foreground hover:bg-accent flex items-center space-x-2"
                       >
                         <Pencil size={14} />
                         <span>Rename</span>
@@ -179,7 +179,7 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
                               handleDelete(conversation.id);
                             }
                           }}
-                          className="w-full px-3 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center space-x-2"
+                          className="w-full px-3 py-2 text-left text-sm text-destructive hover:bg-accent flex items-center space-x-2"
                         >
                           <Trash2 size={14} />
                           <span>Delete</span>
@@ -194,11 +194,11 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
 
           {conversations.length === 0 && (
             <div className="text-center py-8">
-              <MessageSquare className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500 mb-3" />
-              <p className="text-gray-500 dark:text-gray-400 text-sm">No conversations yet</p>
+              <MessageSquare className="mx-auto h-12 w-12 text-muted-foreground mb-3" />
+              <p className="text-muted-foreground text-sm">No conversations yet</p>
               <button
                 onClick={onNewConversation}
-                className="mt-2 text-blue-600 dark:text-blue-400 text-sm hover:underline"
+                className="mt-2 text-primary text-sm hover:underline"
               >
                 Start your first conversation
               </button>
