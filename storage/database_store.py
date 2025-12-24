@@ -18,10 +18,14 @@ class DatabaseConversationStore:
     """Database-backed conversation storage for reliable persistence."""
 
     def __init__(self, db_path: str = None):
-        # Use DATABASE_URL from environment (for PostgreSQL) or fallback to SQLite
-        self.db_url = os.getenv('DATABASE_URL')
+        # Check USE_SUPABASE flag - if 0 or False, always use SQLite
+        use_supabase = os.getenv('USE_SUPABASE', '0')
+        force_sqlite = use_supabase in ('0', 'false', 'False', '')
         
-        if self.db_url and self.db_url.startswith('postgresql://'):
+        # Use DATABASE_URL from environment (for PostgreSQL) or fallback to SQLite
+        self.db_url = os.getenv('DATABASE_URL') if not force_sqlite else None
+        
+        if self.db_url and self.db_url.startswith('postgresql://') and not force_sqlite:
             # PostgreSQL support
             try:
                 import psycopg2

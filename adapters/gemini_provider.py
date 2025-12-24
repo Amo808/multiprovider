@@ -31,57 +31,74 @@ class GeminiAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
-            # Latest Gemini 2.5 models (November 2025) 
+            # === Gemini 3 Pro (Preview - December 2025) ===
+            # From official Google AI docs: https://ai.google.dev/gemini-api/docs/models
             ModelInfo(
-                id="gemini-2.5-pro",
-                name="gemini-2.5-pro",
-                display_name="Gemini 2.5 Pro (Most Advanced)",
-                provider=ModelProvider.GEMINI,
-                context_length=2000000,  # 2M context window
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                max_output_tokens=8192,
-                recommended_max_tokens=4096,
-                description="State-of-the-art thinking model for complex problems in code, math, and STEM",
-                pricing={"input_tokens": 1.25, "output_tokens": 10.00}  # Per million tokens
-            ),
-            ModelInfo(
-                id="gemini-2.5-flash",
-                name="gemini-2.5-flash",
-                display_name="Gemini 2.5 Flash (Best Price-Performance)",
+                id="gemini-3-pro-preview",
+                name="gemini-3-pro-preview",
+                display_name="Gemini 3 Pro (Most Intelligent - Preview)",
                 provider=ModelProvider.GEMINI,
                 context_length=1000000,  # 1M context window
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=8192,
-                recommended_max_tokens=4096,
-                description="Best price-performance model with thinking capabilities",
-                pricing={"input_tokens": 0.30, "output_tokens": 1.20}  # Per million tokens
+                max_output_tokens=65536,  # 65K max output
+                recommended_max_tokens=8192,
+                description="Best model for multimodal understanding, agentic workflows and vibe-coding",
+                pricing={"input_tokens": 2.00, "output_tokens": 12.00}  # Per million tokens
+            ),
+            # === Gemini 2.5 Models (Generally Available) ===
+            ModelInfo(
+                id="gemini-2.5-pro",
+                name="gemini-2.5-pro",
+                display_name="Gemini 2.5 Pro (Advanced Thinking)",
+                provider=ModelProvider.GEMINI,
+                context_length=1000000,  # 1M context window
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=65536,
+                recommended_max_tokens=8192,
+                description="State-of-the-art thinking model for complex problems in code, math, and STEM",
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00}
+            ),
+            ModelInfo(
+                id="gemini-2.5-flash",
+                name="gemini-2.5-flash",
+                display_name="Gemini 2.5 Flash (Best Value + Thinking)",
+                provider=ModelProvider.GEMINI,
+                context_length=1000000,  # 1M context window
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=65536,
+                recommended_max_tokens=8192,
+                description="Best price-performance model with thinking capabilities and 1M context",
+                pricing={"input_tokens": 0.30, "output_tokens": 2.50}  # Text output including reasoning
             ),
             ModelInfo(
                 id="gemini-2.5-flash-lite",
                 name="gemini-2.5-flash-lite", 
-                display_name="Gemini 2.5 Flash-Lite (Ultra Fast)",
+                display_name="Gemini 2.5 Flash-Lite (Fastest & Cheapest)",
                 provider=ModelProvider.GEMINI,
                 context_length=1000000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=8192,
-                recommended_max_tokens=4096,
+                max_output_tokens=65536,
+                recommended_max_tokens=8192,
                 description="Fastest model optimized for cost-efficiency and high throughput",
                 pricing={"input_tokens": 0.10, "output_tokens": 0.40}
             ),
-            # Gemini 2.0 models (previous generation - NO THINKING SUPPORT)
+            # === Gemini 2.0 Models (Previous Generation) ===
             ModelInfo(
                 id="gemini-2.0-flash",
                 name="gemini-2.0-flash",
-                display_name="Gemini 2.0 Flash (Second Gen) - No Reasoning",
+                display_name="Gemini 2.0 Flash",
                 provider=ModelProvider.GEMINI,
                 context_length=1000000,
                 supports_streaming=True,
@@ -90,8 +107,23 @@ class GeminiAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 max_output_tokens=8192,
                 recommended_max_tokens=4096,
-                description="Second-generation workhorse model with 1M token context (no reasoning support)",
+                description="Second-generation workhorse model with 1M token context",
                 pricing={"input_tokens": 0.15, "output_tokens": 0.60}
+            ),
+            ModelInfo(
+                id="gemini-2.0-flash-lite",
+                name="gemini-2.0-flash-lite",
+                display_name="Gemini 2.0 Flash-Lite",
+                provider=ModelProvider.GEMINI,
+                context_length=1000000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=8192,
+                recommended_max_tokens=4096,
+                description="Ultra-efficient for simple, high-frequency tasks",
+                pricing={"input_tokens": 0.075, "output_tokens": 0.30}
             )
         ]
 
@@ -200,12 +232,52 @@ class GeminiAdapter(BaseAdapter):
                 }
             )
 
+        # Validate and clamp max_tokens for Gemini
+        # Gemini 2.5+ and 3 Pro support up to 65K output, 2.0/1.5 support 8K
+        max_tokens = params.max_tokens
+        
+        # Model-specific max output token limits (from official Google AI docs December 2025)
+        model_limits = {
+            # Gemini 3 Pro - 65K max output
+            'gemini-3-pro': 65536,
+            # Gemini 2.5 series - 65K max output
+            'gemini-2.5-pro': 65536,
+            'gemini-2.5-flash': 65536,
+            'gemini-2.5-flash-lite': 65536,
+            # Gemini 2.0 series - 8K max output
+            'gemini-2.0-flash': 8192,
+            'gemini-2.0-flash-lite': 8192,
+            # Gemini 1.5 series - 8K max output
+            'gemini-1.5-pro': 8192,
+            'gemini-1.5-flash': 8192,
+        }
+        
+        # Find limit for model
+        limit = 8192  # default for unknown models
+        for model_prefix, model_limit in model_limits.items():
+            if model == model_prefix or model.startswith(model_prefix):
+                limit = model_limit
+                break
+        
+        if max_tokens is None or max_tokens < 1:
+            max_tokens = 8192  # Default
+        elif max_tokens > limit:
+            self.logger.warning(f"max_tokens clamped from {params.max_tokens} to {limit} for Gemini model {model}")
+            max_tokens = limit
+
+        # Clamp temperature for Gemini (0-2 range)
+        temperature = params.temperature
+        if temperature is None or temperature < 0:
+            temperature = 1.0
+        elif temperature > 2.0:
+            temperature = 2.0
+
         # Gemini API payload
         payload = {
             "contents": contents,
             "generationConfig": {
-                "temperature": params.temperature,
-                "maxOutputTokens": params.max_tokens,
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens,
                 "topP": params.top_p,
             }
         }
@@ -214,15 +286,21 @@ class GeminiAdapter(BaseAdapter):
         model_supports_thinking = model.startswith("gemini-2.5") or "2.5" in model
         
         # Inject thinking config INSIDE generationConfig per latest docs - only for supported models
-        if (params.thinking_budget is not None or params.include_thoughts) and model_supports_thinking:
+        # Enable thinking if: thinking_budget is set (and not 0), OR include_thoughts is True
+        should_enable_thinking = (params.thinking_budget is not None and params.thinking_budget != 0) or params.include_thoughts
+        
+        if should_enable_thinking and model_supports_thinking:
             thinking_cfg = {}
             if params.thinking_budget is not None:
                 thinking_cfg["thinkingBudget"] = params.thinking_budget  # -1 dynamic, 0 off, >0 fixed
-            if params.include_thoughts:
-                thinking_cfg["includeThoughts"] = True
-            if thinking_cfg:
-                payload["generationConfig"]["thinkingConfig"] = thinking_cfg
-                self.logger.info(f"[Gemini] thinkingConfig injected for {model}: {thinking_cfg}")
+            else:
+                # If no budget specified but include_thoughts is True, use dynamic budget
+                thinking_cfg["thinkingBudget"] = -1  # Dynamic budget
+            # Always include thoughts when thinking is enabled so we can show reasoning process
+            thinking_cfg["includeThoughts"] = True
+            
+            payload["generationConfig"]["thinkingConfig"] = thinking_cfg
+            self.logger.info(f"[Gemini] thinkingConfig injected for {model}: {thinking_cfg}")
         elif (params.thinking_budget is not None or params.include_thoughts) and not model_supports_thinking:
             # Log warning when thinking mode is requested but not supported
             self.logger.warning(f"[Gemini] Thinking mode requested but not supported by {model}. Only Gemini 2.5+ models support reasoning mode.")
@@ -274,6 +352,37 @@ class GeminiAdapter(BaseAdapter):
                 
                 try:
                     async with self.session.post(url, json=payload) as response:
+                        # Handle 429 Rate Limit (quota exceeded)
+                        if response.status == 429:
+                            error_text = await response.text()
+                            self.logger.warning(f"[Gemini] Rate limit (429), attempt {attempt+1}/{max_retries}")
+                            
+                            # Parse retry delay from response if available
+                            import re
+                            retry_match = re.search(r'"retryDelay":\s*"(\d+)s"', error_text)
+                            retry_delay = int(retry_match.group(1)) if retry_match else (2 ** attempt) * 5
+                            
+                            if attempt < max_retries - 1:
+                                self.logger.info(f"[Gemini] Waiting {retry_delay}s before retry...")
+                                yield ChatResponse(
+                                    content=f" (Rate limit reached, waiting {retry_delay}s before retry...)",
+                                    done=False,
+                                    meta={
+                                        "provider": ModelProvider.GEMINI,
+                                        "model": model,
+                                        "retry_attempt": attempt + 1,
+                                        "warning": True
+                                    }
+                                )
+                                await asyncio.sleep(retry_delay)
+                                continue
+                            else:
+                                yield ChatResponse(
+                                    error=f"Rate limit exceeded. Please wait a moment and try again, or use a different model. Suggested wait: {retry_delay}s",
+                                    meta={"provider": ModelProvider.GEMINI, "model": model}
+                                )
+                                return
+                        
                         # Handle 503 Service Unavailable (overloaded model)
                         if response.status == 503:
                             error_text = await response.text()
@@ -325,15 +434,30 @@ class GeminiAdapter(BaseAdapter):
                         if not params.stream:
                             # Handle non-streaming response
                             data = await response.json()
+                            self.logger.info(f"[Gemini] Non-streaming response keys: {data.keys()}")
                             candidates = data.get("candidates", [])
                             usage_metadata = data.get("usageMetadata", {})
                             # Extract thought token counts if present
                             thoughts_tokens = usage_metadata.get("thoughtTokens") or usage_metadata.get("thought_token_count") or usage_metadata.get("thoughtsTokenCount")
                             thought_budget_used = usage_metadata.get("thinkingTokenCount") or usage_metadata.get("thinking_token_count")
+                            
                             if candidates and candidates[0].get("content"):
-                                content = candidates[0]["content"]["parts"][0]["text"]
+                                parts = candidates[0]["content"].get("parts", [])
+                                
+                                # Extract thought and text content from all parts
+                                thought_text = ""
+                                regular_text = ""
+                                for part in parts:
+                                    self.logger.info(f"[Gemini] Part keys: {part.keys()}")
+                                    if part.get("thought"):
+                                        thought_text += part.get("thought", "")
+                                    elif part.get("thoughtContent"):
+                                        thought_text += part.get("thoughtContent", "")
+                                    elif "text" in part:
+                                        regular_text += part["text"]
+                                
                                 tokens_in = usage_metadata.get("promptTokenCount", input_tokens)
-                                tokens_out = usage_metadata.get("candidatesTokenCount", self.estimate_tokens(content))
+                                tokens_out = usage_metadata.get("candidatesTokenCount", self.estimate_tokens(regular_text))
                                 meta_extra = {
                                     "tokens_in": tokens_in,
                                     "tokens_out": tokens_out,
@@ -347,8 +471,14 @@ class GeminiAdapter(BaseAdapter):
                                     meta_extra["thought_tokens"] = thoughts_tokens
                                 if thought_budget_used is not None:
                                     meta_extra["thinking_tokens_used"] = thought_budget_used
+                                if thought_text:
+                                    meta_extra["reasoning_content"] = thought_text
+                                    meta_extra["thought_content"] = thought_text
+                                    meta_extra["thinking"] = thought_text
+                                    self.logger.info(f"[Gemini] Thought content found: {len(thought_text)} chars")
+                                
                                 yield ChatResponse(
-                                    content=content,
+                                    content=regular_text,
                                     done=True,
                                     meta=meta_extra
                                 )
@@ -433,17 +563,121 @@ class GeminiAdapter(BaseAdapter):
                                         if bracket_count == 0:
                                             try:
                                                 json_response = json.loads(json_buffer)
+                                                
+                                                # Log full response structure for debugging
+                                                self.logger.info(f"[Gemini Streaming] Full response keys: {json_response.keys()}")
+                                                if "modelVersion" in json_response:
+                                                    self.logger.info(f"[Gemini] Model version: {json_response.get('modelVersion')}")
+                                                
+                                                # Check for usageMetadata at top level
+                                                usage_data = json_response.get("usageMetadata", {})
+                                                if usage_data:
+                                                    self.logger.info(f"[Gemini] usageMetadata: {usage_data}")
+                                                
+                                                # Check for thoughtSummary at response level (Gemini API v1beta)
+                                                thought_summary = json_response.get("thoughtSummary") or json_response.get("thought") or json_response.get("thinking")
+                                                if thought_summary:
+                                                    self.logger.info(f"[Gemini] Found thought at response level: {len(thought_summary)} chars")
+                                                    yield ChatResponse(
+                                                        content="",
+                                                        done=False,
+                                                        meta={
+                                                            "tokens_in": input_tokens,
+                                                            "tokens_out": self.estimate_tokens(accumulated_content),
+                                                            "provider": ModelProvider.GEMINI,
+                                                            "model": model,
+                                                            "thinking": thought_summary,
+                                                            "reasoning_content": thought_summary,
+                                                            "reasoning": True
+                                                        }
+                                                    )
+                                                
                                                 candidates = json_response.get("candidates", [])
+                                                
+                                                # Log all candidates for debugging
+                                                self.logger.info(f"[Gemini Streaming] Number of candidates: {len(candidates)}")
+                                                for c_idx, cand in enumerate(candidates):
+                                                    self.logger.info(f"[Gemini] Candidate {c_idx}: keys={cand.keys()}")
+                                                
                                                 if candidates:
                                                     candidate = candidates[0]
+                                                    
+                                                    # Check for thought/summary at candidate level
+                                                    candidate_thought = candidate.get("thoughtSummary") or candidate.get("thought") or candidate.get("thinking")
+                                                    if candidate_thought:
+                                                        self.logger.info(f"[Gemini] Found thought at candidate level: {len(candidate_thought)} chars")
+                                                        yield ChatResponse(
+                                                            content="",
+                                                            done=False,
+                                                            meta={
+                                                                "tokens_in": input_tokens,
+                                                                "tokens_out": self.estimate_tokens(accumulated_content),
+                                                                "provider": ModelProvider.GEMINI,
+                                                                "model": model,
+                                                                "thinking": candidate_thought,
+                                                                "reasoning_content": candidate_thought,
+                                                                "reasoning": True
+                                                            }
+                                                        )
+                                                    
                                                     content_part = candidate.get("content", {})
                                                     parts = content_part.get("parts", [])
-                                                    if parts and "text" in parts[0]:
-                                                        content = parts[0]["text"]
-                                                        accumulated_content += content
+                                                    
+                                                    # Log response structure for debugging
+                                                    self.logger.info(f"[Gemini Streaming] Candidate keys: {candidate.keys()}")
+                                                    self.logger.info(f"[Gemini Streaming] Parts count: {len(parts)}")
+                                                    for idx, part in enumerate(parts):
+                                                        self.logger.info(f"[Gemini Streaming] Part {idx} keys: {part.keys()}")
+                                                    
+                                                    # Process all parts - Gemini may return thought + text separately
+                                                    thought_text = ""
+                                                    regular_text = ""
+                                                    
+                                                    for part in parts:
+                                                        # Check for thought/thinking content - multiple possible field names
+                                                        if part.get("thought"):
+                                                            thought_text += part.get("thought", "")
+                                                            self.logger.info(f"[Gemini] Found 'thought' field: {len(part.get('thought', ''))} chars")
+                                                        elif part.get("thoughtContent"):
+                                                            thought_text += part.get("thoughtContent", "")
+                                                            self.logger.info(f"[Gemini] Found 'thoughtContent' field: {len(part.get('thoughtContent', ''))} chars")
+                                                        elif part.get("thinkingContent"):
+                                                            thought_text += part.get("thinkingContent", "")
+                                                            self.logger.info(f"[Gemini] Found 'thinkingContent' field: {len(part.get('thinkingContent', ''))} chars")
+                                                        elif part.get("reasoning"):
+                                                            thought_text += part.get("reasoning", "")
+                                                            self.logger.info(f"[Gemini] Found 'reasoning' field: {len(part.get('reasoning', ''))} chars")
+                                                        elif "text" in part:
+                                                            # Check if this text part has a "role" indicating it's thinking
+                                                            part_role = content_part.get("role", "")
+                                                            if part_role == "thought" or part_role == "thinking":
+                                                                thought_text += part["text"]
+                                                                self.logger.info(f"[Gemini] Found thought text via role: {len(part['text'])} chars")
+                                                            else:
+                                                                regular_text += part["text"]
+                                                    
+                                                    # If we have thought content, emit it as thinking event
+                                                    if thought_text:
+                                                        yield ChatResponse(
+                                                            content="",
+                                                            done=False,
+                                                            meta={
+                                                                "tokens_in": input_tokens,
+                                                                "tokens_out": self.estimate_tokens(accumulated_content),
+                                                                "provider": ModelProvider.GEMINI,
+                                                                "model": model,
+                                                                "thinking": thought_text,
+                                                                "reasoning_content": thought_text,
+                                                                "reasoning": True
+                                                            }
+                                                        )
+                                                    
+                                                    # Emit regular content
+                                                    if regular_text:
+                                                        accumulated_content += regular_text
                                                         tokens_out = self.estimate_tokens(accumulated_content)
                                                         yield ChatResponse(
-                                                            content=content,
+                                                            content=regular_text,
                                                             done=False,
                                                             meta={
                                                                 "tokens_in": input_tokens,

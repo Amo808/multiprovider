@@ -33,33 +33,35 @@ class DeepSeekAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
+            # DeepSeek V3.2 - Updated December 2025 from official API docs
+            # https://api-docs.deepseek.com/quick_start/pricing
             ModelInfo(
                 id="deepseek-chat",
                 name="deepseek-chat",
-                display_name="DeepSeek V3.1 Chat (Non-thinking Mode)",
+                display_name="DeepSeek V3.2 Chat (Non-thinking Mode)",
                 provider=ModelProvider.DEEPSEEK,
                 context_length=128000,  # 128K context
                 supports_streaming=True,
-                supports_functions=True,  # Now supports function calling
+                supports_functions=True,  # Supports Tool Calls & JSON Output
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.27, "output_tokens": 1.10},  # Current pricing (cache miss)
-                max_output_tokens=32768,  # Increased max output
-                recommended_max_tokens=16384  # Increased recommended
+                pricing={"input_tokens": 0.28, "output_tokens": 0.42},  # Cache miss pricing
+                max_output_tokens=8000,  # API: DEFAULT 4K, MAX 8K
+                recommended_max_tokens=4000  # Default setting
             ),
             ModelInfo(
                 id="deepseek-reasoner",
                 name="deepseek-reasoner", 
-                display_name="DeepSeek V3.1 Reasoner (Thinking Mode - Slower)",
+                display_name="DeepSeek V3.2 Reasoner (Thinking Mode)",
                 provider=ModelProvider.DEEPSEEK,
                 context_length=128000,  # 128K context
                 supports_streaming=True,
-                supports_functions=False,  # No function calling in thinking mode
+                supports_functions=True,  # Supports Tool Calls in V3.2
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.55, "output_tokens": 2.19},  # Current pricing (cache miss)
-                max_output_tokens=32768,  # Increased max output  
-                recommended_max_tokens=16384  # Increased recommended for reasoning tasks
+                pricing={"input_tokens": 0.28, "output_tokens": 0.42},  # Same pricing
+                max_output_tokens=64000,  # API: DEFAULT 32K, MAX 64K
+                recommended_max_tokens=32000  # Default setting for reasoning
             )
         ]
 
@@ -110,12 +112,40 @@ class DeepSeekAdapter(BaseAdapter):
         input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])
         input_tokens = self.estimate_tokens(input_text)
 
+        # Validate and clamp max_tokens to API limits based on model
+        # DeepSeek V3.2 API limits:
+        # - deepseek-chat: max_tokens in [1, 8000] (default 4000)
+        # - deepseek-reasoner: max_tokens in [1, 64000] (default 32000)
+        max_tokens = params.max_tokens
+        
+        # Determine max limit based on model
+        if model == "deepseek-reasoner":
+            max_limit = 64000
+            default_tokens = 32000
+        else:  # deepseek-chat
+            max_limit = 8000
+            default_tokens = 4000
+        
+        if max_tokens is None or max_tokens < 1:
+            max_tokens = default_tokens
+        elif max_tokens > max_limit:
+            self.logger.warning(f"max_tokens clamped from {params.max_tokens} to {max_limit} (API limit for {model})")
+            max_tokens = max_limit
+
+        # Clamp temperature to valid range [0, 2]
+        temperature = params.temperature
+        if temperature is None or temperature < 0:
+            temperature = 1.0
+        elif temperature > 2.0:
+            temperature = 2.0
+            self.logger.warning(f"temperature clamped from {params.temperature} to 2.0 (API limit)")
+
         payload = {
             "model": model,
             "messages": api_messages,
             "stream": params.stream,
-            "temperature": params.temperature,
-            "max_tokens": params.max_tokens,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
             "top_p": params.top_p,
             "frequency_penalty": params.frequency_penalty,
             "presence_penalty": params.presence_penalty,
@@ -127,7 +157,9 @@ class DeepSeekAdapter(BaseAdapter):
         self.logger.info(f"Sending request to DeepSeek API: {model}, temp={params.temperature}")
 
         accumulated_content = ""
+        accumulated_reasoning = ""  # For deepseek-reasoner thinking content
         output_tokens = 0
+        reasoning_tokens = 0
         
         try:
             url = f"{self.base_url}/chat/completions"
@@ -144,7 +176,9 @@ class DeepSeekAdapter(BaseAdapter):
                 if not params.stream:
                     # Handle non-streaming response
                     data = await response.json()
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    message = data.get("choices", [{}])[0].get("message", {})
+                    content = message.get("content", "")
+                    reasoning_content = message.get("reasoning_content", "")
                     usage = data.get("usage", {})
                     
                     yield ChatResponse(
@@ -154,6 +188,8 @@ class DeepSeekAdapter(BaseAdapter):
                         meta={
                             "tokens_in": usage.get("prompt_tokens", input_tokens),
                             "tokens_out": usage.get("completion_tokens", self.estimate_tokens(content)),
+                            "reasoning_content": reasoning_content,
+                            "thought_tokens": usage.get("reasoning_tokens", 0),
                             "provider": ModelProvider.DEEPSEEK,
                             "model": model
                         }
@@ -161,6 +197,8 @@ class DeepSeekAdapter(BaseAdapter):
                     return
 
                 # Handle streaming response
+                self.logger.info(f"[DeepSeek] Starting SSE stream processing...")
+                chunk_count = 0
                 async for line in response.content:
                     line = line.decode('utf-8').strip()
                     
@@ -168,9 +206,13 @@ class DeepSeekAdapter(BaseAdapter):
                         continue
                         
                     if line.startswith("data: "):
+                        chunk_count += 1
                         try:
                             json_data = json.loads(line[6:])
                             choices = json_data.get("choices", [])
+                            
+                            # DEBUG: Log EVERY SSE chunk 
+                            self.logger.info(f"[DeepSeek] SSE chunk #{chunk_count}: {line[:200]}")
                             
                             if not choices:
                                 continue
@@ -178,6 +220,38 @@ class DeepSeekAdapter(BaseAdapter):
                             choice = choices[0]
                             delta = choice.get("delta", {})
                             content = delta.get("content", "")
+                            reasoning_content = delta.get("reasoning_content", "")
+                            
+                            # Also check for thinking in other possible fields
+                            if not reasoning_content:
+                                # Try alternative field names
+                                reasoning_content = delta.get("thinking", "") or delta.get("thought", "") or choice.get("reasoning_content", "")
+                            
+                            # DEBUG: Log delta contents
+                            self.logger.info(f"[DeepSeek] Delta keys: {list(delta.keys())}, choice keys: {list(choice.keys())}")
+                            
+                            # Handle reasoning/thinking content for deepseek-reasoner
+                            if reasoning_content:
+                                accumulated_reasoning += reasoning_content
+                                reasoning_tokens = self.estimate_tokens(accumulated_reasoning)
+                                self.logger.info(f"[DeepSeek] Reasoning chunk received: {len(reasoning_content)} chars, total: {len(accumulated_reasoning)} chars")
+                                
+                                # Emit thinking event to frontend
+                                yield ChatResponse(
+                                    content="",  # No visible content yet
+                                    id=json_data.get("id"),
+                                    done=False,
+                                    meta={
+                                        "tokens_in": input_tokens,
+                                        "tokens_out": output_tokens,
+                                        "thinking": reasoning_content,  # Send thinking chunk
+                                        "reasoning_content": reasoning_content,
+                                        "thought_tokens": reasoning_tokens,
+                                        "provider": ModelProvider.DEEPSEEK,
+                                        "model": model,
+                                        "reasoning": True  # Flag to indicate reasoning mode
+                                    }
+                                )
                             
                             if content:
                                 accumulated_content += content
@@ -190,6 +264,7 @@ class DeepSeekAdapter(BaseAdapter):
                                     meta={
                                         "tokens_in": input_tokens,
                                         "tokens_out": output_tokens,
+                                        "thought_tokens": reasoning_tokens,
                                         "provider": ModelProvider.DEEPSEEK,
                                         "model": model
                                     }
@@ -225,7 +300,9 @@ class DeepSeekAdapter(BaseAdapter):
             meta={
                 "tokens_in": input_tokens,
                 "tokens_out": final_output_tokens,
-                "total_tokens": input_tokens + final_output_tokens,
+                "total_tokens": input_tokens + final_output_tokens + reasoning_tokens,
+                "thought_tokens": reasoning_tokens,
+                "reasoning_content": accumulated_reasoning if accumulated_reasoning else None,
                 "provider": ModelProvider.DEEPSEEK,
                 "model": model,
                 "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model)

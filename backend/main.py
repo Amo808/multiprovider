@@ -34,7 +34,23 @@ from adapters import (
 )
 from storage import HistoryStore, PromptBuilder
 from storage.database_store import DatabaseConversationStore
+from storage.message_store import MessageDatabaseStore, get_message_store
 from auth_google import router as google_auth_router, get_current_user as original_get_current_user
+
+# Supabase integration
+from supabase_client import (
+    get_supabase_conversation_store,
+    is_supabase_configured
+)
+from supabase_client.api import router as rag_router
+from process_events import (
+    process_emitter, ProcessType, ProcessStatus, ProcessContext,
+    stream_process_events, track_compression, track_multi_model
+)
+from multi_model import (
+    MultiModelOrchestrator, ModelConfig, MultiModelMode, 
+    MULTI_MODEL_PRESETS
+)
 
 # --- Dev Auth Bypass Setup ---------------------------------------------------
 # We want local development to ALWAYS work without Google OAuth / JWT.
@@ -68,8 +84,28 @@ else:
     )
 # ----------------------------------------------------------------------------
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from .env files
+from pathlib import Path
+
+# First, load from backend/.env (primary source with real keys)
+backend_env = Path(__file__).parent / ".env"
+if backend_env.exists():
+    load_dotenv(backend_env, override=True)
+    print(f"[ENV] Loaded environment from: {backend_env}")
+
+# Also try project root .env as fallback
+project_root = Path(__file__).parent.parent
+env_path = project_root / ".env"
+if env_path.exists():
+    load_dotenv(env_path, override=False)  # Don't override existing keys
+    print(f"[ENV] Also loaded from: {env_path}")
+
+# Log loaded API keys status (without exposing actual keys)
+import os
+print(f"[ENV] DEEPSEEK_API_KEY loaded: {bool(os.getenv('DEEPSEEK_API_KEY'))}")
+print(f"[ENV] OPENAI_API_KEY loaded: {bool(os.getenv('OPENAI_API_KEY'))}")
+print(f"[ENV] ANTHROPIC_API_KEY loaded: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
+print(f"[ENV] GEMINI_API_KEY loaded: {bool(os.getenv('GEMINI_API_KEY'))}")
 
 # Configure logging
 logging.basicConfig(
@@ -86,6 +122,7 @@ logger = logging.getLogger(__name__)
 conversation_store = None
 prompt_builder = None
 app_config = None
+USE_SUPABASE = os.getenv("USE_SUPABASE", "1") == "1"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -97,15 +134,20 @@ async def lifespan(app: FastAPI):
         # Initialize provider manager
         await provider_manager.initialize()
         
-        # Initialize conversation store (database-backed)
+        # Initialize conversation store
         storage_path = Path(__file__).parent.parent / "data"
-        logger.info(f"[STARTUP] Initializing DatabaseConversationStore with path: {storage_path}")
-        logger.info(f"[STARTUP] Storage path exists: {storage_path.exists()}")
-        logger.info(f"[STARTUP] Current working directory: {Path.cwd()}")
         
-        # Use database store for reliable persistence
-        db_path = str(storage_path / "conversations.db")
-        conversation_store = DatabaseConversationStore(db_path=db_path)
+        # Try Supabase first, fall back to SQLite
+        logger.info(f"[STARTUP] USE_SUPABASE={USE_SUPABASE}, is_supabase_configured()={is_supabase_configured()}")
+        if USE_SUPABASE and is_supabase_configured():
+            logger.info("[STARTUP] ✅ Using SUPABASE for conversation storage")
+            conversation_store = get_supabase_conversation_store()
+            logger.info(f"[STARTUP] conversation_store type: {type(conversation_store).__name__}")
+        else:
+            logger.warning(f"[STARTUP] ⚠️ Using SQLite for conversation storage (Supabase configured: {is_supabase_configured()})")
+            logger.info(f"[STARTUP] Storage path: {storage_path}")
+            db_path = str(storage_path / "conversations.db")
+            conversation_store = DatabaseConversationStore(db_path=db_path)
         
         # Initialize prompt builder (with default adapter)
         enabled_providers = provider_manager.get_enabled_providers()
@@ -212,6 +254,29 @@ class ProviderConfigUpdate(BaseModel):
 class ModelRequest(BaseModel):
     provider: str
 
+# === Multi-Model Request Models ===
+class MultiModelConfigRequest(BaseModel):
+    provider: str
+    model: str
+    display_name: Optional[str] = None
+    weight: float = 1.0
+    timeout: float = 60.0
+    enabled: bool = True
+    params: Optional[Dict[str, Any]] = None
+
+class MultiModelChatRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+    models: List[MultiModelConfigRequest]
+    mode: str = "parallel"  # parallel, fastest, consensus, comparison, fallback
+    stream: bool = True
+    config: Optional[Dict[str, Any]] = None
+    system_prompt: Optional[str] = None
+
+class ProcessEventFilter(BaseModel):
+    conversation_id: Optional[str] = None
+    process_types: Optional[List[str]] = None
+
 # Global components
 conversation_store = None
 prompt_builder = None
@@ -271,6 +336,42 @@ async def toggle_provider(provider_id: str, enabled: bool = True, _: str = Depen
     except Exception as e:
         logger.error(f"Failed to toggle provider {provider_id}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+class SetApiKeyRequest(BaseModel):
+    api_key: str
+
+@api_router.post("/providers/{provider_id}/api-key")
+async def set_provider_api_key(provider_id: str, request: SetApiKeyRequest, _: str = Depends(get_current_user)):
+    """Set API key for a provider (saves to secrets.json)."""
+    try:
+        success = await provider_manager.save_api_key(provider_id, request.api_key)
+        if success:
+            # Re-validate the provider after setting key
+            adapter = provider_manager.registry.get(provider_id)
+            if adapter:
+                is_valid, error = await adapter.validate_connection()
+                return {
+                    "success": True, 
+                    "message": f"API key saved for {provider_id}",
+                    "connected": is_valid,
+                    "error": error
+                }
+            return {"success": True, "message": f"API key saved for {provider_id}"}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to save API key")
+    except Exception as e:
+        logger.error(f"Failed to set API key for {provider_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/providers/api-keys/status")
+async def get_api_keys_status(_: str = Depends(get_current_user)):
+    """Get the status of API keys for all providers."""
+    try:
+        status = await provider_manager.get_api_keys_status()
+        return {"success": True, "status": status}
+    except Exception as e:
+        logger.error(f"Failed to get API keys status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.put("/providers/{provider_id}/config")
 async def update_provider_config(provider_id: str, config_update: ProviderConfigUpdate, _: str = Depends(get_current_user)):
@@ -492,11 +593,101 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         # Save user message
         conversation_id = request.conversation_id or "default"
         logger.info(f"[CHAT] Processing message for conversation_id: {conversation_id} user={user_email}")
-        conversation_store.save_message(conversation_id, user_message, user_email=user_email)
+        try:
+            conversation_store.save_message(conversation_id, user_message, user_email=user_email)
+        except Exception as save_err:
+            logger.error(f"[CHAT] Failed to save user message: {save_err}")
         
         # Load history and build context
-        history = conversation_store.load_conversation_history(conversation_id, user_email=user_email)
-        logger.info(f"[CHAT] Loaded {len(history)} messages from history for {conversation_id}")
+        try:
+            history = conversation_store.load_conversation_history(conversation_id, user_email=user_email)
+            logger.info(f"[CHAT] Loaded {len(history)} messages from history for {conversation_id}")
+        except Exception as load_err:
+            logger.error(f"[CHAT] Failed to load history: {load_err}")
+            history = []
+        
+        # === AUTO CONTEXT COMPRESSION (RAG-based) ===
+        compression_stats = None
+        try:
+            from storage.context_compressor import ContextCompressor
+            
+            # Get max context tokens based on model (use reasonable defaults)
+            model_context_limits = {
+                "deepseek-chat": 32000,
+                "deepseek-reasoner": 64000,
+                "gpt-4": 8000,
+                "gpt-4-turbo": 128000,
+                "gpt-4o": 128000,
+                "claude-3-opus": 200000,
+                "claude-3-sonnet": 200000,
+                "claude-3-haiku": 200000,
+                "gemini-pro": 32000,
+                "gemini-1.5-pro": 1000000,
+            }
+            # Use 70% of model limit for safety margin
+            max_tokens = int(model_context_limits.get(model_id, 8000) * 0.7)
+            
+            compressor = ContextCompressor(
+                max_context_tokens=max_tokens,
+                keep_recent_messages=4,  # Always keep last 4 messages uncompressed
+                enable_embeddings=True
+            )
+            
+            # Add messages to compressor
+            for msg in history:
+                compressor.add_message(
+                    role=msg.role,
+                    content=msg.content,
+                    message_id=msg.id,
+                    timestamp=msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp),
+                    metadata=msg.meta if hasattr(msg, 'meta') else {}
+                )
+            
+            # Build compressed context
+            compressed_result = compressor.build_context(request.message)
+            
+            # Get formatted messages from the context
+            formatted_messages = compressor.get_formatted_messages(compressed_result)
+            
+            # Log compression details including chunks
+            stats = compressed_result.get('stats', {})
+            logger.info(f"[CHAT] Compression result: {len(formatted_messages)} formatted messages, "
+                       f"recent: {stats.get('recent_count', 0)}, "
+                       f"context: {stats.get('context_count', 0)}, "
+                       f"chunks: {stats.get('chunks_count', 0)}, "
+                       f"indexed_chunks: {stats.get('total_chunks_indexed', 0)}")
+            
+            # Convert back to Message objects for the provider
+            compressed_history = []
+            for msg_dict in formatted_messages:
+                # Skip system messages as they're handled separately
+                if msg_dict.get('role') == 'system':
+                    continue
+                compressed_history.append(Message(
+                    id=msg_dict.get('id', str(uuid.uuid4())),
+                    role=msg_dict['role'],
+                    content=msg_dict['content'],
+                    timestamp=datetime.now()
+                ))
+            
+            # Use compressed history if we got results
+            if compressed_history:
+                original_count = len(history)
+                history = compressed_history
+                compression_stats = compressed_result.get('stats', {})
+                compression_stats['original_messages'] = original_count
+                compression_stats['compressed_messages'] = len(history)
+                logger.info(f"[CHAT] Context compressed: {original_count} -> {len(history)} messages, "
+                           f"tokens: ~{compression_stats.get('total_tokens_estimate', '?')}, "
+                           f"utilization: {compression_stats.get('utilization', '?')}%")
+            else:
+                logger.info(f"[CHAT] No compression applied (empty result or few messages)")
+                
+        except ImportError as e:
+            logger.warning(f"[CHAT] Context compression not available: {e}")
+        except Exception as e:
+            logger.warning(f"[CHAT] Context compression failed, using full history: {e}")
+        # === END AUTO CONTEXT COMPRESSION ===
         
         # Add system prompt if provided
         if request.system_prompt:
@@ -545,11 +736,13 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         async def generate_response():
             """Generate streaming response with cancellation support.
             Added: heartbeat every 10s, provider call global timeout, first token latency logging.
+            Integrated: Process tracking for thinking/streaming visualization.
             """
             logger.info(f"[STREAM] generate_response() started: provider={provider_id}, model={model_id}")
             full_content = ""
             total_tokens_in = 0
             total_tokens_out = 0
+            thought_content = ""  # For reasoning/thinking models
             import time, asyncio as _asyncio
             start_ts = time.time()
             first_chunk_ts = None
@@ -557,10 +750,29 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             HEARTBEAT_INTERVAL = 10  # seconds
             
             # Увеличенный таймаут для reasoning моделей
-            if hasattr(params, 'reasoning_effort') and params.reasoning_effort in ['medium', 'high']:
+            is_reasoning_model = (
+                model_id in ['deepseek-reasoner', 'o1', 'o1-preview', 'o1-mini', 'o3', 'o3-mini'] or
+                (hasattr(params, 'reasoning_effort') and params.reasoning_effort in ['medium', 'high'])
+            )
+            if is_reasoning_model:
                 PROVIDER_TIMEOUT = 1200  # 20 минут для reasoning
             else:
                 PROVIDER_TIMEOUT = 300    # 5 минут для обычных моделей
+            
+            # Create process for tracking
+            process = process_emitter.create_process(
+                process_type=ProcessType.THINKING if is_reasoning_model else ProcessType.STREAMING,
+                name=f"{'Reasoning' if is_reasoning_model else 'Generating'}: {model_id}",
+                conversation_id=conversation_id,
+                message_id=assistant_message.id,
+                steps=["Initializing", "Processing", "Generating response", "Finalizing"] if is_reasoning_model else ["Generating"],
+                metadata={
+                    "provider": provider_id,
+                    "model": model_id,
+                    "is_reasoning": is_reasoning_model
+                }
+            )
+            await process_emitter.start_process(process)
 
             async def heartbeat():
                 nonlocal last_emit_ts
@@ -602,18 +814,70 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
 
                     if await http_request.is_disconnected():
                         logger.info(f"[CHAT] Client disconnected during streaming for {conversation_id}")
+                        await process_emitter.fail_process(process, "Client disconnected")
                         return
 
                     if response.error:
                         logger.warning(f"[CHAT] Provider error: {response.error}")
+                        await process_emitter.fail_process(process, response.error)
                         yield f"data: {json.dumps({'error': response.error, 'done': True})}\n\n"
                         break
+                    
+                    # Check for thinking/reasoning content
+                    if response.meta:
+                        # Get reasoning content from response object or meta
+                        # Note: 'thinking' in meta might be bool flag, use reasoning_content for actual text
+                        thought = None
+                        if response.reasoning_content:
+                            thought = response.reasoning_content
+                        elif isinstance(response.meta.get('reasoning_content'), str):
+                            thought = response.meta.get('reasoning_content')
+                        elif isinstance(response.meta.get('thinking'), str):
+                            thought = response.meta.get('thinking')
+                        
+                        if thought:
+                            thought_content += thought
+                            # Emit thinking event via process events (for ProcessViewer)
+                            await process_emitter.emit_thinking(
+                                process,
+                                thought=thought,
+                                stage="reasoning"
+                            )
+                            
+                            # ALSO emit thinking content via main chat SSE stream
+                            # This is needed for MessageBubble to show reasoning content
+                            thinking_chunk = {
+                                'content': '',  # No visible content yet
+                                'id': assistant_message.id,
+                                'done': False,
+                                'provider': provider_id,
+                                'model': model_id,
+                                'meta': {
+                                    'thinking': thought,
+                                    'reasoning_content': thought,
+                                    'thought_tokens': response.meta.get('thought_tokens', len(thought_content) // 4),
+                                    'reasoning': True,  # Flag for frontend
+                                    'provider': provider_id,
+                                    'model': model_id
+                                }
+                            }
+                            yield f"data: {json.dumps(thinking_chunk)}\n\n"
+                            logger.info(f"[CHAT] Emitted thinking chunk: {len(thought)} chars, total: {len(thought_content)} chars")
 
                     if response.content:
                         if first_chunk_ts is None:
                             first_chunk_ts = time.time()
                             logger.info(f"[CHAT] First token latency {first_chunk_ts - start_ts:.2f}s conversation={conversation_id}")
+                            # Move to generating step
+                            if is_reasoning_model and len(process.steps) > 2:
+                                await process_emitter.complete_step(process, 0, "Initialized")
+                                await process_emitter.start_step(process, 1)
+                        
                         full_content += response.content
+                        
+                        # Update process progress
+                        process.progress = min(90, process.progress + 1)
+                        
                         chunk_data = {
                             'content': response.content,
                             'id': assistant_message.id,
@@ -642,6 +906,8 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                         final_tokens_in = response_meta.get("tokens_in", total_tokens_in)
                         final_tokens_out = response_meta.get("tokens_out", total_tokens_out)
                         estimated_cost = response_meta.get("estimated_cost")
+                        thought_tokens = response_meta.get("thought_tokens", 0) or response_meta.get("thinking_tokens_used", 0)
+                        
                         assistant_message.meta.update({
                             'tokens_in': final_tokens_in,
                             'tokens_out': final_tokens_out,
@@ -649,10 +915,24 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             'estimated_cost': estimated_cost,
                             'user_email': user_email,
                             'first_token_latency': (first_chunk_ts - start_ts) if first_chunk_ts else None,
-                            'total_latency': time.time() - start_ts
+                            'total_latency': time.time() - start_ts,
+                            'thought_tokens': thought_tokens,
+                            'thought_content': thought_content if thought_content else None
                         })
                         logger.info(f"[CHAT] Saving assistant message conversation={conversation_id} total_latency={time.time()-start_ts:.2f}s")
-                        conversation_store.save_message(conversation_id, assistant_message, user_email=user_email)
+                        try:
+                            conversation_store.save_message(conversation_id, assistant_message, user_email=user_email)
+                        except Exception as save_err:
+                            logger.error(f"[CHAT] Failed to save assistant message: {save_err}")
+                        
+                        # Complete process
+                        await process_emitter.complete_process(process, metadata={
+                            "tokens_in": final_tokens_in,
+                            "tokens_out": final_tokens_out,
+                            "thought_tokens": thought_tokens,
+                            "total_latency_ms": int((time.time() - start_ts) * 1000)
+                        })
+                        
                         final_response = {
                             'done': True,
                             'id': assistant_message.id,
@@ -664,7 +944,11 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                                 'total_tokens': final_tokens_in + final_tokens_out,
                                 'estimated_cost': estimated_cost,
                                 'first_token_latency': (first_chunk_ts - start_ts) if first_chunk_ts else None,
-                                'total_latency': time.time() - start_ts
+                                'total_latency': time.time() - start_ts,
+                                'thought_tokens': thought_tokens,
+                                # Include the full thought content for frontend to display
+                                'thought_content': thought_content if thought_content else None,
+                                'reasoning_content': thought_content if thought_content else None
                             }
                         }
                         yield f"data: {json.dumps(final_response)}\n\n"
@@ -681,9 +965,11 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
 
             except asyncio.CancelledError:
                 logger.info(f"[CHAT] Request cancelled for conversation {conversation_id}")
+                await process_emitter.fail_process(process, "Request cancelled")
                 yield f"data: {json.dumps({'error': 'Request cancelled', 'cancelled': True, 'done': True})}\n\n"
             except Exception as e:
                 logger.error(f"Streaming error: {e}")
+                await process_emitter.fail_process(process, str(e))
                 yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 
         logger.info(f"[STREAM] About to create StreamingResponse for conversation {conversation_id}")
@@ -925,7 +1211,15 @@ async def update_config(config_data: dict, _: str = Depends(get_current_user)):
     try:
         global app_config
         
-        # Update configuration
+        # Load existing config from file to preserve model_settings
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                file_config = json.load(f)
+        else:
+            file_config = {}
+        
+        # Update in-memory configuration
         for key, value in config_data.items():
             if key in app_config:
                 if isinstance(app_config[key], dict) and isinstance(value, dict):
@@ -933,11 +1227,20 @@ async def update_config(config_data: dict, _: str = Depends(get_current_user)):
                 else:
                     app_config[key] = value
         
-        # Save updated config to file
-        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        # Merge with file config (to preserve model_settings and other sections)
+        merged_config = {**file_config, **app_config}
+        
+        # Ensure model_settings is preserved from file if it exists
+        if 'model_settings' in file_config and 'model_settings' not in app_config:
+            merged_config['model_settings'] = file_config['model_settings']
+        
+        # Save merged config to file
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         with open(config_path, "w") as f:
-            json.dump(app_config, f, indent=2)
+            json.dump(merged_config, f, indent=2)
+        
+        # Update in-memory config with merged result
+        app_config = merged_config
         
         return {"message": "Configuration updated successfully", "config": app_config}
         
@@ -998,9 +1301,818 @@ async def update_generation_config(generation_config: dict, _: str = Depends(get
         logger.error(f"Failed to update generation config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================================
+# PER-MODEL SETTINGS ENDPOINTS
+# ============================================================================
+
+def get_model_settings_key(provider: str, model_id: str) -> str:
+    """Generate unique key for model-specific settings."""
+    return f"{provider}:{model_id}"
+
+@api_router.get("/config/model-settings/{provider}/{model_id}")
+async def get_model_settings(provider: str, model_id: str, _: str = Depends(get_current_user)):
+    """Get settings for a specific model."""
+    try:
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                current = json.load(f)
+        else:
+            current = {}
+        
+        model_settings = current.get("model_settings", {})
+        key = get_model_settings_key(provider, model_id)
+        
+        # Return model-specific settings or defaults
+        default_settings = {
+            "temperature": 0.7,
+            "max_tokens": 8192,
+            "top_p": 1.0,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0,
+            "stream": True,
+            "system_prompt": "",
+            "thinking_budget": None,
+            "include_thoughts": False,
+            "verbosity": None,
+            "reasoning_effort": None,
+            "cfg_scale": None,
+            "free_tool_calling": False
+        }
+        
+        settings = {**default_settings, **model_settings.get(key, {})}
+        logger.info(f"[CONFIG] Getting model settings for {key}: {settings}")
+        return {"settings": settings, "provider": provider, "model_id": model_id}
+        
+    except Exception as e:
+        logger.error(f"Failed to get model settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/config/model-settings/{provider}/{model_id}")
+async def update_model_settings(provider: str, model_id: str, settings: dict, _: str = Depends(get_current_user)):
+    """Update settings for a specific model. Stores generation params + system_prompt per model."""
+    try:
+        logger.info(f"[CONFIG] Updating model settings for {provider}:{model_id}: {settings}")
+        
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                current = json.load(f)
+        else:
+            current = {}
+        
+        if "model_settings" not in current:
+            current["model_settings"] = {}
+        
+        key = get_model_settings_key(provider, model_id)
+        
+        # Merge with existing settings
+        existing = current["model_settings"].get(key, {})
+        
+        # Allowed keys for per-model settings
+        allowed = {
+            "temperature", "max_tokens", "top_p", "top_k", "frequency_penalty", "presence_penalty",
+            "stop_sequences", "stream", "thinking_budget", "include_thoughts",
+            "verbosity", "reasoning_effort", "cfg_scale", "free_tool_calling", 
+            "grammar_definition", "tools", "system_prompt"
+        }
+        
+        for k, v in settings.items():
+            if k in allowed:
+                # Validation
+                if k == "verbosity" and v not in (None, "low", "medium", "high"):
+                    continue
+                if k == "reasoning_effort" and v not in (None, "minimal", "medium", "high"):
+                    continue
+                if k == "cfg_scale" and v is not None:
+                    try:
+                        v = float(v)
+                    except Exception:
+                        continue
+                if k == "tools" and v is not None and not isinstance(v, list):
+                    continue
+                if k == "thinking_budget" and isinstance(v, str):
+                    try:
+                        v = int(v)
+                    except ValueError:
+                        continue
+                existing[k] = v
+        
+        current["model_settings"][key] = existing
+        
+        # Save
+        with open(config_path, 'w') as f:
+            json.dump(current, f, indent=2)
+        
+        logger.info(f"[CONFIG] Model settings updated for {key}")
+        return {"message": "Model settings updated", "settings": existing, "provider": provider, "model_id": model_id}
+        
+    except Exception as e:
+        logger.error(f"Failed to update model settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/config/model-settings")
+async def get_all_model_settings(_: str = Depends(get_current_user)):
+    """Get all per-model settings."""
+    try:
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                current = json.load(f)
+        else:
+            current = {}
+        
+        model_settings = current.get("model_settings", {})
+        return {"model_settings": model_settings}
+        
+    except Exception as e:
+        logger.error(f"Failed to get all model settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# CONTEXT COMPRESSION & MESSAGE REORDERING ENDPOINTS
+# ============================================================================
+
+# Pydantic models for new endpoints
+class CompressContextRequest(BaseModel):
+    """Request for context compression."""
+    conversation_id: str = "default"
+    current_query: str
+    system_prompt: Optional[str] = None
+    max_tokens: Optional[int] = 4000
+    keep_recent: Optional[int] = 4
+
+class ReorderMessagesRequest(BaseModel):
+    """Request for reordering messages."""
+    conversation_id: str = "default"
+    operation: str  # swap, move_up, move_down, move_to, reverse, sort_time, sort_role, interleave
+    index: Optional[int] = None
+    index1: Optional[int] = None
+    index2: Optional[int] = None
+    from_index: Optional[int] = None
+    to_index: Optional[int] = None
+    ascending: Optional[bool] = True
+
+class CompressStatsResponse(BaseModel):
+    """Response with compression statistics."""
+    total_tokens_estimate: int
+    max_tokens: int
+    recent_count: int
+    context_count: int
+    within_budget: bool
+    utilization: float
+
+# Global context compressors (per conversation)
+_context_compressors: Dict[str, Any] = {}
+
+def _get_compressor(conversation_id: str, user_email: str, max_tokens: int = 4000, keep_recent: int = 4):
+    """Get or create context compressor for a conversation."""
+    from storage.context_compressor import ContextCompressor
+    
+    key = f"{user_email}:{conversation_id}"
+    if key not in _context_compressors:
+        _context_compressors[key] = ContextCompressor(
+            max_context_tokens=max_tokens,
+            keep_recent_messages=keep_recent,
+            enable_embeddings=True  # Enable RAG-based retrieval
+        )
+    return _context_compressors[key]
+
+
+@api_router.post("/context/compress")
+async def compress_context(request: CompressContextRequest, user_email: str = Depends(get_current_user)):
+    """
+    Build compressed context for a conversation using RAG.
+    
+    This endpoint:
+    1. Loads conversation history
+    2. Keeps recent messages uncompressed
+    3. Uses RAG to find relevant old messages
+    4. Compresses old messages to fit token budget
+    5. Returns optimized context for LLM
+    """
+    try:
+        from storage.context_compressor import ContextCompressor
+        
+        # Load conversation history
+        messages = conversation_store.load_conversation_history(
+            request.conversation_id, 
+            user_email=user_email
+        )
+        
+        # Create compressor with requested settings
+        compressor = ContextCompressor(
+            max_context_tokens=request.max_tokens or 4000,
+            keep_recent_messages=request.keep_recent or 4,
+            enable_embeddings=True
+        )
+        
+        # Add all messages to compressor
+        for msg in messages:
+            compressor.add_message(
+                role=msg.role,
+                content=msg.content,
+                message_id=msg.id,
+                metadata=msg.meta if hasattr(msg, 'meta') else {}
+            )
+        
+        # Build compressed context
+        context = compressor.build_context(
+            current_query=request.current_query,
+            system_prompt=request.system_prompt
+        )
+        
+        # Get formatted messages for API
+        formatted_messages = compressor.get_formatted_messages(context)
+        
+        logger.info(f"[COMPRESS] Built context: {context['stats']}")
+        
+        return {
+            "success": True,
+            "formatted_messages": formatted_messages,
+            "recent_messages": context["recent_messages"],
+            "context_messages": context["context_messages"],
+            "stats": context["stats"],
+            "compressor_stats": compressor.get_stats()
+        }
+        
+    except ImportError as e:
+        logger.warning(f"Context compression dependencies not installed: {e}")
+        return {
+            "success": False,
+            "error": "Context compression requires additional dependencies: numpy, nltk, sentence-transformers",
+            "install_command": "pip install numpy nltk sentence-transformers"
+        }
+    except Exception as e:
+        logger.error(f"Failed to compress context: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/messages/reorder")
+async def reorder_messages(request: ReorderMessagesRequest, user_email: str = Depends(get_current_user)):
+    """
+    Reorder messages in a conversation.
+    
+    Supported operations:
+    - swap: Exchange positions of two messages (index1, index2)
+    - move_up: Move message one position up (index)
+    - move_down: Move message one position down (index)
+    - move_to: Move message to specific position (from_index, to_index)
+    - reverse: Reverse all messages order
+    - sort_time: Sort by timestamp (ascending)
+    - sort_role: Sort by role (system -> user -> assistant)
+    - interleave: Interleave user/assistant messages
+    """
+    try:
+        from storage.context_compressor import ChatMessageManager
+        
+        # Load conversation history
+        messages = conversation_store.load_conversation_history(
+            request.conversation_id,
+            user_email=user_email
+        )
+        
+        # Convert to dict format
+        messages_dict = [
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp),
+                "meta": msg.meta if hasattr(msg, 'meta') else {}
+            }
+            for msg in messages
+        ]
+        
+        # Create manager and apply operation
+        manager = ChatMessageManager(messages_dict)
+        
+        # Prepare kwargs based on operation
+        kwargs = {}
+        if request.index is not None:
+            kwargs['index'] = request.index
+        if request.index1 is not None:
+            kwargs['index1'] = request.index1
+        if request.index2 is not None:
+            kwargs['index2'] = request.index2
+        if request.from_index is not None:
+            kwargs['from_index'] = request.from_index
+        if request.to_index is not None:
+            kwargs['to_index'] = request.to_index
+        if request.ascending is not None:
+            kwargs['ascending'] = request.ascending
+        
+        result = manager.apply_operation(request.operation, **kwargs)
+        
+        if not result.get('success'):
+            raise HTTPException(status_code=400, detail=result.get('error', 'Unknown error'))
+        
+        # Get preview of new order
+        preview = manager.get_preview(max_content_len=60)
+        
+        logger.info(f"[REORDER] Applied {request.operation} to conversation {request.conversation_id}")
+        
+        return {
+            "success": True,
+            "operation": request.operation,
+            "message_count": len(manager.messages),
+            "preview": preview,
+            "messages": manager.to_list()
+        }
+        
+    except ImportError as e:
+        logger.warning(f"Message manager not available: {e}")
+        return {
+            "success": False,
+            "error": "Message reordering module not available"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reorder messages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/messages/preview/{conversation_id}")
+async def preview_messages(conversation_id: str, user_email: str = Depends(get_current_user)):
+    """Get a preview of messages in conversation with reordering info."""
+    try:
+        from storage.context_compressor import ChatMessageManager
+        
+        messages = conversation_store.load_conversation_history(
+            conversation_id,
+            user_email=user_email
+        )
+        
+        messages_dict = [
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp),
+            }
+            for msg in messages
+        ]
+        
+        manager = ChatMessageManager(messages_dict)
+        preview = manager.get_preview(max_content_len=80)
+        
+        return {
+            "conversation_id": conversation_id,
+            "message_count": len(messages),
+            "preview": preview
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get message preview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/context/stats")
+async def get_compression_stats(user_email: str = Depends(get_current_user)):
+    """Get global compression statistics for user's sessions."""
+    try:
+        user_compressors = {
+            k: v.get_stats() 
+            for k, v in _context_compressors.items() 
+            if k.startswith(f"{user_email}:")
+        }
+        
+        total_stats = {
+            "active_sessions": len(user_compressors),
+            "total_messages": sum(s.get("total_messages", 0) for s in user_compressors.values()),
+            "total_compressed": sum(s.get("total_compressed", 0) for s in user_compressors.values()),
+            "tokens_saved": sum(s.get("tokens_saved", 0) for s in user_compressors.values()),
+            "sessions": user_compressors
+        };
+        
+        return total_stats;
+        
+    except Exception as e:
+        logger.error(f"Failed to get compression stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# === PROCESS EVENTS ENDPOINTS ===
+
+@api_router.get("/processes/stream")
+async def stream_processes(
+    conversation_id: Optional[str] = None,
+    _: str = Depends(get_current_user)
+):
+    """Stream process events via SSE."""
+    return StreamingResponse(
+        stream_process_events(conversation_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@api_router.get("/processes/{conversation_id}")
+async def get_processes(conversation_id: str, _: str = Depends(get_current_user)):
+    """Get all processes for a conversation."""
+    processes = process_emitter.get_processes_for_conversation(conversation_id)
+    return {
+        "conversation_id": conversation_id,
+        "processes": [p.to_dict() for p in processes]
+    }
+
+
+@api_router.get("/processes/{process_id}/details")
+async def get_process_details(process_id: str, _: str = Depends(get_current_user)):
+    """Get details of a specific process."""
+    process = process_emitter.get_process(process_id)
+    if not process:
+        raise HTTPException(status_code=404, detail="Process not found")
+    return process.to_dict()
+
+
+# === MULTI-MODEL ENDPOINTS ===
+
+# Global multi-model orchestrator
+_multi_model_orchestrator = None
+
+def get_multi_model_orchestrator() -> MultiModelOrchestrator:
+    global _multi_model_orchestrator
+    if _multi_model_orchestrator is None:
+        _multi_model_orchestrator = MultiModelOrchestrator(provider_manager)
+    return _multi_model_orchestrator
+
+
+@api_router.get("/multi-model/presets")
+async def get_multi_model_presets(_: str = Depends(get_current_user)):
+    """Get available multi-model presets."""
+    presets = {}
+    for key, preset in MULTI_MODEL_PRESETS.items():
+        presets[key] = {
+            "name": preset["name"],
+            "description": preset["description"],
+            "mode": preset["mode"].value,
+            "models": [m.to_dict() for m in preset["models"]]
+        }
+    return {"presets": presets}
+
+
+@api_router.post("/multi-model/chat")
+async def multi_model_chat(
+    request: MultiModelChatRequest,
+    http_request: Request,
+    user_email: str = Depends(get_current_user)
+):
+    """Send message to multiple models simultaneously."""
+    
+    orchestrator = get_multi_model_orchestrator()
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    
+    # Parse mode
+    try:
+        mode = MultiModelMode(request.mode)
+    except ValueError:
+        mode = MultiModelMode.PARALLEL
+    
+    # Build model configs
+    model_configs = [
+        ModelConfig(
+            provider=m.provider,
+            model=m.model,
+            display_name=m.display_name,
+            weight=m.weight,
+            timeout=m.timeout,
+            enabled=m.enabled,
+            params=m.params or {}
+        )
+        for m in request.models
+    ]
+    
+    # Load conversation history
+    history = conversation_store.load_conversation_history(
+        conversation_id, user_email=user_email
+    )
+    
+    # Build messages list
+    messages = []
+    if request.system_prompt:
+        messages.append({"role": "system", "content": request.system_prompt})
+    
+    for msg in history:
+        messages.append({"role": msg.role, "content": msg.content})
+    
+    messages.append({"role": "user", "content": request.message})
+    
+    # Save user message
+    user_message = Message(
+        id=str(uuid.uuid4()),
+        role="user",
+        content=request.message,
+        timestamp=datetime.now(),
+        meta={
+            "conversation_id": conversation_id,
+            "multi_model": True,
+            "models": [m.model for m in model_configs]
+        }
+    )
+    try:
+        conversation_store.save_message(conversation_id, user_message, user_email=user_email)
+    except Exception as save_err:
+        logger.error(f"[MULTI-MODEL] Failed to save user message: {save_err}")
+    
+    # Create process tracking
+    process = process_emitter.create_process(
+        process_type=ProcessType.MULTI_MODEL,
+        name=f"Multi-Model: {mode.value}",
+        conversation_id=conversation_id,
+        steps=[f"Query {m.display_name or m.model}" for m in model_configs] + ["Aggregate results"],
+        metadata={
+            "mode": mode.value,
+            "model_count": len(model_configs)
+        }
+    )
+    
+    generation_config = request.config or {}
+    
+    if request.stream:
+        async def generate_multi_stream():
+            import asyncio
+            message_queue = asyncio.Queue()
+            execution_done = asyncio.Event()
+            final_result = {"result": None, "error": None}
+            
+            await process_emitter.start_process(process)
+            
+            current_responses = {m.model: "" for m in model_configs}
+            
+            async def on_stream(model_config, chunk):
+                current_responses[model_config.model] += chunk
+                await message_queue.put(f"data: {json.dumps({'type': 'chunk', 'model': model_config.model, 'provider': model_config.provider, 'content': chunk})}\n\n")
+            
+            async def on_model_complete(response):
+                # Find step index for this model
+                for i, step in enumerate(process.steps):
+                    if response.model_config.model in step.name:
+                        await process_emitter.complete_step(process, i, 
+                            metadata={"latency_ms": response.latency_ms})
+                        break
+                
+                await message_queue.put(f"data: {json.dumps({'type': 'model_complete', 'model': response.model_config.model, 'content': response.content, 'latency_ms': response.latency_ms, 'success': response.success, 'error': response.error})}\n\n")
+            
+            async def run_orchestrator():
+                try:
+                    result = await orchestrator.execute(
+                        models=model_configs,
+                        messages=messages,
+                        mode=mode,
+                        generation_params=generation_config,
+                        on_stream=on_stream,
+                        on_model_complete=on_model_complete
+                    )
+                    
+                    await process_emitter.complete_process(process, metadata={
+                        "total_latency_ms": result.total_latency_ms,
+                        "responses_count": len(result.responses)
+                    })
+                    
+                    # Save assistant responses
+                    for resp in result.responses:
+                        if resp.success:
+                            assistant_message = Message(
+                                id=str(uuid.uuid4()),
+                                role="assistant",
+                                content=resp.content,
+                                timestamp=datetime.now(),
+                                meta={
+                                    "provider": resp.model_config.provider,
+                                    "model": resp.model_config.model,
+                                    "multi_model": True,
+                                    "latency_ms": resp.latency_ms,
+                                    "usage": resp.tokens_used
+                                }
+                            )
+                            try:
+                                conversation_store.save_message(
+                                    conversation_id, assistant_message, user_email=user_email
+                                )
+                            except Exception as save_err:
+                                logger.error(f"[MULTI-MODEL] Failed to save assistant message: {save_err}")
+                    
+                    final_result["result"] = result
+                except Exception as e:
+                    await process_emitter.fail_process(process, str(e))
+                    final_result["error"] = str(e)
+                finally:
+                    execution_done.set()
+            
+            # Start orchestrator in background
+            asyncio.create_task(run_orchestrator())
+            
+            # Yield messages from queue until done
+            while not execution_done.is_set() or not message_queue.empty():
+                try:
+                    msg = await asyncio.wait_for(message_queue.get(), timeout=0.1)
+                    yield msg
+                except asyncio.TimeoutError:
+                    continue
+            
+            # Send final result
+            if final_result["error"]:
+                yield f"data: {json.dumps({'type': 'error', 'error': final_result['error']})}\n\n"
+            elif final_result["result"]:
+                yield f"data: {json.dumps({'type': 'done', 'result': final_result['result'].to_dict()})}\n\n"
+        
+        return StreamingResponse(
+            generate_multi_stream(),
+            media_type="text/event-stream"
+        )
+    else:
+        # Non-streaming mode
+        await process_emitter.start_process(process)
+        
+        try:
+            result = await orchestrator.execute(
+                models=model_configs,
+                messages=messages,
+                mode=mode,
+                generation_params=generation_config
+            )
+            
+            await process_emitter.complete_process(process)
+            
+            # Save responses
+            for resp in result.responses:
+                if resp.success:
+                    assistant_message = Message(
+                        id=str(uuid.uuid4()),
+                        role="assistant",
+                        content=resp.content,
+                        timestamp=datetime.now(),
+                        meta={
+                            "provider": resp.model_config.provider,
+                            "model": resp.model_config.model,
+                            "multi_model": True,
+                            "latency_ms": resp.latency_ms
+                        }
+                    )
+                    try:
+                        conversation_store.save_message(
+                            conversation_id, assistant_message, user_email=user_email
+                        )
+                    except Exception as save_err:
+                        logger.error(f"[MULTI-MODEL] Failed to save message: {save_err}")
+            
+            return result.to_dict()
+            
+        except Exception as e:
+            await process_emitter.fail_process(process, str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/multi-model/cancel/{execution_id}")
+async def cancel_multi_model(execution_id: str, _: str = Depends(get_current_user)):
+    """Cancel an active multi-model execution."""
+    orchestrator = get_multi_model_orchestrator()
+    success = orchestrator.cancel_execution(execution_id)
+    return {"success": success, "execution_id": execution_id}
+
+
+# === MESSAGE STORE ENDPOINTS ===
+
+@api_router.get("/messages/search")
+async def search_messages(
+    q: str,
+    conversation_id: Optional[str] = None,
+    limit: int = 50,
+    user_email: str = Depends(get_current_user)
+):
+    """Search messages using full-text search."""
+    try:
+        message_store = get_message_store()
+        results = message_store.search_messages(
+            query=q,
+            conversation_id=conversation_id,
+            user_email=user_email,
+            limit=limit
+        )
+        return {"results": results, "count": len(results)}
+    except Exception as e:
+        logger.error(f"Message search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/messages/{conversation_id}/history")
+async def get_message_history(
+    conversation_id: str,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    include_deleted: bool = False,
+    user_email: str = Depends(get_current_user)
+):
+    """Get messages from the message database."""
+    try:
+        message_store = get_message_store()
+        messages = message_store.get_messages(
+            conversation_id=conversation_id,
+            user_email=user_email,
+            limit=limit,
+            offset=offset,
+            include_deleted=include_deleted
+        )
+        return {"messages": messages, "count": len(messages)}
+    except Exception as e:
+        logger.error(f"Failed to get message history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/messages/{message_id}/thinking")
+async def get_thinking_steps(message_id: str, _: str = Depends(get_current_user)):
+    """Get thinking/reasoning steps for a message."""
+    try:
+        message_store = get_message_store()
+        steps = message_store.get_thinking_steps(message_id)
+        return {"message_id": message_id, "steps": steps}
+    except Exception as e:
+        logger.error(f"Failed to get thinking steps: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/messages/{message_id}/multi-model")
+async def get_multi_model_responses(message_id: str, _: str = Depends(get_current_user)):
+    """Get all multi-model responses for a message."""
+    try:
+        message_store = get_message_store()
+        responses = message_store.get_multi_model_responses(message_id)
+        return {"message_id": message_id, "responses": responses}
+    except Exception as e:
+        logger.error(f"Failed to get multi-model responses: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class MessageFeedbackRequest(BaseModel):
+    feedback_type: str  # like, dislike, flag, regenerate
+    comment: Optional[str] = None
+
+
+@api_router.post("/messages/{message_id}/feedback")
+async def add_message_feedback(
+    message_id: str,
+    request: MessageFeedbackRequest,
+    user_email: str = Depends(get_current_user)
+):
+    """Add feedback to a message."""
+    try:
+        message_store = get_message_store()
+        success = message_store.add_feedback(
+            message_id=message_id,
+            feedback_type=request.feedback_type,
+            user_email=user_email,
+            comment=request.comment
+        )
+        return {"success": success}
+    except Exception as e:
+        logger.error(f"Failed to add feedback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.delete("/messages/{message_id}")
+async def delete_message(message_id: str, _: str = Depends(get_current_user)):
+    """Soft delete a message."""
+    try:
+        message_store = get_message_store()
+        success = message_store.soft_delete_message(message_id)
+        return {"success": success}
+    except Exception as e:
+        logger.error(f"Failed to delete message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/messages/stats")
+async def get_message_stats(
+    conversation_id: Optional[str] = None,
+    user_email: str = Depends(get_current_user)
+):
+    """Get message statistics."""
+    try:
+        message_store = get_message_store()
+        stats = message_store.get_stats(
+            conversation_id=conversation_id,
+            user_email=user_email
+        )
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to get message stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Register API router
 app.include_router(api_router)
 app.include_router(google_auth_router)
+
+# Register RAG router under /api prefix
+app.include_router(rag_router, prefix="/api")
 
 # Serve static files (frontend) at root - AFTER API router registration
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"

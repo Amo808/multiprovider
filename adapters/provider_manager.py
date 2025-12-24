@@ -57,6 +57,78 @@ class ProviderManager:
         self.provider_configs: Dict[ModelProvider, ProviderConfig] = {}
         self.provider_status: Dict[ModelProvider, ProviderStatus] = {}
         self.logger = logging.getLogger(f"{__name__}.Manager")
+        self._secrets_cache: Dict[str, str] = {}
+        
+    def _get_secrets_path(self) -> str:
+        """Get the path to secrets.json file"""
+        if os.path.exists('/app'):
+            return '/app/data/secrets.json'
+        else:
+            project_root = Path(__file__).parent.parent
+            return str(project_root / 'data' / 'secrets.json')
+    
+    def _load_secrets(self) -> Dict[str, str]:
+        """Load API keys from secrets.json file and also check config.json keyVaults"""
+        secrets_path = self._get_secrets_path()
+        
+        # Load from secrets.json first
+        try:
+            if os.path.exists(secrets_path):
+                with open(secrets_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._secrets_cache = data.get('apiKeys', {})
+                    self.logger.info(f"Loaded {len(self._secrets_cache)} API keys from secrets.json")
+        except Exception as e:
+            self.logger.warning(f"Could not load secrets.json: {e}")
+        
+        # Also try to load from config.json keyVaults
+        try:
+            if os.path.exists('/app'):
+                config_json_path = '/app/data/config.json'
+            else:
+                project_root = Path(__file__).parent.parent
+                config_json_path = str(project_root / 'data' / 'config.json')
+            
+            if os.path.exists(config_json_path):
+                with open(config_json_path, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                    providers = config_data.get('providers', {})
+                    for provider_id, provider_data in providers.items():
+                        key_vaults = provider_data.get('keyVaults', {})
+                        api_key = key_vaults.get('apiKey')
+                        if api_key and isinstance(api_key, str) and not api_key.startswith('your_') and len(api_key) > 10:
+                            env_var_name = f"{provider_id.upper()}_API_KEY"
+                            if env_var_name not in self._secrets_cache:
+                                self._secrets_cache[env_var_name] = api_key
+                                self.logger.info(f"Loaded API key for {provider_id} from config.json keyVaults")
+        except Exception as e:
+            self.logger.warning(f"Could not load API keys from config.json: {e}")
+        
+        return self._secrets_cache
+    
+    def _get_api_key(self, env_var_name: str, config_api_key: Optional[str] = None) -> Optional[str]:
+        """
+        Get API key from multiple sources in priority order:
+        1. Direct config value (if provided and valid)
+        2. secrets.json file
+        3. Environment variable
+        """
+        # 1. Check direct config value
+        if config_api_key and not config_api_key.startswith('your_') and len(config_api_key) > 10:
+            return config_api_key
+        
+        # 2. Check secrets.json
+        if env_var_name in self._secrets_cache:
+            secret_value = self._secrets_cache.get(env_var_name, '')
+            if secret_value and not secret_value.startswith('your_') and len(secret_value) > 10:
+                return secret_value
+        
+        # 3. Check environment variable
+        env_value = os.getenv(env_var_name, '')
+        if env_value and not env_value.startswith('your_') and len(env_value) > 10:
+            return env_value
+        
+        return None
         
     async def initialize(self):
         """Initialize the provider manager"""
@@ -75,6 +147,9 @@ class ProviderManager:
 
     async def load_configurations(self):
         """Load provider configurations from file"""
+        # First, load secrets from secrets.json
+        self._load_secrets()
+        
         try:
             if os.path.exists(self.config_path):
                 self.logger.info(f"Loading provider configs from: {self.config_path}")
@@ -86,18 +161,23 @@ class ProviderManager:
                     try:
                         provider_enum = ModelProvider(provider_id)
                         self.logger.info(f"Successfully mapped '{provider_id}' to {provider_enum}")
+                        
+                        # Get API key from multiple sources
+                        api_key_env = config.get("api_key_env", f"{provider_id.upper()}_API_KEY")
+                        api_key = self._get_api_key(api_key_env, config.get("api_key"))
+                        
                         self.provider_configs[provider_enum] = ProviderConfig(
                             id=provider_enum,
                             name=config.get("name", provider_id),
                             enabled=config.get("enabled", False),
-                            api_key=config.get("api_key") or os.getenv(config.get("api_key_env", "")),
+                            api_key=api_key,
                             base_url=config.get("base_url"),
                             endpoint=config.get("endpoint"),
                             region=config.get("region"),
                             api_version=config.get("api_version"),
                             extra_params=config.get("extra_params", {})
                         )
-                        self.logger.info(f"Config successfully created for {provider_enum}, enabled={config.get('enabled', False)}")
+                        self.logger.info(f"Config created for {provider_enum}, enabled={config.get('enabled', False)}, has_api_key={bool(api_key)}")
                     except ValueError as e:
                         self.logger.warning(f"Failed to map provider '{provider_id}': {e}")
                         self.logger.warning(f"Unknown provider: {provider_id}")
@@ -195,6 +275,66 @@ class ProviderManager:
                 
         except Exception as e:
             self.logger.error(f"Failed to save configurations: {e}")
+
+    async def save_api_key(self, provider_id: Union[str, ModelProvider], api_key: str) -> bool:
+        """Save an API key to secrets.json"""
+        if isinstance(provider_id, ModelProvider):
+            provider_id = provider_id.value
+        
+        env_var_name = f"{provider_id.upper()}_API_KEY"
+        secrets_path = self._get_secrets_path()
+        
+        try:
+            # Load existing secrets
+            secrets = {}
+            if os.path.exists(secrets_path):
+                with open(secrets_path, 'r', encoding='utf-8') as f:
+                    secrets = json.load(f)
+            
+            # Update the key
+            if 'apiKeys' not in secrets:
+                secrets['apiKeys'] = {}
+            secrets['apiKeys'][env_var_name] = api_key
+            
+            # Save back
+            os.makedirs(os.path.dirname(secrets_path), exist_ok=True)
+            with open(secrets_path, 'w', encoding='utf-8') as f:
+                json.dump(secrets, f, indent=2)
+            
+            # Update cache
+            self._secrets_cache[env_var_name] = api_key
+            
+            # Update provider config if exists
+            try:
+                provider_enum = ModelProvider(provider_id)
+                if provider_enum in self.provider_configs:
+                    self.provider_configs[provider_enum].api_key = api_key
+                    # Update adapter config too
+                    adapter = self.registry.get(provider_enum)
+                    if adapter:
+                        adapter.config.api_key = api_key
+                    # Update status
+                    status = self.provider_status.get(provider_enum)
+                    if status:
+                        status.has_api_key = True
+            except ValueError:
+                pass
+            
+            self.logger.info(f"Saved API key for {provider_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save API key for {provider_id}: {e}")
+            return False
+
+    async def get_api_keys_status(self) -> Dict[str, bool]:
+        """Get status of API keys for all providers"""
+        status = {}
+        for provider_id in ['deepseek', 'openai', 'anthropic', 'gemini', 'groq', 'mistral', 'ollama']:
+            env_var_name = f"{provider_id.upper()}_API_KEY"
+            api_key = self._get_api_key(env_var_name)
+            status[provider_id] = bool(api_key)
+        return status
 
     async def register_providers(self):
         """Register all available provider adapters"""

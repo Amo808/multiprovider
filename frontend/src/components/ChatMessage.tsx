@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import { Bot, User, Copy, RefreshCcw, ThumbsUp, ThumbsDown, Check, Loader2 } from 'lucide-react';
+import { Bot, User, Copy, RefreshCcw, ThumbsUp, ThumbsDown, Check, Loader2, ChevronUp, ChevronDown, Trash2 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import 'katex/dist/katex.min.css';
 import { ModelInfo } from '../types';
@@ -22,14 +22,21 @@ export interface ChatMessageData {
 
 interface ChatMessageProps {
   message: ChatMessageData;
+  index?: number;
+  totalMessages?: number;
   isStreaming?: boolean;
   streamContent?: string;
   selectedModel?: ModelInfo;
   onRegenerate?: (message: ChatMessageData) => void;
   onFeedback?: (message: ChatMessageData, value: 'up' | 'down') => void;
+  // NEW: Reordering callbacks
+  onMoveUp?: (index: number) => void;
+  onMoveDown?: (index: number) => void;
+  onDelete?: (index: number) => void;
+  enableReordering?: boolean;
 }
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isStreaming, streamContent, selectedModel, onRegenerate, onFeedback }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, totalMessages, isStreaming, streamContent, selectedModel, onRegenerate, onFeedback, onMoveUp, onMoveDown, onDelete, enableReordering }) => {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [codeCopiedId, setCodeCopiedId] = useState<string | null>(null);
@@ -131,6 +138,32 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isStreaming, 
                     </Button>
                     <Button variant='ghost' size='sm' className='h-7 w-7 p-0' onClick={() => onFeedback(message, 'down')} title='Not helpful'>
                       <ThumbsDown size={14} />
+                    </Button>
+                  </>
+                )}
+                {!isUser && enableReordering && (
+                  <>
+                    <Button variant='ghost' size='sm' className='h-7 w-7 p-0' onClick={() => onMoveUp?.(index!)} disabled={index === 0} title='Move up'>
+                      <ChevronUp size={14} />
+                    </Button>
+                    <Button variant='ghost' size='sm' className='h-7 w-7 p-0' onClick={() => onMoveDown?.(index!)} disabled={index === totalMessages! - 1} title='Move down'>
+                      <ChevronDown size={14} />
+                    </Button>
+                    <Button variant='ghost' size='sm' className='h-7 w-7 p-0 text-destructive hover:text-destructive' onClick={() => onDelete?.(index!)} title='Delete'>
+                      <Trash2 size={14} />
+                    </Button>
+                  </>
+                )}
+                {isUser && enableReordering && (
+                  <>
+                    <Button variant='ghost' size='sm' className='h-7 w-7 p-0' onClick={() => onMoveUp?.(index!)} disabled={index === 0} title='Move up'>
+                      <ChevronUp size={14} />
+                    </Button>
+                    <Button variant='ghost' size='sm' className='h-7 w-7 p-0' onClick={() => onMoveDown?.(index!)} disabled={index === totalMessages! - 1} title='Move down'>
+                      <ChevronDown size={14} />
+                    </Button>
+                    <Button variant='ghost' size='sm' className='h-7 w-7 p-0 text-destructive hover:text-destructive' onClick={() => onDelete?.(index!)} title='Delete'>
+                      <Trash2 size={14} />
                     </Button>
                   </>
                 )}

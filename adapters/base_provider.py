@@ -90,6 +90,7 @@ class ProviderConfig:
 class ChatResponse:
     """Response from chat completion"""
     content: str = ""
+    reasoning_content: Optional[str] = None  # Extended thinking / reasoning content
     id: Optional[str] = None
     done: bool = False
     error: Optional[str] = None

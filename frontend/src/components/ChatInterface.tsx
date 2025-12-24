@@ -1,10 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Copy, RefreshCw, AlertCircle, Zap, Square, Brain } from 'lucide-react';
-import { Message, ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
-import { useConversations } from '../hooks/useConversations';
+import { Send, Bot, RefreshCw, AlertCircle, Square, ArrowUpDown, FileText } from 'lucide-react';
+import { ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
+import { useConversationsContext } from '../contexts/ConversationsContext';
+import { useMessageReorder } from '../hooks/useMessageReorder';
+import { useThinkingStream } from '../hooks/useThinkingStream';
 import { ContextViewer } from './ContextViewer';
 import { Button } from './ui/button';
 import { estimateCostForMessage } from '../lib/pricing';
+import { MessageBubble } from './MessageBubble';
+import DocumentManager from './DocumentManager';
 
 interface ChatInterfaceProps {
   selectedModel?: ModelInfo;
@@ -14,236 +18,10 @@ interface ChatInterfaceProps {
   onApiKeyMissing?: (message: string) => void;
   conversationId?: string;
   onMessageSent?: (conversationId: string, message: string) => void;
-  onTokenUsageUpdate?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number }) => void; // NEW
-  systemPrompt?: string; // NEW
+  onTokenUsageUpdate?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number }) => void;
+  systemPrompt?: string;
+  onConfigChange?: (config: Partial<GenerationConfig>) => void;
 }
-
-const MessageBubble: React.FC<{
-  message: Message;
-  selectedModel?: ModelInfo;
-  isStreaming?: boolean;
-  currentResponse?: string;
-  deepResearchStage?: string;
-}> = ({ message, selectedModel, isStreaming = false, currentResponse = '', deepResearchStage }) => {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    const content = isStreaming ? currentResponse : message.content;
-    await navigator.clipboard.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const displayContent = isStreaming ? currentResponse : message.content;
-  const isUser = message.role === 'user';
-  const isError = message.content.startsWith('Error:');
-
-  return (
-    <div className={`flex items-start space-x-3 max-w-4xl mx-auto px-4 py-6 ${
-      isUser ? 'flex-row-reverse space-x-reverse' : ''
-    }`}>
-      {/* Avatar */}
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-        isUser 
-          ? 'bg-blue-600 text-white' 
-          : isError 
-            ? 'bg-red-600 text-white'
-            : 'bg-gray-600 text-white'
-      }`}>
-        {isUser ? <User size={16} /> : <Bot size={16} />}
-      </div>
-
-      {/* Message Content */}
-      <div className={`flex-1 min-w-0 ${isUser ? 'text-right' : ''}`}>
-        <div className="flex items-center space-x-2 mb-1">
-          <span className="text-sm font-medium text-gray-900 dark:text-white">
-            {isUser ? 'You' : (
-              message.meta?.model ? 
-                // Try to find the display name from the current model or use the model ID
-                (selectedModel?.id === message.meta.model ? selectedModel.display_name : message.meta.model) :
-                (selectedModel?.display_name || 'Assistant')
-            )}
-          </span>
-          {message.meta?.provider && !isUser && (
-            <span className="px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full">
-              {message.meta.provider.toUpperCase()}
-            </span>
-          )}
-          {/* Deep Research indicator */}
-          {!isUser && (deepResearchStage || message.meta?.deep_research) && (
-            <span className="px-2 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-full flex items-center space-x-1">
-              <Zap size={10} />
-              <span>Deep Research</span>
-            </span>
-          )}
-          {/* DEBUG: Add to console */}
-          {!isUser && (() => {
-            console.log('DEBUG Research:', {
-              deepResearchStage, 
-              deep_research: message.meta?.deep_research,
-              shouldShow: deepResearchStage || message.meta?.deep_research,
-              messageMeta: message.meta
-            });
-            return null;
-          })()}
-          {isStreaming && (
-            <div className="flex items-center space-x-1">
-              {message.meta?.reasoning ? (
-                <>
-                  <Brain size={12} className="animate-pulse text-purple-600 dark:text-purple-400" />
-                  <span className="text-xs text-purple-600 dark:text-purple-400">Reasoning...</span>
-                </>
-              ) : (
-                <>
-                  <Zap size={12} className="animate-pulse text-green-600 dark:text-green-400" />
-                  <span className="text-xs text-green-600 dark:text-green-400">Streaming...</span>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className={`relative group ${
-          isUser 
-            ? 'bg-blue-600 text-white' 
-            : isError
-              ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-              : 'bg-gray-50 dark:bg-gray-800'
-        } rounded-lg p-4 ${isUser ? 'ml-8' : 'mr-8'}`}>
-          {isError && (
-            <div className="flex items-center space-x-2 mb-2 text-red-600 dark:text-red-400">
-              <AlertCircle size={16} />
-              <span className="text-sm font-medium">Error</span>
-            </div>
-          )}
-          
-          <div className={`prose prose-sm max-w-none ${
-            isUser 
-              ? 'text-white prose-invert' 
-              : isError
-                ? 'text-red-800 dark:text-red-200'
-                : 'text-gray-900 dark:text-white prose-gray dark:prose-invert'
-          }`}>
-            {!isUser && !displayContent && !isError ? (
-              // Show Deep Research stage, specific reasoning status, or generic "Thinking..." 
-              deepResearchStage ? (
-                <div className="flex items-center space-x-2 text-blue-600 dark:text-blue-400">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                  <span className="text-sm whitespace-pre-wrap">{deepResearchStage}</span>
-                </div>
-              ) : message.meta?.reasoning ? (
-                <div className="flex items-center space-x-2 text-purple-600 dark:text-purple-400">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                  <span className="text-sm">🤔 Model is reasoning...</span>
-                </div>
-              ) : isStreaming ? (
-                <div className="flex items-center space-x-2 text-green-600 dark:text-green-400">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                  <span className="text-sm">💭 Generating response...</span>
-                </div>
-              ) : (
-                <div className="flex items-center space-x-2 text-muted-foreground">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                  <span className="text-sm">⏳ Preparing...</span>
-                </div>
-              )
-            ) : (
-              <p className="whitespace-pre-wrap m-0">
-                {displayContent}
-                {isStreaming && (
-                  <span className="animate-pulse">▊</span>
-                )}
-              </p>
-            )}
-          </div>
-
-          {/* Copy Button */}
-          {displayContent && !isStreaming && (
-            <button
-              onClick={handleCopy}
-              className={`absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md ${
-                isUser 
-                  ? 'text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary/20' 
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-              }`}
-              title={copied ? 'Copied!' : 'Copy message'}
-            >
-              <Copy size={14} />
-            </button>
-          )}
-        </div>
-
-        {/* Message Meta */}
-        {message.meta && !isUser && (message.meta.tokens_in || message.meta.tokens_out || isStreaming) && (
-          <div className="mt-1 flex items-center space-x-2 text-xs">
-            <div className="text-muted-foreground">
-              {new Date(message.timestamp).toLocaleTimeString()}
-            </div>
-            <div className="flex items-center space-x-1">
-              {message.meta.tokens_in && (
-                <span className="text-blue-600 dark:text-blue-400" title={`Input tokens: ${message.meta.tokens_in}`}>
-                  ↑{message.meta.tokens_in}
-                </span>
-              )}
-              {message.meta.tokens_out && (
-                <span className="text-green-600 dark:text-green-400" title={`Output tokens: ${message.meta.tokens_out}`}>
-                  ↓{message.meta.tokens_out}
-                </span>
-              )}
-              { message.meta?.thought_tokens !== undefined && (
-                <span className="text-purple-600 dark:text-purple-400" title={`Thinking (thought) tokens: ${message.meta.thought_tokens}`}>
-                  Θ{message.meta.thought_tokens}
-                </span>
-              )}
-              { message.meta?.thinking_tokens_used !== undefined && (
-                <span className="text-purple-600 dark:text-purple-400" title={`Thinking tokens actually used: ${message.meta.thinking_tokens_used}`}>
-                  used:{message.meta.thinking_tokens_used}
-                </span>
-              )}
-              { message.meta?.tool_calls && Array.isArray(message.meta.tool_calls) && message.meta.tool_calls.length > 0 && (
-                <span className="text-orange-600 dark:text-orange-400" title="Tool calls executed">
-                  tools:{message.meta.tool_calls.length}
-                </span>
-              )}
-              {message.meta.estimated_cost ? (
-                <span className="text-yellow-600 dark:text-yellow-400" title={`Estimated cost: $${message.meta.estimated_cost}`}>
-                  ${message.meta.estimated_cost.toFixed(4)}
-                </span>
-              ) : (isStreaming || (message.content && !message.meta.estimated_cost)) ? (
-                <span className="text-muted-foreground animate-pulse">
-                  calculating cost...
-                </span>
-              ) : null}
-            </div>
-          </div>
-        )}
-
-        {/* Show timestamp only if no meta info shown above */}
-        {(!message.meta || isUser || (!message.meta.tokens_in && !message.meta.tokens_out && !isStreaming)) && (
-          <div className="mt-1 text-xs text-muted-foreground">
-            {new Date(message.timestamp).toLocaleTimeString()}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   selectedModel,
@@ -252,18 +30,123 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   onApiKeyMissing,
   conversationId: incomingConversationId,
   onMessageSent,
-  onTokenUsageUpdate, // NEW
-  systemPrompt // NEW
+  onTokenUsageUpdate,
+  systemPrompt,
+  onConfigChange: _onConfigChange // kept for API compatibility
 }) => {
   const [inputValue, setInputValue] = useState('');
+  const [showDocumentManager, setShowDocumentManager] = useState(false);
   const conversationId = incomingConversationId || `conversation-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  const { getConversation, sendMessage, clearConversation, stopStreaming, recoverStuckRequest } = useConversations();
-  const conversationState = getConversation(conversationId);
-  const { messages, isStreaming, error, currentResponse, deepResearchStage, connectionLost, lastHeartbeat } = conversationState;
+  const { conversations, getConversation, sendMessage, clearConversation, stopStreaming, recoverStuckRequest, updateMessages } = useConversationsContext();
+  
+  // Use conversations directly for reactivity - this ensures re-render when state changes
+  const conversationState = conversations[conversationId] || getConversation(conversationId);
+  
+  // Safe destructuring with defaults
+  const messages = conversationState?.messages || [];
+  const isStreaming = conversationState?.isStreaming || false;
+  const error = conversationState?.error || null;
+  const currentResponse = conversationState?.currentResponse || '';
+  const deepResearchStage = conversationState?.deepResearchStage;
+  const connectionLost = conversationState?.connectionLost || false;
+  const lastHeartbeat = conversationState?.lastHeartbeat;
+  // Get thinking from context as fallback
+  const contextThinkingContent = conversationState?.thinkingContent;
+  const contextIsThinking = conversationState?.isThinking || false;
+  const updateVersion = conversationState?.updateVersion || 0;
+
+  // Use dedicated thinking stream hook - this is more reliable than the main chat SSE
+  // because it uses the same mechanism as ProcessViewer which works correctly
+  const { 
+    thinkingContent: streamThinkingContent, 
+    isThinking: streamIsThinking 
+  } = useThinkingStream({ conversationId });
+  
+  // Prefer stream thinking over context thinking (stream is more reliable)
+  const thinkingContent = streamThinkingContent || contextThinkingContent;
+  const isThinking = streamIsThinking || contextIsThinking;
+  
+  // When thinking completes, update the last assistant message with the thinking content
+  useEffect(() => {
+    if (!streamIsThinking && streamThinkingContent && streamThinkingContent.length > 0 && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg.role === 'assistant' && !lastMsg.meta?.reasoning_content) {
+        // Update the message with thinking content
+        const updatedMessages = messages.map((msg, idx) => {
+          if (idx === messages.length - 1 && msg.role === 'assistant') {
+            return {
+              ...msg,
+              meta: {
+                ...msg.meta,
+                reasoning_content: streamThinkingContent,
+                thought_content: streamThinkingContent,
+                thinking: streamThinkingContent
+              }
+            };
+          }
+          return msg;
+        });
+        
+        if (updateMessages) {
+          console.log(`[ChatInterface] Saving thinking content to message: ${streamThinkingContent.length} chars`);
+          updateMessages(conversationId, updatedMessages);
+        }
+      }
+    }
+  }, [streamIsThinking, streamThinkingContent, messages, conversationId, updateMessages]);
+
+  // Debug: log state changes
+  useEffect(() => {
+    console.log(`[ChatInterface] State update:`, {
+      conversationId,
+      updateVersion,
+      messagesCount: messages.length,
+      isStreaming,
+      isThinking,
+      streamIsThinking,
+      contextIsThinking,
+      thinkingContentLen: thinkingContent?.length || 0,
+      streamThinkingLen: streamThinkingContent?.length || 0,
+      lastMsgReasoningLen: messages[messages.length - 1]?.meta?.reasoning_content?.length || 0
+    });
+  }, [conversationId, messages, isStreaming, isThinking, thinkingContent, streamThinkingContent, streamIsThinking, contextIsThinking, updateVersion]);
+
+  // Initialize conversation on mount if it doesn't exist
+  useEffect(() => {
+    if (!conversations[conversationId]) {
+      getConversation(conversationId);
+    }
+  }, [conversationId, conversations, getConversation]);
+
+  // Message reordering functionality
+  const { moveUp, moveDown, deleteMessage } = useMessageReorder();
+  const [reorderingEnabled, setReorderingEnabled] = useState(false);
+
+  const handleMoveUp = async (index: number) => {
+    const newMessages = await moveUp(conversationId, index);
+    if (newMessages && updateMessages) {
+      updateMessages(conversationId, newMessages);
+    }
+  };
+
+  const handleMoveDown = async (index: number) => {
+    const newMessages = await moveDown(conversationId, index);
+    if (newMessages && updateMessages) {
+      updateMessages(conversationId, newMessages);
+    }
+  };
+
+  const handleDeleteMessage = async (index: number) => {
+    if (!confirm('Are you sure you want to delete this message?')) return;
+    const newMessages = await deleteMessage(conversationId, index);
+    if (newMessages && updateMessages) {
+      updateMessages(conversationId, newMessages);
+    }
+  };
 
   // NEW: aggregate token usage whenever messages change
   useEffect(() => {
@@ -436,35 +319,49 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         ) : (
           <div className="py-4">
-            {messages.map((message, index) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                selectedModel={selectedModel}
-                isStreaming={isStreaming && index === messages.length - 1}
-                currentResponse={currentResponse}
-                deepResearchStage={index === messages.length - 1 ? deepResearchStage : undefined}
-              />
-            ))}
+            {messages.map((message, index) => {
+              // Calculate key with updateVersion to force re-render when thinking content changes
+              const isLastMessage = index === messages.length - 1;
+              const keyId = `${message.id}-v${updateVersion}-${isLastMessage && isThinking ? 'thinking' : 'done'}`;
+              
+              return (
+                <MessageBubble
+                  key={keyId}
+                  message={message}
+                  index={index}
+                  totalMessages={messages.length}
+                  selectedModel={selectedModel}
+                  isStreaming={isStreaming && isLastMessage}
+                  currentResponse={currentResponse}
+                  deepResearchStage={isLastMessage ? deepResearchStage : undefined}
+                  enableReordering={reorderingEnabled && !isStreaming}
+                  onMoveUp={handleMoveUp}
+                  onMoveDown={handleMoveDown}
+                  onDelete={handleDeleteMessage}
+                  thinkingContent={isLastMessage ? thinkingContent : undefined}
+                  isThinking={isLastMessage ? isThinking : false}
+                />
+              );
+            })}
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 flex-shrink-0">
+      <div className="border-t border-border bg-card p-4 flex-shrink-0">
         {/* Connection Status and Recovery */}
         {connectionLost && isStreaming && (
-          <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+          <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-md">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
-                <AlertCircle size={16} className="text-yellow-600 dark:text-yellow-400" />
+                <AlertCircle size={16} className="text-yellow-500" />
                 <div>
                   {/* Check if this is a reasoning model or deep research */}
                   {(deepResearchStage?.includes('reasoning') || deepResearchStage?.includes('GPT-5') || deepResearchStage?.includes('thinking')) ? (
                     <>
-                      <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Deep Reasoning in Progress</p>
-                      <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                      <p className="text-sm font-medium text-yellow-600 dark:text-yellow-300">Deep Reasoning in Progress</p>
+                      <p className="text-xs text-yellow-600/80 dark:text-yellow-400/80">
                         The model is performing complex reasoning. This can take several minutes.
                         {lastHeartbeat && (
                           <span> Processing for: {Math.round((Date.now() - lastHeartbeat) / 1000)}s</span>
@@ -473,8 +370,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     </>
                   ) : (
                     <>
-                      <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Connection Issue</p>
-                      <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                      <p className="text-sm font-medium text-yellow-600 dark:text-yellow-300">Connection Issue</p>
+                      <p className="text-xs text-yellow-600/80 dark:text-yellow-400/80">
                         No response from server for over a minute. The model might still be processing.
                         {lastHeartbeat && (
                           <span> Last activity: {Math.round((Date.now() - lastHeartbeat) / 1000)}s ago</span>
@@ -499,10 +396,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
 
         {error && (
-          <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-md">
             <div className="flex items-center space-x-2">
-              <AlertCircle size={16} className="text-destructive" />
-              <p className="text-sm text-destructive">{error}</p>
+              <AlertCircle size={16} className="text-red-500" />
+              <p className="text-sm text-red-600 dark:text-red-300">{error}</p>
             </div>
           </div>
         )}
@@ -519,7 +416,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   ? "Type your message... (Press Enter to send, Shift+Enter for new line)"
                   : "Select a model first..."
               }
-              className="w-full px-4 py-3 border border-input rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-input bg-background text-foreground placeholder:text-muted-foreground"
+              className="w-full px-4 py-3 border border-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring bg-background text-foreground placeholder:text-muted-foreground"
               rows={1}
               style={{ minHeight: '48px', maxHeight: '200px' }}
               disabled={!selectedModel || isStreaming}
@@ -534,6 +431,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               generationConfig={generationConfig}
             />
             
+            {/* Document Manager */}
+            <Button
+              type="button"
+              onClick={() => setShowDocumentManager(true)}
+              variant="ghost"
+              title="Manage documents for RAG"
+              className="hover:bg-secondary"
+            >
+              <FileText size={20} className="text-foreground" />
+            </Button>
+            
+            {/* Reorder Messages Button */}
+            {messages.length > 1 && (
+              <Button
+                type="button"
+                onClick={() => setReorderingEnabled(!reorderingEnabled)}
+                disabled={isStreaming}
+                variant={reorderingEnabled ? "secondary" : "ghost"}
+                title={reorderingEnabled ? "Done reordering" : "Reorder messages"}
+                className="hover:bg-secondary"
+              >
+                <ArrowUpDown size={20} className="text-foreground" />
+              </Button>
+            )}
+            
             {messages.length > 0 && (
               <Button
                 type="button"
@@ -541,8 +463,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 disabled={isStreaming}
                 variant="ghost"
                 title="Clear conversation"
+                className="hover:bg-secondary"
               >
-                <RefreshCw size={20} />
+                <RefreshCw size={20} className="text-foreground" />
               </Button>
             )}
             
@@ -561,60 +484,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               <Button
                 type="submit"
                 disabled={!canSend}
-                className="px-6"
+                className="px-6 bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50"
               >
                 <Send size={20} />
               </Button>
             )}
           </div>
         </form>
-
-        {/* Status Bar */}
-        <div className="mt-3 flex items-center justify-between text-xs bg-secondary rounded-md p-2 border border-border">
-          <div className="flex items-center space-x-4 text-secondary-foreground">
-            {selectedModel && selectedProvider && (
-              <>
-                <span className="font-semibold text-foreground">
-                  Model: {selectedModel.display_name} ({selectedProvider.toUpperCase()})
-                </span>
-                <span className="text-muted-foreground">•</span>
-                <span className="text-muted-foreground">
-                  Context: {selectedModel.context_length.toLocaleString()} tokens
-                </span>
-                {generationConfig.verbosity && (
-                  <>
-                    <span className="text-muted-foreground">•</span>
-                    <span title="Verbosity hint to GPT-5" className="px-2 py-1 bg-primary/10 text-primary rounded-full font-medium">Verbosity: {generationConfig.verbosity}</span>
-                  </>
-                )}
-                {generationConfig.reasoning_effort && (
-                  <>
-                    <span className="text-muted-foreground">•</span>
-                    <span title="Reasoning effort" className="px-2 py-1 bg-primary/10 text-primary rounded-full font-medium">Reasoning: {generationConfig.reasoning_effort}</span>
-                  </>
-                )}
-                {generationConfig.thinking_budget !== undefined && selectedProvider === 'gemini' && (
-                  <>
-                    <span className="text-muted-foreground">•</span>
-                    <span title="Gemini thinking budget" className="px-2 py-1 bg-primary/10 text-primary rounded-full font-medium">ThinkBudget: {generationConfig.thinking_budget}</span>
-                  </>
-                )}
-                {generationConfig.stream && (
-                  <>
-                    <span className="text-muted-foreground">•</span>
-                    <span className="px-2 py-1 bg-green-500/10 text-green-600 dark:text-green-400 rounded-full font-medium">Streaming enabled</span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-          <div className="font-medium text-foreground">
-            {messages.length > 0 && (
-              <span>{messages.length} message{messages.length !== 1 ? 's' : ''}</span>
-            )}
-          </div>
-        </div>
       </div>
+      
+      {/* Document Manager Modal */}
+      <DocumentManager
+        isOpen={showDocumentManager}
+        onClose={() => setShowDocumentManager(false)}
+      />
     </div>
   );
 };

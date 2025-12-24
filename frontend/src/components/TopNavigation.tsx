@@ -1,13 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from './ui/button';
 import { Avatar, AvatarFallback } from './ui/avatar';
-import { Sun, Moon, Monitor, LogOut } from 'lucide-react';
-import { ModelInfo, ModelProvider, AppConfig, GenerationConfig } from '../types'; // removed GenerationConfig
+import { Sun, Moon, Monitor, LogOut, Brain, Zap, MessageSquare } from 'lucide-react';
+import { ModelInfo, ModelProvider, AppConfig, GenerationConfig } from '../types';
 import { UnifiedModelMenu } from './UnifiedModelMenu';
 import TokenCounter from './TokenCounter';
 import { Logo } from './Logo';
-
-interface ExtendedModelInfo extends ModelInfo { streaming?: boolean; vision?: boolean }
 
 interface TopNavigationProps {
   config: AppConfig;
@@ -19,37 +17,137 @@ interface TopNavigationProps {
   onSettingsClick: () => void; // opens provider manager
   onLogout: () => void;
   onSelectModel: (m: ModelInfo) => void;
-  onChangeGeneration?: (patch: Partial<GenerationConfig>) => void; // NEW
-  systemPrompt?: string; // NEW
-  onChangeSystemPrompt?: (p: string) => void; // NEW
-  tokenUsage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number } | null; // NEW
-  onGenSettings?: () => void; // NEW
+  onChangeGeneration?: (patch: Partial<GenerationConfig>) => void;
+  systemPrompt?: string;
+  onChangeSystemPrompt?: (p: string) => void;
+  tokenUsage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number } | null;
+  generationConfig?: GenerationConfig; // Per-model generation config
+  health?: { status: string } | null; // API health status
 }
 
 const themeIcon = (t: 'light' | 'dark' | 'auto') => t==='light'? <Sun size={16}/> : t==='dark'? <Moon size={16}/> : <Monitor size={16}/>;
 
-export const TopNavigation: React.FC<TopNavigationProps> = ({ config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration, systemPrompt, onChangeSystemPrompt, tokenUsage, onGenSettings }) => {
-  const m: ExtendedModelInfo | undefined = selectedModel as ExtendedModelInfo | undefined;
+const LEVELS = ['off', 'low', 'medium', 'high'];
+
+export const TopNavigation: React.FC<TopNavigationProps> = ({ config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration, systemPrompt, onChangeSystemPrompt, tokenUsage, generationConfig }) => {
+  const effectiveConfig = generationConfig || config.generation;
+  
+  // Local state for immediate UI updates
+  const [localVerbosity, setLocalVerbosity] = useState<string>(() => (generationConfig?.verbosity as string) || 'off');
+  const [localReasoning, setLocalReasoning] = useState<string>(() => (generationConfig?.reasoning_effort as string) || 'off');
+  
+  // Handlers for generation controls - use local state only, no sync with props
+  const handleVerbosityToggle = () => {
+    const currentIndex = LEVELS.indexOf(localVerbosity);
+    const nextIndex = (currentIndex + 1) % LEVELS.length;
+    const nextValue = LEVELS[nextIndex];
+    console.log('[Verbosity] current:', localVerbosity, 'currentIndex:', currentIndex, 'next:', nextValue);
+    setLocalVerbosity(nextValue);
+    onChangeGeneration?.({ verbosity: nextValue === 'off' ? undefined : nextValue as any });
+  };
+  
+  const handleReasoningToggle = () => {
+    const currentIndex = LEVELS.indexOf(localReasoning);
+    const nextIndex = (currentIndex + 1) % LEVELS.length;
+    const nextValue = LEVELS[nextIndex];
+    console.log('[Reasoning] current:', localReasoning, 'currentIndex:', currentIndex, 'next:', nextValue);
+    setLocalReasoning(nextValue);
+    onChangeGeneration?.({ reasoning_effort: nextValue === 'off' ? undefined : nextValue as any });
+  };
+  
+  const handleStreamToggle = () => {
+    onChangeGeneration?.({ stream: !effectiveConfig?.stream });
+  };
+  
+  const handleThinkingToggle = () => {
+    onChangeGeneration?.({ include_thoughts: !effectiveConfig?.include_thoughts });
+  };
+
   return (
     <header className="flex items-center h-14 px-4 gap-3 bg-background border-b border-border flex-shrink-0">
       <div className="flex items-center">
         <Logo width={100} height={14} className="text-foreground" />
       </div>
-      {/* Unified model & provider menu inline */}
-      <div className="ml-4"><UnifiedModelMenu config={config} activeModel={selectedModel} activeProvider={selectedProvider} onSelectModel={onSelectModel} onManageProviders={onSettingsClick} generationConfig={config.generation} onChangeGeneration={onChangeGeneration} systemPrompt={systemPrompt} onChangeSystemPrompt={onChangeSystemPrompt} /></div>
-      {m && (
-        <div className="hidden md:flex items-center gap-1 text-[11px]">
-          {m.context_length && <span className="px-2 py-1 rounded-full bg-secondary text-secondary-foreground">⚪ {m.context_length.toLocaleString()} tks</span>}
-          {m.streaming && <span className="px-2 py-1 rounded-full bg-secondary text-secondary-foreground">• Streaming</span>}
-          {m.vision && <span className="px-2 py-1 rounded-full bg-secondary text-secondary-foreground">• Vision</span>}
-        </div>
-      )}
-      {/* Usage panel in the header */}
-      <div className="ml-4">
-        <TokenCounter usage={tokenUsage || null} model={selectedModel?.display_name} maxTokens={selectedModel?.max_output_tokens || selectedModel?.context_length} />
+      {/* Unified model & provider menu inline - all settings are here */}
+      <div className="ml-2">
+        <UnifiedModelMenu 
+          config={config} 
+          activeModel={selectedModel} 
+          activeProvider={selectedProvider} 
+          onSelectModel={onSelectModel} 
+          onManageProviders={onSettingsClick} 
+          generationConfig={effectiveConfig} 
+          onChangeGeneration={onChangeGeneration} 
+          systemPrompt={systemPrompt} 
+          onChangeSystemPrompt={onChangeSystemPrompt} 
+        />
       </div>
+      
+      {/* Generation Config Controls - transparent buttons */}
+      <div className="hidden lg:flex items-center gap-1 ml-2">
+        <span className="text-muted-foreground/40 mx-1">|</span>
+        
+        {/* Verbosity */}
+        <button
+          onClick={handleVerbosityToggle}
+          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${
+            localVerbosity !== 'off'
+              ? 'text-orange-500 dark:text-orange-400' 
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+          title="Click to cycle: off → low → medium → high → off"
+        >
+          <MessageSquare size={12} className="inline mr-1" />
+          {localVerbosity}
+        </button>
+        
+        {/* Reasoning */}
+        <button
+          onClick={handleReasoningToggle}
+          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${
+            localReasoning !== 'off'
+              ? 'text-purple-500 dark:text-purple-400' 
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+          title="Click to cycle: off → low → medium → high → off"
+        >
+          🧠 {localReasoning}
+        </button>
+        
+        {/* Stream */}
+        <button
+          onClick={handleStreamToggle}
+          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${
+            effectiveConfig?.stream 
+              ? 'text-green-500 dark:text-green-400' 
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+          title="Click to toggle streaming"
+        >
+          <Zap size={12} className="inline mr-1" />
+          {effectiveConfig?.stream ? 'on' : 'off'}
+        </button>
+        
+        {/* Thinking Mode */}
+        <button
+          onClick={handleThinkingToggle}
+          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 flex items-center gap-1 ${
+            effectiveConfig?.include_thoughts
+              ? 'text-pink-500 dark:text-pink-400' 
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+          title="Click to toggle thinking mode"
+        >
+          <Brain size={12} />
+          {effectiveConfig?.include_thoughts ? 'ON' : 'OFF'}
+        </button>
+        
+        <span className="text-muted-foreground/40 mx-1">|</span>
+      </div>
+      
+      {/* Usage panel in the header */}
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onGenSettings} className="px-2 text-xs">Generation</Button>
+        <TokenCounter usage={tokenUsage || null} model={selectedModel?.display_name} maxTokens={selectedModel?.max_output_tokens || selectedModel?.context_length} />
         <Button variant="ghost" size="sm" onClick={onSettingsClick} className="px-3 h-8 text-xs">Settings</Button>
         <Button variant="ghost" size="sm" onClick={onThemeToggle} className="h-8 w-8 p-0" title={theme}>{themeIcon(theme)}</Button>
         {userEmail && (

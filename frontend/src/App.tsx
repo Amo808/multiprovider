@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   ChatInterface, 
   ProviderManager,
@@ -6,21 +6,24 @@ import {
   LoginModal,
   ConversationHistory,
   useConfig,
-  useConversations,
   ModelInfo,
   ModelProvider,
-  GenerationConfig,
-  GenerationSettings
+  GenerationConfig
 } from './components';
+import { useConversationsContext } from './contexts/ConversationsContext';
 import { TopNavigation } from './components/TopNavigation';
 import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider } from './components/ToastProvider';
 import { PresetPrompts } from './components/PresetPrompts';
+import { ParallelChatInterface } from './components/ParallelChatInterface';
 import { apiClient } from './services/api';
 import { useTokenUsage } from './hooks/useTokenUsage';
+import { useModelSettings } from './hooks/useModelSettings';
 import { useHealth } from './components';
 
 interface Conversation { id: string; title: string; updatedAt: string }
+
+type ChatMode = 'single' | 'parallel';
 
 function App() {
   // ========================= State Management =========================
@@ -29,6 +32,7 @@ function App() {
   const [showProviderManager, setShowProviderManager] = useState(false);
   const [currentConversationId, setCurrentConversationId] = useState<string>('default');
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [chatMode, setChatMode] = useState<ChatMode>('single');
   const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>(() => {
     // Load theme from localStorage or default to 'auto'
     try {
@@ -44,7 +48,6 @@ function App() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [showCommand, setShowCommand] = useState(false);
   const [showHistory, setShowHistory] = useState(true);
-  const [showGenerationSettings, setShowGenerationSettings] = useState(false);
   const { health } = useHealth();
   const { usage: tokenUsage, update: updateTokenUsage } = useTokenUsage();
 
@@ -57,12 +60,47 @@ function App() {
   };
 
   // ========================= Hooks =========================
-  const { config, loading: configLoading, error: configError, updateConfig, fetchConfig, updateGenerationConfig } = useConfig();
-  const { deleteConversation: deleteConversationMessages } = useConversations();
-  // System prompt per provider+model map
-  const [systemPrompts, setSystemPrompts] = useState<Record<string,string>>({});
-  const activeSystemPromptKey = `${selectedProvider||''}:${selectedModel?.id||''}`;
-  const activeSystemPrompt = systemPrompts[activeSystemPromptKey] || '';
+  const { config, loading: configLoading, error: configError, updateConfig, fetchConfig } = useConfig();
+  const { deleteConversation: deleteConversationMessages } = useConversationsContext();
+  
+  // Per-model settings hook - manages generation settings + system prompt per model
+  const { 
+    settings: modelSettings, 
+    loading: modelSettingsLoading,
+    updateSettings: updateModelSettings,
+    hasChanges: modelSettingsHasChanges
+  } = useModelSettings(selectedProvider, selectedModel?.id);
+  
+  // Derive system prompt from model settings
+  const activeSystemPrompt = modelSettings.system_prompt || '';
+  
+  // Build effective generation config from model settings
+  const effectiveGenerationConfig: GenerationConfig = {
+    temperature: modelSettings.temperature ?? config?.generation?.temperature ?? 0.7,
+    max_tokens: modelSettings.max_tokens ?? config?.generation?.max_tokens ?? 8192,
+    top_p: modelSettings.top_p ?? config?.generation?.top_p ?? 1.0,
+    frequency_penalty: modelSettings.frequency_penalty ?? config?.generation?.frequency_penalty ?? 0,
+    presence_penalty: modelSettings.presence_penalty ?? config?.generation?.presence_penalty ?? 0,
+    stream: modelSettings.stream ?? config?.generation?.stream ?? true,
+    thinking_budget: modelSettings.thinking_budget ?? config?.generation?.thinking_budget,
+    include_thoughts: modelSettings.include_thoughts ?? config?.generation?.include_thoughts ?? false,
+    verbosity: modelSettings.verbosity ?? config?.generation?.verbosity,
+    reasoning_effort: modelSettings.reasoning_effort ?? config?.generation?.reasoning_effort,
+    cfg_scale: modelSettings.cfg_scale ?? config?.generation?.cfg_scale,
+    free_tool_calling: modelSettings.free_tool_calling ?? config?.generation?.free_tool_calling ?? false
+  };
+
+  // Collect all available models from all providers
+  const allAvailableModels = useMemo(() => {
+    if (!config?.providers) return [];
+    const models: ModelInfo[] = [];
+    Object.values(config.providers).forEach(provider => {
+      if (provider.enabled && provider.models) {
+        models.push(...provider.models.filter(m => m.enabled !== false));
+      }
+    });
+    return models;
+  }, [config?.providers]);
 
   // ========================= Auth Restore =========================
   useEffect(() => {
@@ -598,33 +636,45 @@ interface GoogleCredentialResponse {
         onSettingsClick={() => setShowProviderManager(true)}
         onLogout={() => { localStorage.removeItem('jwt_token'); setIsAuthenticated(false); setUserEmail(null); }}
         onSelectModel={handleModelChange}
-        onGenSettings={() => setShowGenerationSettings(s => !s)}
         onChangeGeneration={async (patch) => {
-          try { await updateGenerationConfig(patch); } catch(e){ console.error(e); }
+          try { 
+            await updateModelSettings(patch); 
+          } catch(e) { 
+            console.error(e); 
+          }
         }}
         systemPrompt={activeSystemPrompt}
-        onChangeSystemPrompt={(p: string) => { setSystemPrompts(prev => ({ ...prev, [activeSystemPromptKey]: p })); }}
+        onChangeSystemPrompt={(p: string) => { updateModelSettings({ system_prompt: p }); }}
         tokenUsage={tokenUsage}
+        generationConfig={effectiveGenerationConfig}
+        health={health}
       />
-      {showGenerationSettings && (
-        <div className="absolute top-16 right-4 z-40">
-          <GenerationSettings
-            config={config.generation}
-            currentProvider={selectedProvider}
-            currentModel={selectedModel}
-            onConfigChange={() => {}}
-            onSave={async (gc: GenerationConfig) => { await apiClient.updateGenerationConfig(gc); }}
-            isOpen={true}
-            onToggle={() => setShowGenerationSettings(false)}
-          />
-        </div>
-      )}
       <div className="flex items-center gap-2 px-4 py-1 text-xs border-b border-border bg-background">
         <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium">{showHistory ? 'Hide' : 'Show'} History</button>
-        {health && <span className={`px-2 py-1 rounded-full font-medium ${health.status === 'healthy' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'}`}>API {health.status}</span>}
+        {/* Chat mode toggle */}
+        <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
+          <button
+            onClick={() => setChatMode('single')}
+            className={`px-2 py-1 rounded font-medium transition-colors ${chatMode === 'single' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            Single
+          </button>
+          <button
+            onClick={() => setChatMode('parallel')}
+            className={`px-2 py-1 rounded font-medium transition-colors ${chatMode === 'parallel' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400 shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            Compare
+          </button>
+        </div>
+        
+        <span className="ml-auto"></span>
+        
+        {/* Per-model settings status indicators */}
+        {modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 animate-pulse">Loading settings...</span>}
+        {modelSettingsHasChanges && !modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Unsaved changes</span>}
       </div>
       <main className="flex-1 flex min-h-0 overflow-hidden">
-        {showHistory && (
+        {showHistory && chatMode === 'single' && (
           <ConversationHistory
             conversations={conversations}
             currentConversationId={currentConversationId}
@@ -635,16 +685,24 @@ interface GoogleCredentialResponse {
           />
         )}
         <div className="flex-1 flex flex-col min-h-0">
-          {currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
+          {chatMode === 'parallel' ? (
+            <ParallelChatInterface
+              availableModels={allAvailableModels}
+              generationConfig={effectiveGenerationConfig}
+              systemPrompt={activeSystemPrompt}
+              onClose={() => setChatMode('single')}
+            />
+          ) : currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
             <>
               <ChatInterface
                 selectedModel={selectedModel}
                 selectedProvider={selectedProvider}
-                generationConfig={config.generation}
+                generationConfig={effectiveGenerationConfig}
                 conversationId={currentConversationId}
                 onMessageSent={handleUpdateConversationTitle}
                 onTokenUsageUpdate={updateTokenUsage}
                 systemPrompt={activeSystemPrompt}
+                onConfigChange={updateModelSettings}
               />
               <div className="px-4 pb-3"><PresetPrompts onInsert={(t: string) => { const ev = new CustomEvent('insert-preset', { detail: t }); window.dispatchEvent(ev); }} /></div>
             </>

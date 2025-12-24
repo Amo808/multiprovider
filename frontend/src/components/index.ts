@@ -15,12 +15,29 @@ export { PresetPrompts } from './PresetPrompts';
 export { UnifiedModelMenu } from './UnifiedModelMenu';
 export { Logo } from './Logo';
 
+// Document & RAG Components
+export { default as DocumentManager } from './DocumentManager';
+
+// Process & Multi-Model Components
+export { ProcessViewer, ProcessCard } from './ProcessViewer';
+export { ThinkingPanel, useThinkingSessions } from './ThinkingPanel';
+export { MultiModelChat } from './MultiModelChat';
+
 // Hooks
 export * from '../hooks/useApi';
 export { useConversations } from '../hooks/useConversations';
+export { useConversationsContext, ConversationsProvider } from '../contexts/ConversationsContext';
+export { 
+  useProcessEvents, 
+  useConversationProcesses, 
+  useMultiModel, 
+  useMultiModelPresets 
+} from '../hooks/useProcessEvents';
+export { useRAG } from '../hooks/useRAG';
 
 // Types
 export * from '../types';
 
 // Services
 export { apiClient } from '../services/api';
+export { ragService } from '../services/rag';

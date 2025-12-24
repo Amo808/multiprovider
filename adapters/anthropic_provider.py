@@ -45,25 +45,13 @@ class AnthropicAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
-            # Latest Claude 4.5 models (November 2025)
+            # === Claude 4.5 Models (Latest - December 2025) ===
+            # From official Anthropic docs: https://docs.anthropic.com/en/docs/about-claude/models
+            # Context: 200K (1M with beta header for Sonnet), Max Output: 64K
             ModelInfo(
-                id="claude-sonnet-4-5-20250929",
-                name="claude-sonnet-4-5-20250929",
-                display_name="Claude Sonnet 4.5",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=200000,  # 1M tokens available with beta header
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                max_output_tokens=64000,  # 64K max output
-                recommended_max_tokens=8192,  # Recommended default
-                pricing={"input_tokens": 3.00, "output_tokens": 15.00}  # per 1M tokens
-            ),
-            ModelInfo(
-                id="claude-haiku-4-5-20251001",
-                name="claude-haiku-4-5-20251001", 
-                display_name="Claude Haiku 4.5",
+                id="claude-opus-4-5-20251101",
+                name="claude-opus-4-5-20251101",
+                display_name="Claude Opus 4.5 (Premium Intelligence)",
                 provider=ModelProvider.ANTHROPIC,
                 context_length=200000,
                 supports_streaming=True,
@@ -71,10 +59,38 @@ class AnthropicAdapter(BaseAdapter):
                 supports_vision=True,
                 type=ModelType.CHAT,
                 max_output_tokens=64000,  # 64K max output
-                recommended_max_tokens=4096,  # Recommended default for speed
-                pricing={"input_tokens": 1.00, "output_tokens": 5.00}  # per 1M tokens
+                recommended_max_tokens=16384,
+                pricing={"input_tokens": 5.00, "output_tokens": 25.00}  # per 1M tokens
             ),
-            # Claude 4.1 Opus (updated limits)
+            ModelInfo(
+                id="claude-sonnet-4-5-20250929",
+                name="claude-sonnet-4-5-20250929",
+                display_name="Claude Sonnet 4.5 (Best for Agents & Coding)",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,  # 1M with beta header
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=64000,  # 64K max output
+                recommended_max_tokens=16384,
+                pricing={"input_tokens": 3.00, "output_tokens": 15.00}
+            ),
+            ModelInfo(
+                id="claude-haiku-4-5-20251001",
+                name="claude-haiku-4-5-20251001", 
+                display_name="Claude Haiku 4.5 (Fastest)",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=64000,  # 64K max output
+                recommended_max_tokens=8192,  # Faster responses
+                pricing={"input_tokens": 1.00, "output_tokens": 5.00}
+            ),
+            # === Claude 4.1 Models ===
             ModelInfo(
                 id="claude-opus-4-1-20250805",
                 name="claude-opus-4-1-20250805",
@@ -85,23 +101,41 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=32000,  # EXACTLY 32K max (API enforced)
-                recommended_max_tokens=8192,  # Higher default for complex reasoning
-                pricing={"input_tokens": 15.00, "output_tokens": 75.00}  # per 1M tokens
+                max_output_tokens=64000,  # 64K max
+                recommended_max_tokens=16384,
+                pricing={"input_tokens": 15.00, "output_tokens": 75.00}
             ),
-            # Claude 3 models (legacy but still working)
+            # === Claude 4 Models ===
             ModelInfo(
-                id="claude-3-opus-20240229",
-                name="claude-3-opus-20240229",
-                display_name="Claude 3 Opus",
+                id="claude-sonnet-4-20250514",
+                name="claude-sonnet-4-20250514",
+                display_name="Claude Sonnet 4",
                 provider=ModelProvider.ANTHROPIC,
                 context_length=200000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 15.00, "output_tokens": 75.00}  # per 1M tokens
+                max_output_tokens=64000,
+                recommended_max_tokens=16384,
+                pricing={"input_tokens": 3.00, "output_tokens": 15.00}
             ),
+            # === Claude 3.5 Models (Legacy) ===
+            ModelInfo(
+                id="claude-3-5-haiku-20241022",
+                name="claude-3-5-haiku-20241022",
+                display_name="Claude 3.5 Haiku",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                max_output_tokens=8192,
+                recommended_max_tokens=4096,
+                pricing={"input_tokens": 0.80, "output_tokens": 4.00}
+            ),
+            # === Claude 3 Models (Legacy) ===
             ModelInfo(
                 id="claude-3-haiku-20240307",
                 name="claude-3-haiku-20240307",
@@ -112,9 +146,25 @@ class AnthropicAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.25, "output_tokens": 1.25}  # per 1M tokens
+                max_output_tokens=4096,
+                recommended_max_tokens=4096,
+                pricing={"input_tokens": 0.25, "output_tokens": 1.25}
             ),
-            # Aliases for convenience (point to latest snapshots)
+            # === Aliases (point to latest snapshots) ===
+            ModelInfo(
+                id="claude-opus-4-5",
+                name="claude-opus-4-5",
+                display_name="Claude Opus 4.5 (Latest)",
+                provider=ModelProvider.ANTHROPIC,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=64000,
+                recommended_max_tokens=16384,
+                pricing={"input_tokens": 5.00, "output_tokens": 25.00}
+            ),
             ModelInfo(
                 id="claude-sonnet-4-5",
                 name="claude-sonnet-4-5",
@@ -126,7 +176,7 @@ class AnthropicAdapter(BaseAdapter):
                 supports_vision=True,
                 type=ModelType.CHAT,
                 max_output_tokens=64000,
-                recommended_max_tokens=8192,
+                recommended_max_tokens=16384,
                 pricing={"input_tokens": 3.00, "output_tokens": 15.00}
             ),
             ModelInfo(
@@ -140,22 +190,8 @@ class AnthropicAdapter(BaseAdapter):
                 supports_vision=True,
                 type=ModelType.CHAT,
                 max_output_tokens=64000,
-                recommended_max_tokens=4096,
-                pricing={"input_tokens": 1.00, "output_tokens": 5.00}
-            ),
-            ModelInfo(
-                id="claude-opus-4-1",
-                name="claude-opus-4-1",
-                display_name="Claude Opus 4.1 (Latest)",
-                provider=ModelProvider.ANTHROPIC,
-                context_length=200000,
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                max_output_tokens=32000,
                 recommended_max_tokens=8192,
-                pricing={"input_tokens": 15.00, "output_tokens": 75.00}
+                pricing={"input_tokens": 1.00, "output_tokens": 5.00}
             )
         ]
 
@@ -212,12 +248,98 @@ class AnthropicAdapter(BaseAdapter):
         input_text = system_message + "\n".join([f"{msg['role']}: {msg['content']}" for msg in api_messages])
         input_tokens = self.estimate_tokens(input_text)
 
+        # Validate and clamp max_tokens for Anthropic
+        # Claude 4.x/4.5 support up to 64K output, Claude 3.5 8K, Claude 3 4K
+        max_tokens = params.max_tokens
+        
+        # Model-specific max output token limits (from official Anthropic docs December 2025)
+        model_limits = {
+            # Claude 4.5 series - 64K max output
+            'claude-opus-4-5': 64000,
+            'claude-sonnet-4-5': 64000,
+            'claude-haiku-4-5': 64000,
+            # Claude 4.1 series - 64K max output
+            'claude-opus-4-1': 64000,
+            # Claude 4 series - 64K max output
+            'claude-sonnet-4': 64000,
+            'claude-opus-4': 64000,
+            # Claude 3.7 series - 64K max output
+            'claude-3-7': 64000,
+            # Claude 3.5 series - 8K max output
+            'claude-3-5': 8192,
+            # Claude 3 series - 4K max output
+            'claude-3-opus': 4096,
+            'claude-3-haiku': 4096,
+            'claude-3-sonnet': 4096,
+        }
+        
+        # Find limit for model
+        limit = 8192  # default for unknown models
+        for model_prefix, model_limit in model_limits.items():
+            if model.startswith(model_prefix):
+                limit = model_limit
+                break
+        
+        if max_tokens is None or max_tokens < 1:
+            max_tokens = 4096  # Default
+        elif max_tokens > limit:
+            self.logger.warning(f"max_tokens clamped from {params.max_tokens} to {limit} for Anthropic model {model}")
+            max_tokens = limit
+
+        # Clamp temperature for Anthropic (0-1 range)
+        temperature = params.temperature
+        if temperature is None or temperature < 0:
+            temperature = 0.7
+        elif temperature > 1.0:
+            temperature = 1.0
+            self.logger.warning(f"temperature clamped from {params.temperature} to 1.0 for Anthropic")
+
         payload = {
             "model": model,
             "messages": api_messages,
             "stream": params.stream,
-            "max_tokens": params.max_tokens,
+            "max_tokens": max_tokens,
         }
+
+        # === Extended Thinking support for Claude ===
+        # Check if thinking/extended thinking is requested
+        # Models that support extended thinking: Claude 3.5 Sonnet, Claude 3.7, Claude 4+
+        thinking_models = [
+            'claude-3-5-sonnet', 'claude-3-7', 
+            'claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4',
+            'claude-sonnet-4-5', 'claude-opus-4-5', 'claude-haiku-4-5',
+            'claude-opus-4-1', 'claude-sonnet-4-1', 'claude-haiku-4-1'
+        ]
+        model_supports_thinking = any(model.startswith(prefix) for prefix in thinking_models)
+        
+        # Enable thinking if include_thoughts is True or thinking_budget is set
+        should_enable_thinking = params.include_thoughts or (params.thinking_budget is not None and params.thinking_budget != 0)
+        
+        if should_enable_thinking and model_supports_thinking:
+            # Anthropic Extended Thinking API format
+            thinking_config = {"type": "enabled"}
+            
+            # Set budget_tokens if provided (must be >= 1024 for Anthropic)
+            if params.thinking_budget is not None and params.thinking_budget > 0:
+                thinking_budget = max(1024, params.thinking_budget)
+            else:
+                # Default thinking budget for extended thinking
+                thinking_budget = 10000
+            
+            thinking_config["budget_tokens"] = thinking_budget
+            
+            # IMPORTANT: max_tokens must be greater than budget_tokens
+            # Ensure max_tokens is at least budget_tokens + 1000 for response
+            if max_tokens <= thinking_budget:
+                max_tokens = thinking_budget + 4000  # Add 4000 for actual response
+                self.logger.info(f"Increased max_tokens to {max_tokens} (must be > budget_tokens={thinking_budget})")
+            
+            payload["max_tokens"] = max_tokens  # Update payload
+            payload["thinking"] = thinking_config
+            
+            # Extended thinking requires temperature = 1 for Anthropic
+            temperature = 1.0
+            self.logger.info(f"Extended Thinking enabled for {model} with budget={thinking_budget}, max_tokens={max_tokens}")
 
         # For newer Claude models (Claude 4 series), use only temperature OR top_p, not both
         is_claude_4_series = self._single_sampling_model(model)
@@ -231,18 +353,18 @@ class AnthropicAdapter(BaseAdapter):
                     f"Anthropic: both temperature and top_p provided for {model}. Sending only temperature per API requirements."
                 )
             if user_set_temperature:
-                payload["temperature"] = params.temperature
+                payload["temperature"] = temperature
                 # Ensure top_p not present
                 payload.pop("top_p", None)
             elif user_set_top_p:
                 payload["top_p"] = params.top_p
             else:
                 # Default to temperature when neither explicitly set
-                payload["temperature"] = 0.7
+                payload["temperature"] = temperature
         else:
             # For older Claude models: can use both parameters
             if params.temperature is not None:
-                payload["temperature"] = params.temperature
+                payload["temperature"] = temperature
             if params.top_p is not None:
                 payload["top_p"] = params.top_p
 
@@ -293,6 +415,9 @@ class AnthropicAdapter(BaseAdapter):
                     return
 
                 # Handle streaming response
+                accumulated_thinking = ""  # For extended thinking content
+                current_block_type = None
+                
                 async for line in response.content:
                     line = line.decode('utf-8').strip()
                     
@@ -304,25 +429,77 @@ class AnthropicAdapter(BaseAdapter):
                             json_data = json.loads(line[6:])
                             event_type = json_data.get("type")
                             
-                            if event_type == "content_block_delta":
+                            # Track content block type (thinking vs text)
+                            if event_type == "content_block_start":
+                                content_block = json_data.get("content_block", {})
+                                current_block_type = content_block.get("type")
+                                self.logger.debug(f"Content block started: {current_block_type}")
+                            
+                            elif event_type == "content_block_delta":
                                 delta = json_data.get("delta", {})
-                                content = delta.get("text", "")
+                                delta_type = delta.get("type", "")
                                 
-                                if content:
-                                    accumulated_content += content
-                                    output_tokens = self.estimate_tokens(accumulated_content)
-                                    
-                                    yield ChatResponse(
-                                        content=content,
-                                        id=json_data.get("id"),
-                                        done=False,
-                                        meta={
-                                            "tokens_in": input_tokens,
-                                            "tokens_out": output_tokens,
-                                            "provider": ModelProvider.ANTHROPIC,
-                                            "model": model
-                                        }
-                                    )
+                                # Handle thinking delta (extended thinking)
+                                if delta_type == "thinking_delta":
+                                    thinking_text = delta.get("thinking", "")
+                                    if thinking_text:
+                                        accumulated_thinking += thinking_text
+                                        # Emit thinking content with special marker
+                                        yield ChatResponse(
+                                            content="",
+                                            reasoning_content=thinking_text,
+                                            id=json_data.get("id"),
+                                            done=False,
+                                            meta={
+                                                "tokens_in": input_tokens,
+                                                "tokens_out": output_tokens,
+                                                "is_thinking": True,  # Flag, not content
+                                                "reasoning_content": thinking_text,  # The actual content
+                                                "provider": ModelProvider.ANTHROPIC,
+                                                "model": model
+                                            }
+                                        )
+                                
+                                # Handle regular text delta
+                                elif delta_type == "text_delta":
+                                    content = delta.get("text", "")
+                                    if content:
+                                        accumulated_content += content
+                                        output_tokens = self.estimate_tokens(accumulated_content)
+                                        
+                                        yield ChatResponse(
+                                            content=content,
+                                            id=json_data.get("id"),
+                                            done=False,
+                                            meta={
+                                                "tokens_in": input_tokens,
+                                                "tokens_out": output_tokens,
+                                                "provider": ModelProvider.ANTHROPIC,
+                                                "model": model
+                                            }
+                                        )
+                                
+                                # Fallback for old format without delta type
+                                else:
+                                    content = delta.get("text", "")
+                                    if content:
+                                        accumulated_content += content
+                                        output_tokens = self.estimate_tokens(accumulated_content)
+                                        
+                                        yield ChatResponse(
+                                            content=content,
+                                            id=json_data.get("id"),
+                                            done=False,
+                                            meta={
+                                                "tokens_in": input_tokens,
+                                                "tokens_out": output_tokens,
+                                                "provider": ModelProvider.ANTHROPIC,
+                                                "model": model
+                                            }
+                                        )
+                            
+                            elif event_type == "content_block_stop":
+                                current_block_type = None
                             
                             elif event_type == "message_stop":
                                 break
@@ -346,14 +523,17 @@ class AnthropicAdapter(BaseAdapter):
 
         # Final response with complete usage
         final_output_tokens = self.estimate_tokens(accumulated_content) if accumulated_content else output_tokens
+        thinking_tokens = self.estimate_tokens(accumulated_thinking) if accumulated_thinking else 0
         
         yield ChatResponse(
             content="",
+            reasoning_content=accumulated_thinking if accumulated_thinking else None,
             done=True,
             meta={
                 "tokens_in": input_tokens,
                 "tokens_out": final_output_tokens,
-                "total_tokens": input_tokens + final_output_tokens,
+                "thinking_tokens": thinking_tokens,
+                "total_tokens": input_tokens + final_output_tokens + thinking_tokens,
                 "estimated_cost": self._calculate_cost(input_tokens, final_output_tokens, model),
                 "provider": ModelProvider.ANTHROPIC,
                 "model": model

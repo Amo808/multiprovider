@@ -1,4 +1,4 @@
-import React, { useState, useCallback, memo } from 'react';
+import React, { useState, useCallback, memo, useRef, useEffect } from 'react';
 import { ChevronDown, Bot, Check, Settings, Zap, Eye, Image } from 'lucide-react';
 import { ModelInfo, ModelProvider } from '../types';
 import { useModels, useProviders } from '../hooks/useApi';
@@ -50,9 +50,30 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
   const [isOpen, setIsOpen] = useState(false);
   const { providers } = useProviders();
   const { models } = useModels();
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const enabledProviders = providers.filter(p => p.enabled);
   const availableModels = models.filter(m => m.enabled);
+
+  // Close on click outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      // Delay to prevent immediate close on same click
+      const timer = setTimeout(() => {
+        document.addEventListener('mousedown', handleClickOutside);
+      }, 0);
+      return () => {
+        clearTimeout(timer);
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [isOpen]);
 
   // Group models by provider
   const modelsByProvider = availableModels.reduce((acc, model) => {
@@ -68,14 +89,20 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
     if (onProviderChange && model.provider !== selectedProvider) {
       onProviderChange(model.provider);
     }
-    setIsOpen(false);
+    // Don't close menu immediately - user might want to select another model
+    // Menu will close on click outside
   }, [onModelChange, onProviderChange, selectedProvider]);
 
+  // Toggle handler for the button
+  const handleToggle = useCallback(() => {
+    setIsOpen(prev => !prev);
+  }, []);
+
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       {/* Selected Model Display */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={handleToggle}
         className="flex items-center space-x-3 w-full p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-300 dark:hover:border-blue-600 transition-colors"
       >
         <div className="flex items-center space-x-2">
@@ -221,14 +248,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
             </div>
           )}
         </div>
-      )}
-
-      {/* Backdrop */}
-      {isOpen && (
-        <div 
-          className="fixed inset-0 z-40" 
-          onClick={() => setIsOpen(false)}
-        />
       )}
     </div>
   );

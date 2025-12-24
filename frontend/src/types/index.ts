@@ -37,6 +37,11 @@ export interface ExtendedMessageMeta {
   thought_tokens?: number; // Gemini thought tokens
   thinking_tokens_used?: number; // Gemini effective thinking usage
   tool_calls?: { call_id: string; name?: string; input?: string }[]; // Responses API tool calls
+  // Reasoning/thinking content
+  reasoning_content?: string; // DeepSeek reasoning content
+  thought_content?: string; // Full thought content at end
+  thinking?: string; // Thinking/reasoning content chunk
+  total_latency?: number; // Total response time in seconds
 }
 
 export interface Message {
@@ -67,8 +72,11 @@ export interface ChatResponse {
     stage?: string;
     progress?: number;
     reasoning?: boolean;
-    thought_tokens?: number; // Gemini thought token usage
+    thought_tokens?: number; // Gemini/DeepSeek thought token usage
     thinking_tokens_used?: number; // Gemini effective thinking usage
+    thinking?: string; // Thinking/reasoning content chunk
+    reasoning_content?: string; // DeepSeek reasoning content
+    thought_content?: string; // Full thought content at end
     tool_calls?: { call_id: string; name?: string; input?: string }[]; // Responses API tool calls
   };
 }

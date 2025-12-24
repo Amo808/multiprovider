@@ -15,7 +15,23 @@ tiktoken>=0.5.2
 
 # Database (PostgreSQL optional, SQLite fallback)
 psycopg2-binary>=2.9.7
+
 # Google OAuth & JWT auth
 google-auth>=2.29.0
 python-jose>=3.3.0
 passlib[bcrypt]>=1.7.4
+
+# RAG and Context Compression (optional but recommended)
+numpy>=1.24.0
+nltk>=3.8.0
+sentence-transformers>=2.2.0
+
+# Supabase
+supabase>=2.3.0
+openai>=1.12.0
+
+# Document processing for RAG
+pypdf>=3.17.0
+python-docx>=1.1.0
+markdown>=3.5.0
+chardet>=5.2.0

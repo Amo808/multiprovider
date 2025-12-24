@@ -1,6 +1,6 @@
 {
-  "activeProvider": "deepseek",
-  "activeModel": "deepseek-chat",
+  "activeProvider": "openai",
+  "activeModel": "gpt-4o",
   "providers": {
     "deepseek": {
       "id": "deepseek",
@@ -585,5 +585,67 @@
     "max_context_tokens": 32768,
     "auto_save": true,
     "conversations_limit": 100
+  },
+  "model_settings": {
+    "deepseek:deepseek-chat": {
+      "temperature": 2,
+      "max_tokens": 32768,
+      "top_p": 1,
+      "frequency_penalty": 0,
+      "presence_penalty": 0,
+      "stream": true,
+      "system_prompt": "",
+      "thinking_budget": null,
+      "include_thoughts": false,
+      "verbosity": null,
+      "reasoning_effort": null,
+      "cfg_scale": null,
+      "free_tool_calling": false
+    },
+    "deepseek:deepseek-reasoner": {
+      "temperature": 0.7,
+      "max_tokens": 65536,
+      "top_p": 1,
+      "frequency_penalty": 0,
+      "presence_penalty": 0,
+      "stream": true,
+      "system_prompt": "",
+      "thinking_budget": 100,
+      "include_thoughts": true,
+      "verbosity": null,
+      "reasoning_effort": null,
+      "cfg_scale": null,
+      "free_tool_calling": false
+    },
+    "anthropic:claude-opus-4-20250514": {
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "top_p": 1,
+      "frequency_penalty": 0,
+      "presence_penalty": 0,
+      "stream": true,
+      "system_prompt": "",
+      "thinking_budget": null,
+      "include_thoughts": true,
+      "verbosity": null,
+      "reasoning_effort": null,
+      "cfg_scale": null,
+      "free_tool_calling": false
+    },
+    "anthropic:claude-sonnet-4-20250514": {
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "top_p": 1,
+      "frequency_penalty": 0,
+      "presence_penalty": 0,
+      "stream": true,
+      "system_prompt": "",
+      "thinking_budget": 100,
+      "include_thoughts": true,
+      "verbosity": null,
+      "reasoning_effort": null,
+      "cfg_scale": null,
+      "free_tool_calling": false
+    }
   }
 }

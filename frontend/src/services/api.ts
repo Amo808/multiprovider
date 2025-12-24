@@ -129,6 +129,7 @@ export class ApiClient {
       }
 
       const decoder = new TextDecoder();
+      let buffer = ''; // Buffer for incomplete SSE messages
       
       while (true) {
         // Check if request was aborted
@@ -141,21 +142,53 @@ export class ApiClient {
         
         if (done) break;
         
-        const chunk = decoder.decode(value);
-        console.log('API Client: Received chunk:', chunk);
-        const lines = chunk.split('\n');
+        // Append new chunk to buffer
+        buffer += decoder.decode(value, { stream: true });
         
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
+        // Process complete SSE events (separated by double newline)
+        const events = buffer.split('\n\n');
+        // Keep the last (possibly incomplete) event in the buffer
+        buffer = events.pop() || '';
+        
+        for (const event of events) {
+          const lines = event.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
             try {
               const data: ChatResponse = JSON.parse(line.slice(6));
-              console.log('API Client: Parsed data:', data);
+              
+              // Enhanced logging for reasoning/thinking content debugging
+              if (data.meta?.thinking || data.meta?.reasoning_content) {
+                console.log('API Client: REASONING chunk received:', {
+                  thinking: data.meta.thinking?.substring(0, 100),
+                  reasoning_content: data.meta.reasoning_content?.substring(0, 100),
+                  thought_tokens: data.meta.thought_tokens,
+                  done: data.done
+                });
+              } else if (data.done) {
+                console.log('API Client: FINAL chunk:', {
+                  done: data.done,
+                  hasContent: !!data.content,
+                  hasMeta: !!data.meta,
+                  thought_tokens: data.meta?.thought_tokens,
+                  reasoning_content_len: data.meta?.reasoning_content?.length || 0,
+                  thought_content_len: data.meta?.thought_content?.length || 0
+                });
+              } else {
+                console.log('API Client: Parsed data:', data);
+              }
               
               if (data.error) {
                 console.error('API Client: Error in data:', data.error, 'type:', data.type);
-                // Create error with the original error message and include type info
-                const errorMsg = `${data.error}${data.type ? ` (${data.type})` : ''}`;
-                throw new Error(errorMsg);
+                // Send error through onChunk callback instead of throwing
+                // This allows the UI to handle errors gracefully
+                if (onChunk) {
+                  onChunk({
+                    ...data,
+                    done: true // Mark as done so streaming stops
+                  });
+                }
+                return; // Exit gracefully instead of throwing
               }
               
               if (onChunk) {
@@ -168,12 +201,20 @@ export class ApiClient {
             } catch (e) {
               if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
                 console.error('API Client: Parse error:', e);
-                throw e;
+                // Send parse error through callback if possible
+                if (onChunk) {
+                  onChunk({
+                    error: `Parse error: ${e.message}`,
+                    done: true
+                  });
+                }
+                return;
               }
             }
           }
-        }
-      }
+          } // end for (const line of lines)
+        } // end for (const event of events)
+      } // end while (true)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         console.log('API Client: Request was aborted');
@@ -450,6 +491,69 @@ export class ApiClient {
     return data;
   }
 
+  // Per-model settings management
+  async getModelSettings(provider: ModelProvider, modelId: string): Promise<{
+    settings: Partial<GenerationConfig> & { system_prompt?: string };
+    provider: string;
+    model_id: string;
+  }> {
+    const response = await fetch(`${this.baseUrl}/config/model-settings/${provider}/${modelId}`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return { settings: {}, provider, model_id: modelId };
+      }
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log(`API: getModelSettings for ${provider}:${modelId}:`, data);
+    return data;
+  }
+
+  async updateModelSettings(
+    provider: ModelProvider, 
+    modelId: string, 
+    settings: Partial<GenerationConfig> & { system_prompt?: string }
+  ): Promise<{
+    settings: Partial<GenerationConfig> & { system_prompt?: string };
+    provider: string;
+    model_id: string;
+  }> {
+    const response = await fetch(`${this.baseUrl}/config/model-settings/${provider}/${modelId}`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify(settings)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      console.error('API: updateModelSettings failed', response.status, errorData);
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log(`API: updateModelSettings for ${provider}:${modelId}:`, data);
+    return data;
+  }
+
+  async getAllModelSettings(): Promise<Record<string, Partial<GenerationConfig> & { system_prompt?: string }>> {
+    const response = await fetch(`${this.baseUrl}/config/model-settings`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.model_settings || {};
+  }
+
   async resetConfig(): Promise<AppConfig> {
     const response = await fetch(`${this.baseUrl}/config/reset`, {
       method: 'POST',
@@ -551,6 +655,341 @@ export class ApiClient {
 
   async getUsageStats(): Promise<any> {
     const response = await fetch(`${this.baseUrl}/stats/usage`, { headers: this.getHeaders() });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // ============================================================================
+  // MESSAGE REORDERING API
+  // ============================================================================
+
+  /**
+   * Reorder messages in a conversation.
+   * Supported operations: swap, move_up, move_down, move_to, reverse, sort_time, sort_role, interleave
+   */
+  async reorderMessages(params: {
+    conversation_id: string;
+    operation: 'swap' | 'move_up' | 'move_down' | 'move_to' | 'reverse' | 'sort_time' | 'sort_role' | 'interleave' | 'remove' | 'duplicate';
+    index?: number;
+    index1?: number;
+    index2?: number;
+    from_index?: number;
+    to_index?: number;
+    ascending?: boolean;
+  }): Promise<{
+    success: boolean;
+    operation: string;
+    message_count: number;
+    preview: Array<{
+      index: number;
+      role: string;
+      content_preview: string;
+      compressed: boolean;
+      timestamp: string;
+    }>;
+    messages: Array<{
+      id: string;
+      role: string;
+      content: string;
+      timestamp: string;
+      meta?: Record<string, any>;
+    }>;
+  }> {
+    const response = await fetch(`${this.baseUrl}/messages/reorder`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params)
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.handleUnauthorized();
+      }
+      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get preview of messages in a conversation with reordering info
+   */
+  async getMessagesPreview(conversationId: string): Promise<{
+    conversation_id: string;
+    message_count: number;
+    preview: Array<{
+      index: number;
+      role: string;
+      content_preview: string;
+      compressed: boolean;
+      timestamp: string;
+    }>;
+  }> {
+    const response = await fetch(`${this.baseUrl}/messages/preview/${conversationId}`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.handleUnauthorized();
+      }
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get context compression statistics
+   */
+  async getCompressionStats(): Promise<{
+    active_sessions: number;
+    total_messages: number;
+    total_compressed: number;
+    tokens_saved: number;
+    sessions: Record<string, any>;
+  }> {
+    const response = await fetch(`${this.baseUrl}/context/stats`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.handleUnauthorized();
+      }
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // === MULTI-MODEL METHODS ===
+
+  /**
+   * Get multi-model presets
+   */
+  async getMultiModelPresets(): Promise<Record<string, {
+    name: string;
+    description: string;
+    mode: string;
+    models: Array<{
+      provider: string;
+      model: string;
+      display_name?: string;
+      weight: number;
+      timeout: number;
+      enabled: boolean;
+    }>;
+  }>> {
+    const response = await fetch(`${this.baseUrl}/multi-model/presets`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.presets || {};
+  }
+
+  /**
+   * Cancel multi-model execution
+   */
+  async cancelMultiModelExecution(executionId: string): Promise<{ success: boolean }> {
+    const response = await fetch(`${this.baseUrl}/multi-model/cancel/${executionId}`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // === MESSAGE DATABASE METHODS ===
+
+  /**
+   * Search messages using full-text search
+   */
+  async searchMessages(query: string, conversationId?: string, limit: number = 50): Promise<{
+    results: Array<{
+      id: string;
+      conversation_id: string;
+      role: string;
+      content: string;
+      timestamp: string;
+      snippet?: string;
+    }>;
+    count: number;
+  }> {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    if (conversationId) {
+      params.set('conversation_id', conversationId);
+    }
+
+    const response = await fetch(`${this.baseUrl}/messages/search?${params}`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get thinking/reasoning steps for a message
+   */
+  async getThinkingSteps(messageId: string): Promise<{
+    message_id: string;
+    steps: Array<{
+      id: string;
+      step_index: number;
+      stage: string;
+      content: string;
+      duration_ms?: number;
+      tokens_used?: number;
+      timestamp: string;
+    }>;
+  }> {
+    const response = await fetch(`${this.baseUrl}/messages/${messageId}/thinking`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get multi-model responses for a message
+   */
+  async getMultiModelResponses(messageId: string): Promise<{
+    message_id: string;
+    responses: Array<{
+      id: string;
+      provider: string;
+      model: string;
+      content: string;
+      latency_ms?: number;
+      tokens_used?: number;
+      success: boolean;
+      error?: string;
+    }>;
+  }> {
+    const response = await fetch(`${this.baseUrl}/messages/${messageId}/multi-model`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Add feedback to a message
+   */
+  async addMessageFeedback(
+    messageId: string,
+    feedbackType: 'like' | 'dislike' | 'flag' | 'regenerate',
+    comment?: string
+  ): Promise<{ success: boolean }> {
+    const response = await fetch(`${this.baseUrl}/messages/${messageId}/feedback`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ feedback_type: feedbackType, comment })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Soft delete a message
+   */
+  async deleteMessage(messageId: string): Promise<{ success: boolean }> {
+    const response = await fetch(`${this.baseUrl}/messages/${messageId}`, {
+      method: 'DELETE',
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get message statistics
+   */
+  async getMessageStats(conversationId?: string): Promise<{
+    total_messages: number;
+    by_role: Record<string, number>;
+    tokens: {
+      total_in: number;
+      total_out: number;
+      total_thinking: number;
+      estimated_cost: number;
+    };
+  }> {
+    const params = conversationId ? `?conversation_id=${conversationId}` : '';
+    const response = await fetch(`${this.baseUrl}/messages/stats${params}`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // === PROCESS EVENTS METHODS ===
+
+  /**
+   * Get processes for a conversation
+   */
+  async getProcesses(conversationId: string): Promise<{
+    conversation_id: string;
+    processes: Array<{
+      id: string;
+      type: string;
+      name: string;
+      status: string;
+      progress: number;
+      steps: Array<{
+        id: string;
+        name: string;
+        status: string;
+        message: string;
+        progress: number;
+      }>;
+      started_at?: string;
+      completed_at?: string;
+      error?: string;
+      metadata: Record<string, any>;
+    }>;
+  }> {
+    const response = await fetch(`${this.baseUrl}/processes/${conversationId}`, {
+      headers: this.getHeaders()
+    });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
