@@ -60,3 +60,5 @@ SETUP.md
 # Package locks that might cause issues
 package-lock.json
 
+
+data/secrets.json
