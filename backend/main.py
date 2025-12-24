@@ -51,6 +51,7 @@ from multi_model import (
     MultiModelOrchestrator, ModelConfig, MultiModelMode, 
     MULTI_MODEL_PRESETS
 )
+from services.model_discovery import auto_discover_models, get_discovery_service
 
 # --- Dev Auth Bypass Setup ---------------------------------------------------
 # We want local development to ALWAYS work without Google OAuth / JWT.
@@ -1299,6 +1300,117 @@ async def update_generation_config(generation_config: dict, _: str = Depends(get
         return gen
     except Exception as e:
         logger.error(f"Failed to update generation config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# MODEL AUTO-DISCOVERY ENDPOINT
+# ============================================================================
+
+@api_router.post("/config/discover-models")
+async def discover_models(force: bool = False, _: str = Depends(get_current_user)):
+    """
+    Auto-discover available models from all providers.
+    
+    This fetches the latest model list from each provider's API
+    and updates the config with newly discovered models.
+    
+    Args:
+        force: If True, bypass cache and fetch fresh data
+    """
+    try:
+        logger.info(f"[DISCOVERY] Starting model auto-discovery (force={force})")
+        
+        # Collect API keys from environment and config
+        api_keys = {
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
+            "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
+            "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY", ""),
+            "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY", ""),
+            "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
+        }
+        
+        # Also check secrets.json
+        secrets_path = Path(__file__).parent.parent / "data" / "secrets.json"
+        if secrets_path.exists():
+            with open(secrets_path, 'r') as f:
+                secrets = json.load(f)
+                for key in api_keys:
+                    if not api_keys[key] and key in secrets.get("apiKeys", {}):
+                        api_keys[key] = secrets["apiKeys"][key]
+        
+        # Discover models
+        discovered = await auto_discover_models(api_keys, force=force)
+        
+        # Load current config
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                current_config = json.load(f)
+        else:
+            current_config = {}
+        
+        if "providers" not in current_config:
+            current_config["providers"] = {}
+        
+        # Merge discovered models with existing config
+        new_models_count = 0
+        updated_models_count = 0
+        
+        for provider, models in discovered.items():
+            if not models:
+                continue
+            
+            if provider not in current_config["providers"]:
+                current_config["providers"][provider] = {
+                    "enabled": True,
+                    "models": []
+                }
+            
+            existing_ids = {m["id"] for m in current_config["providers"][provider].get("models", [])}
+            
+            for model in models:
+                if model["id"] not in existing_ids:
+                    current_config["providers"][provider].setdefault("models", []).append(model)
+                    new_models_count += 1
+                    logger.info(f"[DISCOVERY] New model found: {provider}/{model['id']}")
+                else:
+                    # Update existing model with new info (except user-modified fields)
+                    for existing in current_config["providers"][provider]["models"]:
+                        if existing["id"] == model["id"]:
+                            # Preserve user settings
+                            user_fields = {"enabled", "display_name"}
+                            for key, value in model.items():
+                                if key not in user_fields:
+                                    existing[key] = value
+                            existing["last_updated"] = datetime.utcnow().isoformat()
+                            updated_models_count += 1
+                            break
+        
+        # Save updated config
+        with open(config_path, 'w') as f:
+            json.dump(current_config, f, indent=2)
+        
+        # Summary
+        summary = {
+            "providers_checked": len(discovered),
+            "new_models_found": new_models_count,
+            "models_updated": updated_models_count,
+            "providers": {
+                provider: len(models) for provider, models in discovered.items()
+            }
+        }
+        
+        logger.info(f"[DISCOVERY] Complete: {new_models_count} new, {updated_models_count} updated")
+        
+        return {
+            "message": "Model discovery complete",
+            "summary": summary,
+            "discovered": discovered
+        }
+        
+    except Exception as e:
+        logger.error(f"Model discovery failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

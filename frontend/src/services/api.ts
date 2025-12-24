@@ -491,6 +491,43 @@ export class ApiClient {
     return data;
   }
 
+  /**
+   * Auto-discover models from all providers.
+   * Fetches the latest model list from each provider's API and updates config.
+   */
+  async discoverModels(force: boolean = false): Promise<{
+    message: string;
+    summary: {
+      providers_checked: number;
+      new_models_found: number;
+      models_updated: number;
+      providers: Record<string, number>;
+    };
+    discovered: Record<string, Array<{
+      id: string;
+      name: string;
+      display_name: string;
+      provider: string;
+      context_length: number;
+      supports_streaming: boolean;
+      supports_vision: boolean;
+    }>>;
+  }> {
+    const response = await fetch(`${this.baseUrl}/config/discover-models?force=${force}`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('API: discoverModels result', data);
+    return data;
+  }
+
   // Per-model settings management
   async getModelSettings(provider: ModelProvider, modelId: string): Promise<{
     settings: Partial<GenerationConfig> & { system_prompt?: string };
