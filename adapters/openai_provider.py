@@ -35,82 +35,114 @@ class OpenAIAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
-            # === GPT-5 Series (Latest - December 2025) ===
-            # From official OpenAI pricing: https://openai.com/api/pricing/
+            # === GPT-5.2 Series (Latest - January 2026) ===
+            # From official OpenAI docs: https://platform.openai.com/docs/models
             ModelInfo(
-                id="gpt-5.1",
-                name="gpt-5.1",
-                display_name="GPT-5.1 (Latest Flagship)",
+                id="gpt-5.2",
+                name="gpt-5.2",
+                display_name="GPT-5.2 (Best for Coding & Agents)",
                 provider=ModelProvider.OPENAI,
-                context_length=256000,  # Estimated based on GPT-5 series
-                supports_streaming=True,
-                supports_functions=True,
-                supports_vision=True,
-                type=ModelType.CHAT,
-                pricing={"input_tokens": 1.25, "output_tokens": 10.00},  # Official pricing
-                max_output_tokens=32768,
-                recommended_max_tokens=16384,
-                description="Best model for coding and agentic tasks"
-            ),
-            ModelInfo(
-                id="gpt-5",
-                name="gpt-5",
-                display_name="GPT-5",
-                provider=ModelProvider.OPENAI, 
-                context_length=256000,
+                context_length=400000,  # 400K context from docs
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 1.25, "output_tokens": 10.00},
-                max_output_tokens=32768,
-                recommended_max_tokens=16384,
-                description="Advanced GPT model with reasoning capabilities"
+                max_output_tokens=128000,  # 128K from docs
+                recommended_max_tokens=32768,
+                description="Best model for coding and agentic tasks across industries"
+            ),
+            ModelInfo(
+                id="gpt-5.2-pro",
+                name="gpt-5.2-pro",
+                display_name="GPT-5.2 Pro (Smarter & More Precise)",
+                provider=ModelProvider.OPENAI,
+                context_length=400000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 15.00, "output_tokens": 120.00},
+                max_output_tokens=128000,
+                recommended_max_tokens=32768,
+                description="Smarter and more precise responses"
+            ),
+            # === GPT-5.1 Series ===
+            ModelInfo(
+                id="gpt-5.1",
+                name="gpt-5.1",
+                display_name="GPT-5.1",
+                provider=ModelProvider.OPENAI,
+                context_length=400000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00},
+                max_output_tokens=128000,
+                recommended_max_tokens=32768,
+                description="Previous intelligent reasoning model"
+            ),
+            # === GPT-5 Series ===
+            ModelInfo(
+                id="gpt-5",
+                name="gpt-5",
+                display_name="GPT-5",
+                provider=ModelProvider.OPENAI, 
+                context_length=400000,  # 400K context from docs
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00},
+                max_output_tokens=128000,  # 128K from docs
+                recommended_max_tokens=32768,
+                description="Intelligent reasoning model for coding and agentic tasks"
             ),
             ModelInfo(
                 id="gpt-5-mini",
                 name="gpt-5-mini",
                 display_name="GPT-5 Mini",
                 provider=ModelProvider.OPENAI,
-                context_length=256000,
+                context_length=400000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.25, "output_tokens": 2.00},  # Official pricing
-                max_output_tokens=32768,
+                pricing={"input_tokens": 0.25, "output_tokens": 2.00},
+                max_output_tokens=65536,  # Smaller model, less output
                 recommended_max_tokens=16384,
-                description="Faster, cheaper version of GPT-5"
+                description="Faster, cost-efficient version of GPT-5"
             ),
             ModelInfo(
                 id="gpt-5-nano",
                 name="gpt-5-nano",
                 display_name="GPT-5 Nano",
                 provider=ModelProvider.OPENAI,
-                context_length=256000,
+                context_length=400000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.05, "output_tokens": 0.40},  # Official pricing
-                max_output_tokens=16384,
+                pricing={"input_tokens": 0.05, "output_tokens": 0.40},
+                max_output_tokens=32768,
                 recommended_max_tokens=8192,
-                description="Fastest, cheapest GPT-5 - great for summarization"
+                description="Fastest, most cost-efficient version of GPT-5"
             ),
             ModelInfo(
                 id="gpt-5-pro",
                 name="gpt-5-pro",
-                display_name="GPT-5 Pro (Most Intelligent)",
+                display_name="GPT-5 Pro",
                 provider=ModelProvider.OPENAI,
-                context_length=256000,
+                context_length=400000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 15.00, "output_tokens": 120.00},  # Official pricing
-                max_output_tokens=32768,
-                recommended_max_tokens=16384,
-                description="Smartest and most precise model"
+                pricing={"input_tokens": 15.00, "output_tokens": 120.00},
+                max_output_tokens=128000,
+                recommended_max_tokens=32768,
+                description="Smarter and more precise responses"
             ),
             # === o3/o4 Reasoning Models ===
             ModelInfo(

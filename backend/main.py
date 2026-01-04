@@ -1059,15 +1059,27 @@ async def create_conversation(conversation_data: dict, user_email: str = Depends
         if messages:
             logger.info(f"[BRANCH] Creating conversation {conversation_id} with {len(messages)} branched messages")
             for msg_data in messages:
-                from storage.message_store import Message
+                from adapters.base_provider import Message
+                # IMPORTANT: Always generate NEW UUID for branched messages
+                # Original message IDs already exist in the database and will cause conflicts
+                new_msg_id = str(uuid.uuid4())
+                original_id = msg_data.get("id")
+                
+                # Store original message ID in meta for reference if needed
+                msg_meta = msg_data.get("meta", {}) or {}
+                if original_id:
+                    msg_meta["branched_from_message_id"] = original_id
+                
                 msg = Message(
-                    id=msg_data.get("id", str(uuid.uuid4())),
+                    id=new_msg_id,
                     role=msg_data.get("role", "user"),
                     content=msg_data.get("content", ""),
                     timestamp=msg_data.get("timestamp", datetime.now().isoformat()),
-                    meta=msg_data.get("meta", {})
+                    meta=msg_meta
                 )
-                conversation_store.add_message(conversation_id, msg, user_email=user_email)
+                # Use save_message which properly handles Message objects
+                conversation_store.save_message(conversation_id, msg, user_email=user_email)
+                logger.debug(f"[BRANCH] Saved message {new_msg_id} (from {original_id})")
         
         return {"message": "Conversation created successfully", "id": conversation_id}
     except Exception as e:
@@ -1147,12 +1159,15 @@ async def get_all_models(_: str = Depends(get_current_user)):
                     "display_name": model.display_name,
                     "provider": model.provider.value,
                     "context_length": model.context_length,
+                    "max_output_tokens": model.max_output_tokens,  # IMPORTANT: Include max output tokens!
+                    "recommended_max_tokens": model.recommended_max_tokens,
                     "supports_streaming": model.supports_streaming,
                     "supports_functions": model.supports_functions,
                     "supports_vision": model.supports_vision,
                     "type": model.type.value,
                     "enabled": model.enabled,
-                    "pricing": model.pricing
+                    "pricing": model.pricing,
+                    "description": model.description
                 }
                 for model in all_models
             ]
@@ -1207,12 +1222,15 @@ async def get_config(_: str = Depends(get_current_user)):
                         "display_name": model.display_name,
                         "provider": provider_id,
                         "context_length": model.context_length,
+                        "max_output_tokens": model.max_output_tokens,  # IMPORTANT!
+                        "recommended_max_tokens": model.recommended_max_tokens,
                         "supports_streaming": model.supports_streaming,
                         "supports_functions": model.supports_functions,
                         "supports_vision": model.supports_vision,
                         "type": model.type.value,
                         "enabled": model.enabled,
-                        "pricing": model.pricing
+                        "pricing": model.pricing,
+                        "description": model.description
                     }
                     for model in models
                 ]
@@ -1486,25 +1504,38 @@ async def get_model_settings(provider: str, model_id: str, _: str = Depends(get_
         model_settings = current.get("model_settings", {})
         key = get_model_settings_key(provider, model_id)
         
-        # Return model-specific settings or defaults
+        # Get model info to determine max_output_tokens
+        model_max_tokens = 8192  # Default
+        try:
+            all_models = provider_manager.get_all_models()
+            for m in all_models:
+                if m.id == model_id and m.provider.value == provider:
+                    model_max_tokens = m.max_output_tokens or m.context_length or 8192
+                    break
+        except Exception:
+            pass
+        
+        # MAX defaults - maximum values for best results
         default_settings = {
-            "temperature": 0.7,
-            "max_tokens": 8192,
-            "top_p": 1.0,
-            "frequency_penalty": 0.0,
-            "presence_penalty": 0.0,
+            "temperature": 1.0,              # Max creativity
+            "max_tokens": model_max_tokens,  # Max for this model
+            "top_p": 1.0,                    # No restriction
+            "frequency_penalty": 0.0,        # No penalty
+            "presence_penalty": 0.0,         # No penalty
             "stream": True,
             "system_prompt": "",
-            "thinking_budget": None,
-            "include_thoughts": False,
-            "verbosity": None,
-            "reasoning_effort": None,
+            "thinking_budget": -1,           # Unlimited thinking
+            "include_thoughts": True,        # Show reasoning
+            "verbosity": "high",             # Max verbosity
+            "reasoning_effort": "high",      # Max reasoning
             "cfg_scale": None,
-            "free_tool_calling": False
+            "free_tool_calling": True        # Enable free tool calling
         }
         
-        settings = {**default_settings, **model_settings.get(key, {})}
-        logger.info(f"[CONFIG] Getting model settings for {key}: {settings}")
+        # If we have saved settings, merge them (saved values override defaults)
+        saved_settings = model_settings.get(key, {})
+        settings = {**default_settings, **saved_settings}
+        logger.info(f"[CONFIG] Getting model settings for {key}: max_tokens={model_max_tokens}, settings={settings}")
         return {"settings": settings, "provider": provider, "model_id": model_id}
         
     except Exception as e:
@@ -1771,17 +1802,32 @@ async def reorder_messages(request: ReorderMessagesRequest, user_email: str = De
         if not result.get('success'):
             raise HTTPException(status_code=400, detail=result.get('error', 'Unknown error'))
         
+        # Get the reordered messages
+        reordered_messages = manager.to_list()
+        
+        # IMPORTANT: Save the reordered messages to database!
+        save_success = conversation_store.replace_messages(
+            request.conversation_id,
+            reordered_messages,
+            user_email=user_email
+        )
+        
+        if not save_success:
+            logger.error(f"[REORDER] Failed to save reordered messages to database for {request.conversation_id}")
+            raise HTTPException(status_code=500, detail="Failed to save reordered messages to database")
+        
         # Get preview of new order
         preview = manager.get_preview(max_content_len=60)
         
-        logger.info(f"[REORDER] Applied {request.operation} to conversation {request.conversation_id}")
+        logger.info(f"[REORDER] Applied {request.operation} to conversation {request.conversation_id} and saved to DB")
         
         return {
             "success": True,
             "operation": request.operation,
-            "message_count": len(manager.messages),
+            "message_count": len(reordered_messages),
             "preview": preview,
-            "messages": manager.to_list()
+            "messages": reordered_messages,
+            "saved_to_db": True
         }
         
     except ImportError as e:

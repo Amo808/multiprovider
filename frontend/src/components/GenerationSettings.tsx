@@ -95,6 +95,22 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
     return {};
   };
 
+  // Validate max_tokens against model's actual limits
+  const validateMaxTokens = (maxTokens: number | undefined, model?: typeof currentModel): number | undefined => {
+    if (maxTokens === undefined) return undefined;
+    
+    // Get model's actual max output tokens
+    const modelMax = model?.max_output_tokens || model?.context_length || 8192;
+    
+    // If saved value exceeds model's limit, use model's max
+    if (maxTokens > modelMax) {
+      console.log(`Correcting max_tokens from ${maxTokens} to model limit ${modelMax}`);
+      return modelMax;
+    }
+    
+    return maxTokens;
+  };
+
   // Save model-specific settings to localStorage
   const saveModelSettings = (provider?: ModelProvider, modelId?: string, settings?: Partial<GenerationConfig>) => {
     if (!provider || !modelId || !settings) return;
@@ -324,15 +340,24 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
       // Get default max_tokens (use MAXIMUM, not recommended)
       const maxTokensLimit = getMaxTokens();
       
+      // Validate saved max_tokens against model's actual limits
+      const validatedMaxTokens = validateMaxTokens(savedSettings.max_tokens, currentModel);
+      
       // Create new config with saved settings or defaults
       const newConfig = {
         ...localConfig,
         ...savedSettings,
-        // If no saved max_tokens, use maximum tokens (not recommended)
-        max_tokens: savedSettings.max_tokens || maxTokensLimit
+        // Use validated max_tokens, or default to model's limit if not saved
+        max_tokens: validatedMaxTokens ?? maxTokensLimit
       };
       
-      console.log(`GenerationSettings: Applying settings for ${currentProvider}/${currentModelId}:`, newConfig);
+      console.log(`GenerationSettings: Applying settings for ${currentProvider}/${currentModelId}:`, {
+        savedMaxTokens: savedSettings.max_tokens,
+        validatedMaxTokens,
+        maxTokensLimit,
+        modelMaxOutput: currentModel?.max_output_tokens,
+        finalMaxTokens: newConfig.max_tokens
+      });
       setLocalConfig(newConfig);
       onConfigChange(newConfig);
     }
@@ -458,6 +483,103 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Quick Presets */}
+          <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+            <span className="text-xs text-gray-500 dark:text-gray-400">Quick:</span>
+            <button
+              onClick={() => {
+                const maxTokensLimit = getMaxTokens();
+                console.log(`[GenerationSettings] MAX preset: maxTokensLimit=${maxTokensLimit}, model=${currentModel?.id}`);
+                const newConfig: GenerationConfig = {
+                  ...localConfig,
+                  temperature: 1.0,  // Maximum creativity
+                  max_tokens: maxTokensLimit,  // Maximum output length
+                  top_p: 1.0,  // No nucleus sampling restriction
+                  top_k: undefined,  // No top-k restriction
+                  frequency_penalty: 0,  // No frequency penalty
+                  presence_penalty: 0,  // No presence penalty
+                  // Advanced params for maximum output
+                  reasoning_effort: 'high' as const,  // Maximum reasoning (for o1/o3/GPT-5)
+                  verbosity: 'high' as const,  // Maximum verbosity (GPT-5)
+                  thinking_budget: -1,  // Unlimited thinking (DeepSeek/Gemini)
+                  include_thoughts: true,  // Show reasoning process
+                  cfg_scale: undefined,  // No CFG restriction
+                  free_tool_calling: true,  // Enable free tool calling
+                };
+                setLocalConfig(newConfig);
+                onConfigChange(newConfig);
+                setHasChanges(true);
+                // Auto-save for model
+                if (currentProvider && currentModel?.id) {
+                  saveModelSettings(currentProvider, currentModel.id, newConfig);
+                }
+              }}
+              className="px-2.5 py-1.5 text-xs font-medium rounded-md bg-gradient-to-r from-red-500 to-orange-500 text-white hover:from-red-600 hover:to-orange-600 shadow-sm transition-all"
+              title={`🔥 MAXIMUM: temp=1.0, max_tokens=${getMaxTokens()}, reasoning=high, unlimited thinking`}
+            >
+              🔥 MAX
+            </button>
+            <button
+              onClick={() => {
+                const recommendedTokens = getRecommendedMaxTokens();
+                const newConfig: GenerationConfig = {
+                  ...localConfig,
+                  temperature: 0.7,  // Balanced creativity
+                  max_tokens: recommendedTokens,  // Reasonable output
+                  top_p: 0.95,  // Slight nucleus sampling
+                  top_k: undefined,
+                  frequency_penalty: 0,
+                  presence_penalty: 0,
+                  reasoning_effort: 'medium' as const,
+                  verbosity: 'medium' as const,
+                  thinking_budget: -1,  // Auto thinking
+                  include_thoughts: false,
+                  cfg_scale: undefined,
+                  free_tool_calling: false,
+                };
+                setLocalConfig(newConfig);
+                onConfigChange(newConfig);
+                setHasChanges(true);
+                if (currentProvider && currentModel?.id) {
+                  saveModelSettings(currentProvider, currentModel.id, newConfig);
+                }
+              }}
+              className="px-2.5 py-1.5 text-xs font-medium rounded-md bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-sm transition-all"
+              title="⚖️ Balanced: temp=0.7, recommended tokens, medium reasoning"
+            >
+              ⚖️ Balanced
+            </button>
+            <button
+              onClick={() => {
+                const newConfig: GenerationConfig = {
+                  ...localConfig,
+                  temperature: 0.1,  // Very deterministic
+                  max_tokens: 1024,  // Short output
+                  top_p: 0.5,  // Strict nucleus sampling
+                  top_k: 10,  // Very limited sampling
+                  frequency_penalty: 0.5,  // Reduce repetition
+                  presence_penalty: 0,
+                  reasoning_effort: 'minimal' as const,  // Fast, no deep reasoning
+                  verbosity: 'low' as const,  // Concise
+                  thinking_budget: 0,  // No extended thinking
+                  include_thoughts: false,
+                  cfg_scale: undefined,
+                  free_tool_calling: false,
+                };
+                setLocalConfig(newConfig);
+                onConfigChange(newConfig);
+                setHasChanges(true);
+                if (currentProvider && currentModel?.id) {
+                  saveModelSettings(currentProvider, currentModel.id, newConfig);
+                }
+              }}
+              className="px-2.5 py-1.5 text-xs font-medium rounded-md bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:from-blue-600 hover:to-cyan-600 shadow-sm transition-all"
+              title="❄️ Minimal: temp=0.1, 1K tokens, fast & deterministic"
+            >
+              ❄️ MIN
+            </button>
           </div>
 
           <div className="space-y-4 max-h-96 overflow-y-auto">

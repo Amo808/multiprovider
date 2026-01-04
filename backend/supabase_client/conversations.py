@@ -479,6 +479,73 @@ class SupabaseConversationStore:
         logger.info(f"Cleared {deleted_count} messages from conversation {conversation_id}")
         return deleted_count
     
+    def replace_messages(self, conversation_id: str, messages: List[Dict], user_email: str = None) -> bool:
+        """
+        Replace all messages in a conversation with the given list.
+        Used for reordering messages.
+        
+        Args:
+            conversation_id: The conversation ID
+            messages: List of message dicts with id, role, content, timestamp, meta
+            user_email: User email for authorization
+        
+        Returns:
+            True if successful
+        """
+        try:
+            db_id = self._to_db_id(conversation_id)
+            
+            # First delete all existing messages
+            self.client.table("messages")\
+                .delete()\
+                .eq("conversation_id", db_id)\
+                .execute()
+            
+            # Then insert messages in new order with sequential position
+            for position, msg in enumerate(messages):
+                meta = msg.get('meta', {}) or {}
+                
+                # Generate new message ID if not valid UUID
+                msg_id = msg.get('id')
+                if not is_valid_uuid(msg_id):
+                    msg_id = str(uuid4())
+                
+                # Parse timestamp
+                timestamp = msg.get('timestamp')
+                if isinstance(timestamp, str):
+                    try:
+                        timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    except:
+                        timestamp = datetime.utcnow()
+                elif not timestamp:
+                    timestamp = datetime.utcnow()
+                
+                data = {
+                    "id": msg_id,
+                    "conversation_id": db_id,
+                    "role": msg.get('role', 'user'),
+                    "content": msg.get('content', ''),
+                    "model": meta.get('model'),
+                    "provider": meta.get('provider'),
+                    "reasoning_content": meta.get('reasoning_content'),
+                    "tokens_input": meta.get('tokens_input') or meta.get('tokens_in'),
+                    "tokens_output": meta.get('tokens_output') or meta.get('tokens_out'),
+                    "tokens_reasoning": meta.get('tokens_reasoning') or meta.get('thought_tokens'),
+                    "latency_ms": meta.get('latency_ms'),
+                    "metadata": meta,
+                    "position": position,  # Store position to maintain order
+                    "created_at": timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)
+                }
+                
+                self.client.table("messages").insert(data).execute()
+            
+            logger.info(f"[REORDER] Replaced {len(messages)} messages in conversation {conversation_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to replace messages in {conversation_id}: {e}")
+            return False
+    
     # ==================== STATS ====================
     
     def get_conversation_with_messages(self, conversation_id: str, user_email: str = None) -> Dict:

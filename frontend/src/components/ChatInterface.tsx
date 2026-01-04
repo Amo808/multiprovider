@@ -126,7 +126,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, [conversationId, conversations, getConversation]);
 
   // Message reordering functionality
-  const { deleteMessage } = useMessageReorder();
+  const { deleteMessage, moveTo } = useMessageReorder();
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
   // Drag & Drop reorder handler - moves message from one position to another
@@ -154,13 +154,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       movedContent: movedMessage.content.substring(0, 50)
     });
     
-    // Update UI immediately
+    // Update UI immediately (optimistic update)
     if (updateMessages) {
       updateMessages(conversationId, newMessages);
     }
     
-    // TODO: Persist to backend when API is ready
-  }, [messages, conversationId, updateMessages, isStreaming]);
+    // Persist to backend using move_to API
+    try {
+      const result = await moveTo(conversationId, fromIndex, toIndex);
+      if (result) {
+        console.log('[ChatInterface] Reorder saved to backend successfully');
+        // Update with backend response to ensure consistency
+        if (updateMessages) {
+          updateMessages(conversationId, result);
+        }
+      } else {
+        console.error('[ChatInterface] Failed to save reorder to backend, reverting');
+        // Revert to original order on failure
+        if (updateMessages) {
+          updateMessages(conversationId, messages);
+        }
+      }
+    } catch (err) {
+      console.error('[ChatInterface] Error saving reorder:', err);
+      // Revert on error
+      if (updateMessages) {
+        updateMessages(conversationId, messages);
+      }
+    }
+  }, [messages, conversationId, updateMessages, isStreaming, moveTo]);
 
   // File drop handler - uploads files for RAG
   const handleFileDrop = useCallback(async (files: File[]) => {

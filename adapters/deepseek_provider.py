@@ -33,35 +33,38 @@ class DeepSeekAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
-            # DeepSeek V3.2 - Updated December 2025 from official API docs
+            # ============================================================
+            # DeepSeek V3.2 - Updated January 2026 from official API docs
             # https://api-docs.deepseek.com/quick_start/pricing
+            # Context: 128K for all models
+            # ============================================================
             ModelInfo(
                 id="deepseek-chat",
                 name="deepseek-chat",
                 display_name="DeepSeek V3.2 Chat (Non-thinking Mode)",
                 provider=ModelProvider.DEEPSEEK,
-                context_length=128000,  # 128K context
+                context_length=128000,  # 128K context (official)
                 supports_streaming=True,
                 supports_functions=True,  # Supports Tool Calls & JSON Output
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.28, "output_tokens": 0.42},  # Cache miss pricing
-                max_output_tokens=4096,  # API limit: 4096
-                recommended_max_tokens=4096  # Use max available
+                pricing={"input_tokens": 0.28, "output_tokens": 0.42},  # Cache miss pricing per 1M
+                max_output_tokens=8192,  # Max: 8K (official), Default: 4K
+                recommended_max_tokens=4096  # Use default for stability
             ),
             ModelInfo(
                 id="deepseek-reasoner",
                 name="deepseek-reasoner", 
                 display_name="DeepSeek V3.2 Reasoner (Thinking Mode)",
                 provider=ModelProvider.DEEPSEEK,
-                context_length=128000,  # 128K context
+                context_length=128000,  # 128K context (official)
                 supports_streaming=True,
                 supports_functions=True,  # Supports Tool Calls in V3.2
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.28, "output_tokens": 0.42},  # Same pricing
-                max_output_tokens=64000,  # API: DEFAULT 32K, MAX 64K
-                recommended_max_tokens=32000  # Default setting for reasoning
+                pricing={"input_tokens": 0.28, "output_tokens": 0.42},  # Same pricing per 1M
+                max_output_tokens=65536,  # Max: 64K (official), Default: 32K
+                recommended_max_tokens=32768  # Default setting for reasoning
             )
         ]
 
@@ -114,16 +117,16 @@ class DeepSeekAdapter(BaseAdapter):
 
         # Validate and clamp max_tokens to API limits based on model
         # DeepSeek API limits (updated January 2026):
-        # - deepseek-chat: max_tokens in [1, 4096] (API limit)
-        # - deepseek-reasoner: max_tokens in [1, 64000] (default 32000)
+        # - deepseek-chat: max_tokens in [1, 8192] (Default 4096, Max 8K)
+        # - deepseek-reasoner: max_tokens in [1, 65536] (Default 32K, Max 64K)
         max_tokens = params.max_tokens
         
         # Determine max limit based on model
         if model == "deepseek-reasoner":
-            max_limit = 64000
-            default_tokens = 32000
+            max_limit = 65536  # 64K max
+            default_tokens = 32768
         else:  # deepseek-chat
-            max_limit = 4096  # Updated: API now limits to 4096
+            max_limit = 8192  # 8K max (official)
             default_tokens = 4096
         
         if max_tokens is None or max_tokens < 1:

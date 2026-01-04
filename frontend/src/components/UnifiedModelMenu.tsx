@@ -64,6 +64,9 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   
+  // Track previous active model to detect changes
+  const prevActiveModelId = useRef<string | undefined>(activeModel?.id);
+  
   // Debounced save to API (300ms delay)
   const debouncedSave = useDebounce((patch: Partial<GenerationConfig>) => {
     onChangeGeneration?.(patch);
@@ -78,10 +81,28 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
   // Merge local changes with prop config for display
   const displayGenConfig = { ...generationConfig, ...localGenConfig };
   
-  // Sync local state when generationConfig prop changes
+  // Reset local state when generationConfig prop changes (from backend/hook)
   useEffect(() => {
     setLocalGenConfig({});
   }, [generationConfig]);
+  
+  // CRITICAL: When active model changes, reset settingsModelId to the new model
+  // and clear local config so we show fresh settings for the new model
+  useEffect(() => {
+    if (activeModel?.id !== prevActiveModelId.current) {
+      console.log(`[UnifiedModelMenu] Active model changed from ${prevActiveModelId.current} to ${activeModel?.id}`);
+      
+      // If settings panel was open, switch it to the new model
+      if (settingsModelId && settingsModelId === prevActiveModelId.current) {
+        setSettingsModelId(activeModel?.id || null);
+      }
+      
+      // Clear local config to show fresh settings from props/hook
+      setLocalGenConfig({});
+      
+      prevActiveModelId.current = activeModel?.id;
+    }
+  }, [activeModel?.id, settingsModelId]);
 
   useEffect(() => {
     const close = (e: MouseEvent) => { 
@@ -156,7 +177,14 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                         {/* Model info - clickable to select */}
                         <div 
                           className="flex-1 min-w-0"
-                          onClick={() => { onSelectModel(m); }}
+                          onClick={() => { 
+                            onSelectModel(m); 
+                            // If settings panel is open for another model, switch to the new one
+                            if (settingsModelId && settingsModelId !== m.id) {
+                              setSettingsModelId(m.id);
+                              setLocalGenConfig({}); // Clear local config to load new model's settings
+                            }
+                          }}
                         >
                           <div className="flex items-center gap-2">
                             {m.supports_streaming ? <Zap size={12} className="text-green-500 flex-shrink-0" /> : <Bot size={12} className="text-gray-400 flex-shrink-0" />}
@@ -228,13 +256,93 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                         <div className="font-medium">{m.context_length.toLocaleString()} tokens</div>
                       </div>
                       <div className="flex gap-2 pt-1">
-                        <Button size="sm" variant="secondary" className="flex-1" onClick={() => { onSelectModel(m); }}>Use</Button>
+                        <Button size="sm" variant="secondary" className="flex-1" onClick={() => { 
+                          onSelectModel(m); 
+                          // Clear local config to load new model's settings
+                          setLocalGenConfig({}); 
+                        }}>Use</Button>
                         <Button size="sm" variant="outline" className="flex-1" onClick={() => { onManageProviders?.(); setOpen(false); }}>Advanced</Button>
                       </div>
                       {/* Generation settings - shown when it's the active model */}
                       {displayGenConfig && isActiveModel && (
                         <div className="pt-3 border-t mt-2 space-y-3">
                           <div className="text-xs font-semibold">Generation Settings</div>
+                          
+                          {/* Quick Presets */}
+                          <div className="flex items-center gap-1.5 pb-2 border-b border-gray-200 dark:border-gray-700">
+                            <span className="text-[9px] text-muted-foreground">Quick:</span>
+                            <button
+                              onClick={() => {
+                                const getMaxTokensLimit = () => {
+                                  if (m.max_output_tokens) return m.max_output_tokens;
+                                  if (m.provider === 'deepseek') return m.id === 'deepseek-reasoner' ? 65536 : 32768;
+                                  if (m.provider === 'openai') {
+                                    if (m.id?.startsWith('o1') || m.id?.startsWith('o3') || m.id?.startsWith('o4')) return 100000;
+                                    if (m.id?.startsWith('gpt-5')) return 100000;
+                                    if (m.id?.includes('gpt-4o')) return 16384;
+                                    return 4096;
+                                  }
+                                  if (m.provider === 'anthropic') return 8192;
+                                  if (m.provider === 'gemini') return 65536;
+                                  return 8192;
+                                };
+                                handleGenChange({
+                                  temperature: 1.0,
+                                  max_tokens: getMaxTokensLimit(),
+                                  top_p: 1.0,
+                                  frequency_penalty: 0,
+                                  presence_penalty: 0,
+                                  reasoning_effort: 'high',
+                                  verbosity: 'high',
+                                  thinking_budget: -1,
+                                  include_thoughts: true,
+                                });
+                              }}
+                              className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-gradient-to-r from-red-500 to-orange-500 text-white hover:from-red-600 hover:to-orange-600 shadow-sm"
+                              title="🔥 MAX: temp=1.0, max tokens, high reasoning"
+                            >
+                              🔥 MAX
+                            </button>
+                            <button
+                              onClick={() => {
+                                handleGenChange({
+                                  temperature: 0.7,
+                                  max_tokens: 8192,
+                                  top_p: 0.95,
+                                  frequency_penalty: 0,
+                                  presence_penalty: 0,
+                                  reasoning_effort: 'medium',
+                                  verbosity: 'medium',
+                                  thinking_budget: -1,
+                                  include_thoughts: false,
+                                });
+                              }}
+                              className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-sm"
+                              title="⚖️ Balanced: temp=0.7, 8K tokens, medium"
+                            >
+                              ⚖️ Balanced
+                            </button>
+                            <button
+                              onClick={() => {
+                                handleGenChange({
+                                  temperature: 0.1,
+                                  max_tokens: 1024,
+                                  top_p: 0.5,
+                                  frequency_penalty: 0.5,
+                                  presence_penalty: 0,
+                                  reasoning_effort: 'minimal',
+                                  verbosity: 'low',
+                                  thinking_budget: 0,
+                                  include_thoughts: false,
+                                });
+                              }}
+                              className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:from-blue-600 hover:to-cyan-600 shadow-sm"
+                              title="❄️ MIN: temp=0.1, 1K tokens, fast"
+                            >
+                              ❄️ MIN
+                            </button>
+                          </div>
+                          
                           {/* Temperature */}
                           <div className="space-y-1">
                             <label className="flex justify-between text-[10px] font-medium"><span>Temperature</span><span>{displayGenConfig.temperature}</span></label>
@@ -288,48 +396,70 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                               <input type="range" min={0} max={100} step={1} value={displayGenConfig.top_k} onChange={(e)=>handleGenChange({ top_k: parseInt(e.target.value) })} className="w-full" />
                             </div>
                           )}
-                          {/* Reasoning Effort */}
-                          {displayGenConfig.reasoning_effort && (
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-medium">Reasoning Effort</label>
-                              <select className="w-full text-[10px] border rounded p-1 bg-background" value={displayGenConfig.reasoning_effort} onChange={(e)=>handleGenChange({ reasoning_effort: e.target.value as 'minimal' | 'medium' | 'high' })}>
-                                <option value="minimal">minimal</option>
-                                <option value="medium">medium</option>
-                                <option value="high">high</option>
-                              </select>
-                            </div>
-                          )}
-                          {/* Verbosity */}
-                          {displayGenConfig.verbosity && (
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-medium">Verbosity</label>
-                              <select className="w-full text-[10px] border rounded p-1 bg-background" value={displayGenConfig.verbosity} onChange={(e)=>handleGenChange({ verbosity: e.target.value as 'low' | 'medium' | 'high' })}>
-                                <option value="low">low</option>
-                                <option value="medium">medium</option>
-                                <option value="high">high</option>
-                              </select>
-                            </div>
-                          )}
-                          {/* Thinking budget */}
-                          {typeof displayGenConfig.thinking_budget === 'number' && (
-                            <div className="space-y-1">
-                              <label className="flex justify-between text-[10px] font-medium"><span>Thinking Budget</span><span>{displayGenConfig.thinking_budget}</span></label>
-                              <input type="range" min={-1} max={100} step={1} value={displayGenConfig.thinking_budget} onChange={(e)=>handleGenChange({ thinking_budget: parseInt(e.target.value) })} className="w-full" />
-                              <div className="text-[9px] text-muted-foreground">-1=auto, 0=off</div>
-                            </div>
-                          )}
-                          {/* CFG Scale */}
+                          {/* Reasoning Effort - always show */}
+                          <div className="space-y-1">
+                            <label className="flex justify-between text-[10px] font-medium">
+                              <span>🧠 Reasoning</span>
+                              <span className={`font-semibold ${displayGenConfig.reasoning_effort === 'high' ? 'text-orange-500' : displayGenConfig.reasoning_effort === 'medium' ? 'text-green-500' : 'text-blue-500'}`}>
+                                {displayGenConfig.reasoning_effort || 'high'}
+                              </span>
+                            </label>
+                            <select className="w-full text-[10px] border rounded p-1 bg-background" value={displayGenConfig.reasoning_effort || 'high'} onChange={(e)=>handleGenChange({ reasoning_effort: e.target.value as 'minimal' | 'medium' | 'high' })}>
+                              <option value="minimal">❄️ minimal (fast)</option>
+                              <option value="medium">⚖️ medium</option>
+                              <option value="high">🔥 high (best)</option>
+                            </select>
+                          </div>
+                          {/* Verbosity - always show */}
+                          <div className="space-y-1">
+                            <label className="flex justify-between text-[10px] font-medium">
+                              <span>📝 Verbosity</span>
+                              <span className={`font-semibold ${displayGenConfig.verbosity === 'high' ? 'text-orange-500' : displayGenConfig.verbosity === 'medium' ? 'text-green-500' : 'text-blue-500'}`}>
+                                {displayGenConfig.verbosity || 'high'}
+                              </span>
+                            </label>
+                            <select className="w-full text-[10px] border rounded p-1 bg-background" value={displayGenConfig.verbosity || 'high'} onChange={(e)=>handleGenChange({ verbosity: e.target.value as 'low' | 'medium' | 'high' })}>
+                              <option value="low">❄️ low (concise)</option>
+                              <option value="medium">⚖️ medium</option>
+                              <option value="high">🔥 high (detailed)</option>
+                            </select>
+                          </div>
+                          {/* Thinking budget - always show */}
+                          <div className="space-y-1">
+                            <label className="flex justify-between text-[10px] font-medium">
+                              <span>💭 Thinking</span>
+                              <span className={`font-semibold ${(displayGenConfig.thinking_budget ?? -1) === -1 ? 'text-orange-500' : (displayGenConfig.thinking_budget ?? -1) === 0 ? 'text-blue-500' : 'text-green-500'}`}>
+                                {(displayGenConfig.thinking_budget ?? -1) === -1 ? '∞ auto' : (displayGenConfig.thinking_budget ?? -1) === 0 ? 'OFF' : displayGenConfig.thinking_budget}
+                              </span>
+                            </label>
+                            <input type="range" min={-1} max={100} step={1} value={displayGenConfig.thinking_budget ?? -1} onChange={(e)=>handleGenChange({ thinking_budget: parseInt(e.target.value) })} className="w-full" />
+                            <div className="text-[9px] text-muted-foreground">-1=∞ unlimited, 0=off</div>
+                          </div>
+                          {/* CFG Scale - only show if set */}
                           {typeof displayGenConfig.cfg_scale === 'number' && (
                             <div className="space-y-1">
                               <label className="flex justify-between text-[10px] font-medium"><span>CFG Scale</span><span>{displayGenConfig.cfg_scale}</span></label>
                               <input type="range" min={0} max={20} step={0.5} value={displayGenConfig.cfg_scale} onChange={(e)=>handleGenChange({ cfg_scale: parseFloat(e.target.value) })} className="w-full" />
                             </div>
                           )}
-                          {/* Checkboxes */}
-                          <div className="grid grid-cols-2 gap-2 text-[10px]">
-                            <label className="flex items-center gap-1"><input type="checkbox" checked={displayGenConfig.stream} onChange={(e)=>handleGenChange({ stream: e.target.checked })} /> Stream</label>
-                            <label className="flex items-center gap-1"><input type="checkbox" checked={!!displayGenConfig.include_thoughts} onChange={(e)=>handleGenChange({ include_thoughts: e.target.checked })} /> Thoughts</label>
-                            <label className="flex items-center gap-1 col-span-2"><input type="checkbox" checked={!!displayGenConfig.free_tool_calling} onChange={(e)=>handleGenChange({ free_tool_calling: e.target.checked })} /> Free tool calling</label>
+                          {/* Checkboxes - always show */}
+                          <div className="grid grid-cols-2 gap-2 text-[10px] pt-2 border-t border-gray-200 dark:border-gray-700">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input type="checkbox" checked={displayGenConfig.stream !== false} onChange={(e)=>handleGenChange({ stream: e.target.checked })} className="accent-primary" /> 
+                              <span>Stream</span>
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input type="checkbox" checked={!!displayGenConfig.include_thoughts} onChange={(e)=>handleGenChange({ include_thoughts: e.target.checked })} className="accent-primary" /> 
+                              <span className={displayGenConfig.include_thoughts ? 'text-orange-500 font-medium' : ''}>
+                                💭 Thoughts {displayGenConfig.include_thoughts ? 'ON' : 'OFF'}
+                              </span>
+                            </label>
+                            <label className="flex items-center gap-1.5 col-span-2 cursor-pointer">
+                              <input type="checkbox" checked={!!displayGenConfig.free_tool_calling} onChange={(e)=>handleGenChange({ free_tool_calling: e.target.checked })} className="accent-primary" /> 
+                              <span className={displayGenConfig.free_tool_calling ? 'text-green-500 font-medium' : ''}>
+                                🔧 Free tool calling {displayGenConfig.free_tool_calling ? 'ON' : 'OFF'}
+                              </span>
+                            </label>
                           </div>
                           {/* System prompt */}
                           <div className="space-y-1">

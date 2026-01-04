@@ -370,6 +370,80 @@ class DatabaseConversationStore:
             finally:
                 conn.close()
 
+    def replace_messages(self, conversation_id: str, messages: List[Dict], user_email: Optional[str] = None) -> bool:
+        """
+        Replace all messages in a conversation with the given list.
+        Used for reordering messages.
+        
+        Args:
+            conversation_id: The conversation ID
+            messages: List of message dicts with id, role, content, timestamp, meta
+            user_email: User email for authorization
+        
+        Returns:
+            True if successful
+        """
+        import uuid
+        storage_id = self._storage_id(conversation_id, user_email)
+        
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                
+                # Delete all existing messages
+                if self.db_type == 'postgresql':
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=%s', (storage_id,))
+                else:
+                    cursor.execute('DELETE FROM messages WHERE conversation_id=?', (storage_id,))
+                
+                # Insert messages in new order
+                for position, msg in enumerate(messages):
+                    msg_id = msg.get('id') or str(uuid.uuid4())
+                    role = msg.get('role', 'user')
+                    content = msg.get('content', '')
+                    timestamp = msg.get('timestamp', datetime.now().isoformat())
+                    meta = msg.get('meta', {})
+                    
+                    if isinstance(meta, dict):
+                        meta_json = json.dumps(meta)
+                    else:
+                        meta_json = str(meta) if meta else '{}'
+                    
+                    if self.db_type == 'postgresql':
+                        cursor.execute(
+                            'INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                            (msg_id, storage_id, role, content, timestamp, meta_json, datetime.now().isoformat())
+                        )
+                    else:
+                        cursor.execute(
+                            'INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                            (msg_id, storage_id, role, content, timestamp, meta_json, datetime.now().isoformat())
+                        )
+                
+                # Update conversation metadata
+                if self.db_type == 'postgresql':
+                    cursor.execute(
+                        'UPDATE conversations SET message_count=%s, updated_at=%s WHERE id=%s',
+                        (len(messages), datetime.now().isoformat(), storage_id)
+                    )
+                else:
+                    cursor.execute(
+                        'UPDATE conversations SET message_count=?, updated_at=? WHERE id=?',
+                        (len(messages), datetime.now().isoformat(), storage_id)
+                    )
+                
+                conn.commit()
+                logger.info(f"[DatabaseStore] Replaced {len(messages)} messages in conversation: {conversation_id}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Failed to replace messages in {conversation_id}: {e}")
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
+
     def delete_conversation(self, conversation_id: str, user_email: Optional[str]) -> None:
         storage_id = self._storage_id(conversation_id, user_email)
         with self._lock:

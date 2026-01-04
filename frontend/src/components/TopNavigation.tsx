@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Button } from './ui/button';
 import { Avatar, AvatarFallback } from './ui/avatar';
-import { Sun, Moon, Monitor, LogOut, Brain, Zap, MessageSquare } from 'lucide-react';
+import { Sun, Moon, Monitor, LogOut, Brain, Zap, MessageSquare, Rocket } from 'lucide-react';
 import { ModelInfo, ModelProvider, AppConfig, GenerationConfig } from '../types';
 import { UnifiedModelMenu } from './UnifiedModelMenu';
 import TokenCounter from './TokenCounter';
@@ -23,13 +23,16 @@ interface TopNavigationProps {
   tokenUsage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number } | null;
   generationConfig?: GenerationConfig; // Per-model generation config
   health?: { status: string } | null; // API health status
+  onApplyMaxPreset?: () => void; // Apply MAX preset to all settings
+  onCyclePreset?: () => void; // Cycle through presets: MAX → Balanced → MIN
+  currentPreset?: 'MAX' | 'Balanced' | 'MIN' | 'Custom';
 }
 
 const themeIcon = (t: 'light' | 'dark' | 'auto') => t==='light'? <Sun size={16}/> : t==='dark'? <Moon size={16}/> : <Monitor size={16}/>;
 
 const LEVELS = ['off', 'low', 'medium', 'high'];
 
-export const TopNavigation: React.FC<TopNavigationProps> = ({ config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration, systemPrompt, onChangeSystemPrompt, tokenUsage, generationConfig }) => {
+export const TopNavigation: React.FC<TopNavigationProps> = ({ config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration, systemPrompt, onChangeSystemPrompt, tokenUsage, generationConfig, onCyclePreset, currentPreset }) => {
   const effectiveConfig = generationConfig || config.generation;
   
   // Local state for immediate UI updates
@@ -143,6 +146,26 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({ config, selectedMo
         </button>
         
         <span className="text-muted-foreground/40 mx-1">|</span>
+        
+        {/* Preset Cycle Button - click to cycle through MAX → Balanced → MIN */}
+        {onCyclePreset && (
+          <button
+            onClick={onCyclePreset}
+            className={`px-3 py-1 rounded text-xs font-bold transition-all hover:scale-105 shadow-sm hover:shadow-md flex items-center gap-1 ${
+              currentPreset === 'MAX' 
+                ? 'bg-gradient-to-r from-red-500 to-orange-500 text-white' 
+                : currentPreset === 'Balanced'
+                ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
+                : currentPreset === 'MIN'
+                ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white'
+                : 'bg-gradient-to-r from-gray-500 to-gray-600 text-white'
+            }`}
+            title={`Current: ${currentPreset || 'MAX'}. Click to cycle: MAX → Balanced → MIN → MAX`}
+          >
+            <Rocket size={12} />
+            {currentPreset || 'MAX'}
+          </button>
+        )}
       </div>
       
       {/* Usage panel in the header */}

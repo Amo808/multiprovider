@@ -30,6 +30,7 @@ interface UseMessageReorderReturn {
   moveUp: (conversationId: string, index: number) => Promise<Message[] | null>;
   moveDown: (conversationId: string, index: number) => Promise<Message[] | null>;
   swap: (conversationId: string, index1: number, index2: number) => Promise<Message[] | null>;
+  moveTo: (conversationId: string, fromIndex: number, toIndex: number) => Promise<Message[] | null>;
   deleteMessage: (conversationId: string, index: number) => Promise<Message[] | null>;
   reverseOrder: (conversationId: string) => Promise<Message[] | null>;
   sortByTime: (conversationId: string, ascending?: boolean) => Promise<Message[] | null>;
@@ -99,6 +100,10 @@ export function useMessageReorder(): UseMessageReorderReturn {
     return reorderMessages(conversationId, 'swap', { index1, index2 });
   }, [reorderMessages]);
 
+  const moveTo = useCallback(async (conversationId: string, fromIndex: number, toIndex: number) => {
+    return reorderMessages(conversationId, 'move_to', { from_index: fromIndex, to_index: toIndex });
+  }, [reorderMessages]);
+
   const deleteMessage = useCallback(async (conversationId: string, index: number) => {
     return reorderMessages(conversationId, 'remove', { index });
   }, [reorderMessages]);
@@ -134,6 +139,7 @@ export function useMessageReorder(): UseMessageReorderReturn {
     moveUp,
     moveDown,
     swap,
+    moveTo,
     deleteMessage,
     reverseOrder,
     sortByTime,

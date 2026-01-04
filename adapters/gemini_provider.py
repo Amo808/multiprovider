@@ -36,50 +36,72 @@ class GeminiAdapter(BaseAdapter):
     @property
     def supported_models(self) -> List[ModelInfo]:
         return [
-            # === Gemini 3 Pro (Preview - December 2025) ===
-            # From official Google AI docs: https://ai.google.dev/gemini-api/docs/models
+            # ============================================================
+            # GEMINI 3 SERIES (Preview - January 2026)
+            # Official docs: https://ai.google.dev/gemini-api/docs/gemini-3
+            # All Gemini 3 models: 1M context input, 64K max output
+            # ============================================================
             ModelInfo(
                 id="gemini-3-pro-preview",
                 name="gemini-3-pro-preview",
                 display_name="Gemini 3 Pro (Most Intelligent - Preview)",
                 provider=ModelProvider.GEMINI,
-                context_length=1000000,  # 1M context window
+                context_length=1000000,  # 1M context window (official)
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=65536,  # 65K max output
+                max_output_tokens=65536,  # 64K max output (official)
                 recommended_max_tokens=8192,
-                description="Best model for multimodal understanding, agentic workflows and vibe-coding",
-                pricing={"input_tokens": 2.00, "output_tokens": 12.00}  # Per million tokens
+                description="Best model for multimodal understanding, agentic workflows and vibe-coding. State-of-the-art reasoning.",
+                pricing={"input_tokens": 2.00, "output_tokens": 12.00}  # Per million tokens (<200k), $4/$18 (>200k)
             ),
-            # === Gemini 2.5 Models (Generally Available) ===
+            ModelInfo(
+                id="gemini-3-flash-preview",
+                name="gemini-3-flash-preview",
+                display_name="Gemini 3 Flash (Balanced Intelligence - Preview)",
+                provider=ModelProvider.GEMINI,
+                context_length=1000000,  # 1M context window (official)
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                max_output_tokens=65536,  # 64K max output (official)
+                recommended_max_tokens=8192,
+                description="Pro-level intelligence at Flash speed and pricing. Best balanced model for scale.",
+                pricing={"input_tokens": 0.50, "output_tokens": 3.00}  # Per million tokens
+            ),
+            # ============================================================
+            # GEMINI 2.5 SERIES (Generally Available)
+            # Official docs: https://ai.google.dev/gemini-api/docs/models
+            # All Gemini 2.5 models: 1M context, 64K max output
+            # ============================================================
             ModelInfo(
                 id="gemini-2.5-pro",
                 name="gemini-2.5-pro",
                 display_name="Gemini 2.5 Pro (Advanced Thinking)",
                 provider=ModelProvider.GEMINI,
-                context_length=1000000,  # 1M context window
+                context_length=1000000,  # 1M context window (official)
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=65536,
+                max_output_tokens=65536,  # 64K max output
                 recommended_max_tokens=8192,
                 description="State-of-the-art thinking model for complex problems in code, math, and STEM",
-                pricing={"input_tokens": 1.25, "output_tokens": 10.00}
+                pricing={"input_tokens": 1.25, "output_tokens": 10.00}  # (<200k), $2.50/$15 (>200k)
             ),
             ModelInfo(
                 id="gemini-2.5-flash",
                 name="gemini-2.5-flash",
                 display_name="Gemini 2.5 Flash (Best Value + Thinking)",
                 provider=ModelProvider.GEMINI,
-                context_length=1000000,  # 1M context window
+                context_length=1000000,  # 1M context window (official)
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=65536,
+                max_output_tokens=65536,  # 64K max output
                 recommended_max_tokens=8192,
                 description="Best price-performance model with thinking capabilities and 1M context",
                 pricing={"input_tokens": 0.30, "output_tokens": 2.50}  # Text output including reasoning
@@ -89,43 +111,46 @@ class GeminiAdapter(BaseAdapter):
                 name="gemini-2.5-flash-lite", 
                 display_name="Gemini 2.5 Flash-Lite (Fastest & Cheapest)",
                 provider=ModelProvider.GEMINI,
-                context_length=1000000,
+                context_length=1000000,  # 1M context window (official)
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=65536,
+                max_output_tokens=65536,  # 64K max output
                 recommended_max_tokens=8192,
                 description="Fastest model optimized for cost-efficiency and high throughput",
                 pricing={"input_tokens": 0.10, "output_tokens": 0.40}
             ),
-            # === Gemini 2.0 Models (Previous Generation) ===
+            # ============================================================
+            # GEMINI 2.0 SERIES (Previous Generation)
+            # All Gemini 2.0 models: 1M context, 8K max output
+            # ============================================================
             ModelInfo(
                 id="gemini-2.0-flash",
                 name="gemini-2.0-flash",
                 display_name="Gemini 2.0 Flash",
                 provider=ModelProvider.GEMINI,
-                context_length=1000000,
+                context_length=1000000,  # 1M context window (official)
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=8192,
+                max_output_tokens=8192,  # 8K max output (official)
                 recommended_max_tokens=4096,
                 description="Second-generation workhorse model with 1M token context",
-                pricing={"input_tokens": 0.15, "output_tokens": 0.60}
+                pricing={"input_tokens": 0.10, "output_tokens": 0.40}
             ),
             ModelInfo(
                 id="gemini-2.0-flash-lite",
                 name="gemini-2.0-flash-lite",
                 display_name="Gemini 2.0 Flash-Lite",
                 provider=ModelProvider.GEMINI,
-                context_length=1000000,
+                context_length=1000000,  # 1M context window (official)
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                max_output_tokens=8192,
+                max_output_tokens=8192,  # 8K max output (official)
                 recommended_max_tokens=4096,
                 description="Ultra-efficient for simple, high-frequency tasks",
                 pricing={"input_tokens": 0.075, "output_tokens": 0.30}

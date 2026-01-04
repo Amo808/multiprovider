@@ -68,12 +68,16 @@ function App() {
   } = useConversationsContext();
   
   // Per-model settings hook - manages generation settings + system prompt per model
+  // Pass selectedModel to calculate proper max values for each model
   const { 
     settings: modelSettings, 
     loading: modelSettingsLoading,
     updateSettings: updateModelSettings,
-    hasChanges: modelSettingsHasChanges
-  } = useModelSettings(selectedProvider, selectedModel?.id);
+    hasChanges: modelSettingsHasChanges,
+    applyMaxPreset,
+    cyclePreset,
+    currentPreset
+  } = useModelSettings(selectedProvider, selectedModel?.id, selectedModel);
   
   // Derive system prompt from model settings
   const activeSystemPrompt = modelSettings.system_prompt || '';
@@ -707,6 +711,9 @@ interface GoogleCredentialResponse {
         tokenUsage={tokenUsage}
         generationConfig={effectiveGenerationConfig}
         health={health}
+        onApplyMaxPreset={applyMaxPreset}
+        onCyclePreset={cyclePreset}
+        currentPreset={currentPreset}
       />
       <div className="flex items-center gap-2 px-4 py-1 text-xs border-b border-border bg-background">
         <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium">{showHistory ? 'Hide' : 'Show'} History</button>
