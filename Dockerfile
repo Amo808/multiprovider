@@ -9,11 +9,11 @@ ARG VITE_DEV_MODE="1"
 ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 ENV VITE_DEV_MODE=$VITE_DEV_MODE
 
-# Install system dependencies including Node.js
+# Install system dependencies including Node.js 22 LTS
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -30,7 +30,6 @@ RUN cd frontend && \
     npm install @rollup/rollup-linux-x64-gnu@4.24.0 --save-optional --no-save --silent || true
 
 COPY frontend/ ./frontend/
-RUN cd frontend && npm run build
 RUN cd frontend && npm run build
 
 # Copy Python modules and backend files
