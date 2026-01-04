@@ -30,6 +30,9 @@ sentence-transformers>=2.2.0
 supabase>=2.3.0
 openai>=1.12.0
 
+# Mem0 for semantic memory (optional)
+mem0ai>=1.0.0
+
 # Document processing for RAG
 pypdf>=3.17.0
 python-docx>=1.1.0

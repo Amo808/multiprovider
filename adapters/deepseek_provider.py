@@ -46,8 +46,8 @@ class DeepSeekAdapter(BaseAdapter):
                 supports_vision=False,
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 0.28, "output_tokens": 0.42},  # Cache miss pricing
-                max_output_tokens=8000,  # API: DEFAULT 4K, MAX 8K
-                recommended_max_tokens=4000  # Default setting
+                max_output_tokens=4096,  # API limit: 4096
+                recommended_max_tokens=4096  # Use max available
             ),
             ModelInfo(
                 id="deepseek-reasoner",
@@ -113,8 +113,8 @@ class DeepSeekAdapter(BaseAdapter):
         input_tokens = self.estimate_tokens(input_text)
 
         # Validate and clamp max_tokens to API limits based on model
-        # DeepSeek V3.2 API limits:
-        # - deepseek-chat: max_tokens in [1, 8000] (default 4000)
+        # DeepSeek API limits (updated January 2026):
+        # - deepseek-chat: max_tokens in [1, 4096] (API limit)
         # - deepseek-reasoner: max_tokens in [1, 64000] (default 32000)
         max_tokens = params.max_tokens
         
@@ -123,8 +123,8 @@ class DeepSeekAdapter(BaseAdapter):
             max_limit = 64000
             default_tokens = 32000
         else:  # deepseek-chat
-            max_limit = 8000
-            default_tokens = 4000
+            max_limit = 4096  # Updated: API now limits to 4096
+            default_tokens = 4096
         
         if max_tokens is None or max_tokens < 1:
             max_tokens = default_tokens

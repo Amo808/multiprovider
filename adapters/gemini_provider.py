@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Dict, List, Optional, AsyncGenerator, Any
 import aiohttp
 from .base_provider import BaseAdapter, Message, GenerationParams, ChatResponse, ModelInfo, ModelProvider, ModelType, ProviderConfig
@@ -10,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 class GeminiAdapter(BaseAdapter):
     """Google Gemini AI Provider Adapter with streaming support"""
+    
+    # Global rate limiter - track last request time per model
+    _last_request_time: Dict[str, float] = {}
+    _min_request_interval = 2.0  # Minimum 2 seconds between requests to same model
     
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
@@ -333,6 +338,16 @@ class GeminiAdapter(BaseAdapter):
             )
             return
 
+        # Rate limiting - ensure minimum interval between requests
+        now = time.time()
+        last_request = GeminiAdapter._last_request_time.get(model, 0)
+        time_since_last = now - last_request
+        if time_since_last < self._min_request_interval:
+            wait_time = self._min_request_interval - time_since_last
+            self.logger.info(f"[Gemini] Rate limiting: waiting {wait_time:.1f}s before request to {model}")
+            await asyncio.sleep(wait_time)
+        GeminiAdapter._last_request_time[model] = time.time()
+
         try:
             # Use streaming or non-streaming endpoint
             if params.stream:
@@ -345,7 +360,7 @@ class GeminiAdapter(BaseAdapter):
             self.logger.info(f"Making request to: {safe_url}")
             
             # Prepare retry mechanism for thinking config and overload errors
-            max_retries = 3
+            max_retries = 5  # Increased for better rate limit handling
             for attempt in range(max_retries):
                 safe_url = url.replace(self.api_key, "***API_KEY***") if self.api_key else url
                 self.logger.info(f"Making request to: {safe_url} (attempt {attempt+1}/{max_retries}) payloadKeys={list(payload.keys())} genKeys={list(payload['generationConfig'].keys())}")
@@ -356,29 +371,38 @@ class GeminiAdapter(BaseAdapter):
                         if response.status == 429:
                             error_text = await response.text()
                             self.logger.warning(f"[Gemini] Rate limit (429), attempt {attempt+1}/{max_retries}")
+                            self.logger.warning(f"[Gemini] 429 Response body: {error_text[:500]}")
                             
-                            # Parse retry delay from response if available
+                            # Parse retry delay from response - Google tells us exactly how long to wait
                             import re
                             retry_match = re.search(r'"retryDelay":\s*"(\d+)s"', error_text)
-                            retry_delay = int(retry_match.group(1)) if retry_match else (2 ** attempt) * 5
+                            if retry_match:
+                                retry_delay = int(retry_match.group(1))
+                            else:
+                                # Fallback exponential backoff: 10s, 20s, 40s, 80s, 160s
+                                retry_delay = (2 ** attempt) * 10
                             
-                            if attempt < max_retries - 1:
-                                self.logger.info(f"[Gemini] Waiting {retry_delay}s before retry...")
+                            # If Google says wait, we must wait - no shortening
+                            if attempt < max_retries - 1 and retry_delay <= 120:  # Only auto-retry if wait is <= 2 minutes
+                                self.logger.info(f"[Gemini] Waiting {retry_delay}s before retry (Google specified)...")
                                 yield ChatResponse(
-                                    content=f" (Rate limit reached, waiting {retry_delay}s before retry...)",
+                                    content="",
                                     done=False,
                                     meta={
                                         "provider": ModelProvider.GEMINI,
                                         "model": model,
                                         "retry_attempt": attempt + 1,
                                         "warning": True
-                                    }
+                                    },
+                                    stage_message=f"⏳ Rate limit reached. Waiting {retry_delay}s before retry ({attempt+1}/{max_retries})..."
                                 )
                                 await asyncio.sleep(retry_delay)
                                 continue
                             else:
+                                # Suggest alternative model with better rate limits
+                                alt_model = "gemini-2.5-flash" if "preview" in model or "3-pro" in model else "gemini-2.0-flash"
                                 yield ChatResponse(
-                                    error=f"Rate limit exceeded. Please wait a moment and try again, or use a different model. Suggested wait: {retry_delay}s",
+                                    error=f"Rate limit exceeded for {model}. Try using '{alt_model}' which has higher rate limits, or wait {retry_delay}s before retrying.",
                                     meta={"provider": ModelProvider.GEMINI, "model": model}
                                 )
                                 return

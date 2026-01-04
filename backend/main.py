@@ -35,6 +35,7 @@ from adapters import (
 from storage import HistoryStore, PromptBuilder
 from storage.database_store import DatabaseConversationStore
 from storage.message_store import MessageDatabaseStore, get_message_store
+from storage.mem0_store import get_mem0_store, add_conversation_to_memory, get_memory_context
 from auth_google import router as google_auth_router, get_current_user as original_get_current_user
 
 # Supabase integration
@@ -690,12 +691,36 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             logger.warning(f"[CHAT] Context compression failed, using full history: {e}")
         # === END AUTO CONTEXT COMPRESSION ===
         
+        # === MEM0 MEMORY CONTEXT ===
+        # Get relevant memories for personalization (if Mem0 is enabled)
+        memory_context = ""
+        try:
+            mem0_store = get_mem0_store()
+            if mem0_store.is_enabled() and user_email:
+                # Get the last user message for context search
+                last_user_msg = request.message
+                memory_context = await get_memory_context(user_email, last_user_msg)
+                if memory_context:
+                    logger.info(f"[MEM0] Retrieved memory context for user {user_email}")
+        except Exception as e:
+            logger.warning(f"[MEM0] Failed to get memory context: {e}")
+        # === END MEM0 MEMORY CONTEXT ===
+        
         # Add system prompt if provided
-        if request.system_prompt:
+        system_prompt_content = request.system_prompt or ""
+        
+        # Inject memory context into system prompt if available
+        if memory_context:
+            if system_prompt_content:
+                system_prompt_content = f"{system_prompt_content}\n\n{memory_context}"
+            else:
+                system_prompt_content = f"You are a helpful AI assistant.\n\n{memory_context}"
+        
+        if system_prompt_content:
             system_msg = Message(
                 id=str(uuid.uuid4()),
                 role="system",
-                content=request.system_prompt,
+                content=system_prompt_content,
                 timestamp=datetime.now()
             )
             history = [system_msg] + history
@@ -1013,13 +1038,32 @@ async def get_conversations(user_email: str = Depends(get_current_user)):
 
 @api_router.post("/conversations")
 async def create_conversation(conversation_data: dict, user_email: str = Depends(get_current_user)):
-    """Create a new conversation for current user."""
+    """Create a new conversation for current user, optionally with initial messages (for branching)."""
     try:
         conversation_id = conversation_data.get("id")
         title = conversation_data.get("title")
+        messages = conversation_data.get("messages", [])  # Optional: messages for branching
+        
         if not conversation_id:
             raise HTTPException(status_code=400, detail="conversation_id is required")
+        
+        # Create the conversation
         conversation_store.create_conversation(conversation_id, title, user_email=user_email)
+        
+        # If messages provided (branching), save them
+        if messages:
+            logger.info(f"[BRANCH] Creating conversation {conversation_id} with {len(messages)} branched messages")
+            for msg_data in messages:
+                from storage.message_store import Message
+                msg = Message(
+                    id=msg_data.get("id", str(uuid.uuid4())),
+                    role=msg_data.get("role", "user"),
+                    content=msg_data.get("content", ""),
+                    timestamp=msg_data.get("timestamp", datetime.now().isoformat()),
+                    meta=msg_data.get("meta", {})
+                )
+                conversation_store.add_message(conversation_id, msg, user_email=user_email)
+        
         return {"message": "Conversation created successfully", "id": conversation_id}
     except Exception as e:
         logger.error(f"Failed to create conversation: {e}")

@@ -61,7 +61,11 @@ function App() {
 
   // ========================= Hooks =========================
   const { config, loading: configLoading, error: configError, updateConfig, fetchConfig } = useConfig();
-  const { deleteConversation: deleteConversationMessages } = useConversationsContext();
+  const { 
+    deleteConversation: deleteConversationMessages, 
+    createBranchConversation,
+    conversations: conversationMessages 
+  } = useConversationsContext();
   
   // Per-model settings hook - manages generation settings + system prompt per model
   const { 
@@ -424,6 +428,61 @@ interface BackendConversation {
     }
   };
 
+  // Branch from a specific message in conversation - creates new conversation with history up to that point
+  const handleBranchFromMessage = async (sourceConversationId: string, messageIndex: number) => {
+    const newId = `conv_${Date.now()}`;
+    
+    // Get source conversation messages from context
+    const sourceMessages = conversationMessages[sourceConversationId]?.messages || [];
+    if (sourceMessages.length === 0) {
+      console.warn('No messages in source conversation to branch from');
+      return;
+    }
+    
+    // Messages up to and including the selected index
+    const branchedMessages = sourceMessages.slice(0, messageIndex + 1);
+    
+    // Generate title from first user message or use default
+    const firstUserMessage = branchedMessages.find((m: { role: string; content: string }) => m.role === 'user');
+    const branchTitle = firstUserMessage 
+      ? `Branch: ${firstUserMessage.content.slice(0, 30)}${firstUserMessage.content.length > 30 ? '...' : ''}`
+      : 'Branch from conversation';
+    
+    const newConversation = {
+      id: newId,
+      title: branchTitle,
+      updatedAt: new Date().toISOString()
+    };
+    
+    try {
+      // Create new conversation in backend with the branched messages
+      await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({
+          id: newId,
+          title: branchTitle,
+          messages: branchedMessages
+        })
+      });
+      
+      // Create branch conversation in context (this also sets messages)
+      createBranchConversation(sourceConversationId, messageIndex, newId);
+      
+      // Add to UI conversations list and switch to new conversation
+      setConversations(prev => [newConversation, ...prev]);
+      setCurrentConversationId(newId);
+      
+      console.log(`[App] Created branch conversation ${newId} with ${branchedMessages.length} messages`);
+    } catch (error) {
+      console.error('Failed to create branch conversation:', error);
+      // Still create locally even if backend fails
+      createBranchConversation(sourceConversationId, messageIndex, newId);
+      setConversations(prev => [newConversation, ...prev]);
+      setCurrentConversationId(newId);
+    }
+  };
+
   const handleDeleteConversation = async (conversationId: string) => {
     if (conversations.length <= 1) return; 
     
@@ -703,6 +762,7 @@ interface GoogleCredentialResponse {
                 onTokenUsageUpdate={updateTokenUsage}
                 systemPrompt={activeSystemPrompt}
                 onConfigChange={updateModelSettings}
+                onBranchFrom={handleBranchFromMessage}
               />
               <div className="px-4 pb-3"><PresetPrompts onInsert={(t: string) => { const ev = new CustomEvent('insert-preset', { detail: t }); window.dispatchEvent(ev); }} /></div>
             </>

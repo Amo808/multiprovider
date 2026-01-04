@@ -22,6 +22,7 @@ interface ChatInterfaceProps {
   onTokenUsageUpdate?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number }) => void;
   systemPrompt?: string;
   onConfigChange?: (config: Partial<GenerationConfig>) => void;
+  onBranchFrom?: (conversationId: string, messageIndex: number) => void;
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -33,7 +34,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   onMessageSent,
   onTokenUsageUpdate,
   systemPrompt,
-  onConfigChange: _onConfigChange // kept for API compatibility
+  onConfigChange: _onConfigChange, // kept for API compatibility
+  onBranchFrom
 }) => {
   const [inputValue, setInputValue] = useState('');
   const [showDocumentManager, setShowDocumentManager] = useState(false);
@@ -129,21 +131,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // Drag & Drop reorder handler - moves message from one position to another
   const handleReorder = useCallback(async (fromIndex: number, toIndex: number) => {
-    if (fromIndex === toIndex || isStreaming) return;
+    console.log('[ChatInterface] handleReorder called:', { fromIndex, toIndex, messagesLength: messages.length });
     
-    // Clone messages array
+    if (fromIndex === toIndex || isStreaming) {
+      console.log('[ChatInterface] Reorder skipped:', { sameIndex: fromIndex === toIndex, isStreaming });
+      return;
+    }
+    
+    // Clone messages array and perform reorder
     const newMessages = [...messages];
     const [movedMessage] = newMessages.splice(fromIndex, 1);
-    newMessages.splice(toIndex, 0, movedMessage);
+    
+    // Calculate correct insertion index
+    // If moving down (fromIndex < toIndex), we need to account for the removal
+    const insertIndex = fromIndex < toIndex ? toIndex : toIndex;
+    newMessages.splice(insertIndex, 0, movedMessage);
+    
+    console.log('[ChatInterface] Reordered messages:', {
+      from: fromIndex,
+      to: toIndex,
+      insertAt: insertIndex,
+      movedContent: movedMessage.content.substring(0, 50)
+    });
     
     // Update UI immediately
     if (updateMessages) {
       updateMessages(conversationId, newMessages);
     }
     
-    // Persist to backend (using the API)
-    // This is fire-and-forget, if it fails the user can retry
-    console.log('[ChatInterface] Reordered messages:', fromIndex, '->', toIndex);
+    // TODO: Persist to backend when API is ready
   }, [messages, conversationId, updateMessages, isStreaming]);
 
   // File drop handler - uploads files for RAG
@@ -177,6 +193,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       updateMessages(conversationId, newMessages);
     }
   };
+
+  // Handle branching from a specific message - creates new conversation with history up to that point
+  const handleBranchFrom = useCallback((index: number) => {
+    if (onBranchFrom) {
+      onBranchFrom(conversationId, index);
+    }
+  }, [conversationId, onBranchFrom]);
 
   // NEW: aggregate token usage whenever messages change
   useEffect(() => {
@@ -490,6 +513,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             updateVersion={updateVersion}
             onReorder={handleReorder}
             onDelete={handleDeleteMessage}
+            onBranchFrom={onBranchFrom ? handleBranchFrom : undefined}
             onFileDrop={handleFileDrop}
           />
         )}

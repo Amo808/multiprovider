@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useReducer } from 'react';
-import { Bot, User, Copy, Brain, Zap, ChevronUp, ChevronDown, Trash2, ChevronRight, Clock, Sparkles, Eye, EyeOff } from 'lucide-react';
+import { Bot, User, Copy, Brain, Zap, ChevronUp, ChevronDown, Trash2, ChevronRight, Clock, Sparkles, Eye, EyeOff, GitBranch } from 'lucide-react';
 import { Message, ModelInfo } from '../types';
 import { cn } from '../lib/utils';
 
@@ -17,6 +17,7 @@ interface MessageBubbleProps {
   onMoveUp?: (index: number) => void;
   onMoveDown?: (index: number) => void;
   onDelete?: (index: number) => void;
+  onBranchFrom?: (index: number) => void;
 }
 
 // Collapsible section component with animation
@@ -328,7 +329,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   enableReordering, 
   onMoveUp, 
   onMoveDown, 
-  onDelete 
+  onDelete,
+  onBranchFrom
 }) => {
   const [copied, setCopied] = useState(false);
   // Force re-render counter when reasoning content changes
@@ -519,20 +521,42 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             )}
           </div>
 
-          {/* Copy button */}
-          {canCopy && !isStreaming && (
-            <button
-              onClick={handleCopy}
-              className={cn(
-                "absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md",
-                isUser 
-                  ? "text-white/70 hover:text-white hover:bg-white/20" 
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+          {/* Action buttons - Copy and Branch */}
+          {!isStreaming && (
+            <div className={cn(
+              "absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+            )}>
+              {/* Branch button */}
+              {onBranchFrom && index !== undefined && (
+                <button
+                  onClick={() => onBranchFrom?.(index)}
+                  className={cn(
+                    "p-1.5 rounded-md transition-colors",
+                    isUser 
+                      ? "text-white/70 hover:text-emerald-300 hover:bg-white/20" 
+                      : "text-emerald-500/70 hover:text-emerald-500 hover:bg-emerald-500/10"
+                  )}
+                  title="Branch: Start new chat from this point"
+                >
+                  <GitBranch size={14} />
+                </button>
               )}
-              title={copied ? 'Copied!' : 'Copy message'}
-            >
-              <Copy size={14} />
-            </button>
+              {/* Copy button */}
+              {canCopy && (
+                <button
+                  onClick={handleCopy}
+                  className={cn(
+                    "p-1.5 rounded-md transition-colors",
+                    isUser 
+                      ? "text-white/70 hover:text-white hover:bg-white/20" 
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                  )}
+                  title={copied ? 'Copied!' : 'Copy message'}
+                >
+                  <Copy size={14} />
+                </button>
+              )}
+            </div>
           )}
 
           {/* Reorder controls */}

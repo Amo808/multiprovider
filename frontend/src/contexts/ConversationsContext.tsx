@@ -32,6 +32,7 @@ interface ConversationsContextType {
   stopStreaming: (conversationId: string) => void;
   recoverStuckRequest: (conversationId: string) => void;
   updateMessages: (conversationId: string, messages: Message[]) => void;
+  createBranchConversation: (sourceConversationId: string, upToMessageIndex: number, newConversationId: string) => Message[];
 }
 
 const ConversationsContext = createContext<ConversationsContextType | null>(null);
@@ -542,6 +543,35 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
     }));
   }, []);
 
+  const createBranchConversation = useCallback((sourceConversationId: string, upToMessageIndex: number, newConversationId: string) => {
+    setConversations(prev => {
+      const sourceConversation = prev[sourceConversationId];
+      if (!sourceConversation) return prev;
+      
+      // Extract messages up to the specified index
+      const newMessages = sourceConversation.messages.slice(0, upToMessageIndex + 1);
+      
+      // Create the new conversation with extracted messages
+      const newConversation: ConversationState = {
+        messages: newMessages,
+        isStreaming: false,
+        error: null,
+        currentResponse: '',
+        loaded: true,
+        thinkingContent: undefined,
+        isThinking: false
+      };
+      
+      return {
+        ...prev,
+        [newConversationId]: newConversation
+      };
+    });
+    
+    // Optionally, you can return the new conversation state
+    return conversations[newConversationId]?.messages || [];
+  }, [conversations]);
+
   return (
     <ConversationsContext.Provider
       value={{
@@ -552,7 +582,8 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         deleteConversation,
         stopStreaming,
         recoverStuckRequest,
-        updateMessages
+        updateMessages,
+        createBranchConversation
       }}
     >
       {children}
