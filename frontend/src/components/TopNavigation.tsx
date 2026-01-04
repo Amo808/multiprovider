@@ -18,8 +18,16 @@ interface TopNavigationProps {
   onLogout: () => void;
   onSelectModel: (m: ModelInfo) => void;
   onChangeGeneration?: (patch: Partial<GenerationConfig>) => void;
-  systemPrompt?: string;
-  onChangeSystemPrompt?: (p: string) => void;
+  systemPrompt?: string; // Combined system prompt (Global + Per-Model)
+  onChangeSystemPrompt?: (p: string) => void; // Updates per-model system prompt
+  // Global system prompt props
+  globalPrompt?: string;
+  onChangeGlobalPrompt?: (p: string) => void;
+  onSaveGlobalPrompt?: () => Promise<void>;
+  globalPromptHasChanges?: boolean;
+  // Per-model prompt props  
+  modelPrompt?: string;
+  modelPromptHasChanges?: boolean;
   tokenUsage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number } | null;
   generationConfig?: GenerationConfig; // Per-model generation config
   health?: { status: string } | null; // API health status
@@ -32,7 +40,13 @@ const themeIcon = (t: 'light' | 'dark' | 'auto') => t==='light'? <Sun size={16}/
 
 const LEVELS = ['off', 'low', 'medium', 'high'];
 
-export const TopNavigation: React.FC<TopNavigationProps> = ({ config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration, systemPrompt, onChangeSystemPrompt, tokenUsage, generationConfig, onCyclePreset, currentPreset }) => {
+export const TopNavigation: React.FC<TopNavigationProps> = ({ 
+  config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration, 
+  systemPrompt, onChangeSystemPrompt, 
+  globalPrompt, onChangeGlobalPrompt, onSaveGlobalPrompt, globalPromptHasChanges,
+  modelPrompt, modelPromptHasChanges,
+  tokenUsage, generationConfig, onCyclePreset, currentPreset 
+}) => {
   const effectiveConfig = generationConfig || config.generation;
   
   // Local state for immediate UI updates
@@ -82,7 +96,15 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({ config, selectedMo
           generationConfig={effectiveConfig} 
           onChangeGeneration={onChangeGeneration} 
           systemPrompt={systemPrompt} 
-          onChangeSystemPrompt={onChangeSystemPrompt} 
+          onChangeSystemPrompt={onChangeSystemPrompt}
+          // Global system prompt props
+          globalPrompt={globalPrompt}
+          onChangeGlobalPrompt={onChangeGlobalPrompt}
+          onSaveGlobalPrompt={onSaveGlobalPrompt}
+          globalPromptHasChanges={globalPromptHasChanges}
+          // Per-model prompt props
+          modelPrompt={modelPrompt}
+          modelPromptHasChanges={modelPromptHasChanges}
         />
       </div>
       

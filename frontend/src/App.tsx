@@ -19,6 +19,7 @@ import { ParallelChatInterface } from './components/ParallelChatInterface';
 import { apiClient } from './services/api';
 import { useTokenUsage } from './hooks/useTokenUsage';
 import { useModelSettings } from './hooks/useModelSettings';
+import { useGlobalSystemPrompt } from './hooks/useGlobalSystemPrompt';
 import { useHealth } from './components';
 
 interface Conversation { id: string; title: string; updatedAt: string }
@@ -79,8 +80,25 @@ function App() {
     currentPreset
   } = useModelSettings(selectedProvider, selectedModel?.id, selectedModel);
   
-  // Derive system prompt from model settings
-  const activeSystemPrompt = modelSettings.system_prompt || '';
+  // Global system prompt hook - applies to ALL models
+  const {
+    globalPrompt,
+    loading: globalPromptLoading,
+    error: globalPromptError,
+    setGlobalPrompt,
+    saveGlobalPrompt,
+    hasChanges: globalPromptHasChanges
+  } = useGlobalSystemPrompt();
+  
+  // Per-model system prompt (from model settings)
+  const modelSystemPrompt = modelSettings.system_prompt || '';
+  
+  // Combined system prompt: Global + Per-Model (OpenRouter style)
+  // Final prompt = [Global prompt] + "\n\n" + [Per-model prompt]
+  const combinedSystemPrompt = useMemo(() => {
+    const parts = [globalPrompt, modelSystemPrompt].filter(Boolean);
+    return parts.join('\n\n---\n\n');
+  }, [globalPrompt, modelSystemPrompt]);
   
   // Build effective generation config from model settings
   const effectiveGenerationConfig: GenerationConfig = {
@@ -706,8 +724,18 @@ interface GoogleCredentialResponse {
             console.error(e); 
           }
         }}
-        systemPrompt={activeSystemPrompt}
+        // Combined system prompt for display (Global + Per-Model)
+        systemPrompt={combinedSystemPrompt}
+        // Per-model system prompt change handler
         onChangeSystemPrompt={(p: string) => { updateModelSettings({ system_prompt: p }); }}
+        // Global system prompt props
+        globalPrompt={globalPrompt}
+        onChangeGlobalPrompt={setGlobalPrompt}
+        onSaveGlobalPrompt={saveGlobalPrompt}
+        globalPromptHasChanges={globalPromptHasChanges}
+        // Per-model prompt props
+        modelPrompt={modelSystemPrompt}
+        modelPromptHasChanges={modelSettingsHasChanges}
         tokenUsage={tokenUsage}
         generationConfig={effectiveGenerationConfig}
         health={health}
@@ -735,9 +763,12 @@ interface GoogleCredentialResponse {
         
         <span className="ml-auto"></span>
         
-        {/* Per-model settings status indicators */}
-        {modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 animate-pulse">Loading settings...</span>}
-        {modelSettingsHasChanges && !modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Unsaved changes</span>}
+        {/* Status indicators */}
+        {globalPromptLoading && <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 animate-pulse text-[10px]">Loading global prompt...</span>}
+        {globalPromptError && <span className="px-2 py-1 rounded-full bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 text-[10px]">⚠️ Prompt error</span>}
+        {globalPromptHasChanges && !globalPromptLoading && <span className="px-2 py-1 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 text-[10px]">🌍 Global unsaved</span>}
+        {modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 animate-pulse text-[10px]">Loading settings...</span>}
+        {modelSettingsHasChanges && !modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 text-[10px]">🎯 Model unsaved</span>}
       </div>
       <main className="flex-1 flex min-h-0 overflow-hidden">
         {showHistory && chatMode === 'single' && (
@@ -755,7 +786,7 @@ interface GoogleCredentialResponse {
             <ParallelChatInterface
               availableModels={allAvailableModels}
               generationConfig={effectiveGenerationConfig}
-              systemPrompt={activeSystemPrompt}
+              systemPrompt={combinedSystemPrompt}
               onClose={() => setChatMode('single')}
             />
           ) : currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
@@ -767,7 +798,7 @@ interface GoogleCredentialResponse {
                 conversationId={currentConversationId}
                 onMessageSent={handleUpdateConversationTitle}
                 onTokenUsageUpdate={updateTokenUsage}
-                systemPrompt={activeSystemPrompt}
+                systemPrompt={combinedSystemPrompt}
                 onConfigChange={updateModelSettings}
                 onBranchFrom={handleBranchFromMessage}
               />

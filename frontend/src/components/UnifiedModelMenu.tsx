@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ModelInfo, ModelProvider, AppConfig, GenerationConfig } from '../types'; // added GenerationConfig
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Bot, Zap, Eye, ChevronDown, Settings } from 'lucide-react';
+import { Bot, Zap, Eye, ChevronDown, Settings, Save } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 // Simple debounce hook
@@ -31,8 +31,16 @@ interface UnifiedModelMenuProps {
   onUpdateModel?: (provider: ModelProvider, modelId: string, patch: Partial<ModelInfo>) => void; // NEW
   generationConfig?: GenerationConfig; // NEW
   onChangeGeneration?: (patch: Partial<GenerationConfig>) => void; // NEW
-  systemPrompt?: string; // NEW
-  onChangeSystemPrompt?: (prompt: string) => void; // NEW
+  systemPrompt?: string; // Combined system prompt (for display/preview)
+  onChangeSystemPrompt?: (prompt: string) => void; // Per-model prompt change
+  // Global system prompt props (OpenRouter-style)
+  globalPrompt?: string;
+  onChangeGlobalPrompt?: (prompt: string) => void;
+  onSaveGlobalPrompt?: () => Promise<void>;
+  globalPromptHasChanges?: boolean;
+  // Per-model prompt props
+  modelPrompt?: string;
+  modelPromptHasChanges?: boolean;
 }
 
 // Helper to render capability badges
@@ -55,7 +63,12 @@ const ProviderHeader: React.FC<{ provider: ModelProvider; count: number; connect
   </div>
 );
 
-export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: boolean }> = ({ config, activeModel, activeProvider, onSelectModel, onManageProviders, className, loading, onUpdateModel, generationConfig, onChangeGeneration, systemPrompt, onChangeSystemPrompt }) => {
+export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: boolean }> = ({ 
+  config, activeModel, activeProvider, onSelectModel, onManageProviders, className, loading, onUpdateModel, 
+  generationConfig, onChangeGeneration, systemPrompt, onChangeSystemPrompt,
+  globalPrompt, onChangeGlobalPrompt, onSaveGlobalPrompt, globalPromptHasChanges,
+  modelPrompt, modelPromptHasChanges
+}) => {
   const [open, setOpen] = useState(false);
   const [hoveredModelId, setHoveredModelId] = useState<string | null>(null);
   const [settingsModelId, setSettingsModelId] = useState<string | null>(null); // Track which model's settings panel is open
@@ -461,23 +474,82 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                               </span>
                             </label>
                           </div>
-                          {/* System prompt */}
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-medium flex justify-between">
-                              <span>System Prompt</span>
-                              {systemPrompt && <span className="text-muted-foreground">{systemPrompt.length} chars</span>}
-                            </label>
-                            <textarea 
-                              className="w-full text-[10px] rounded border bg-background p-2 resize-none h-24 focus:outline-none focus:ring-1 focus:ring-primary" 
-                              placeholder="Set system / role prompt for this model" 
-                              defaultValue={systemPrompt || ''} 
-                              onBlur={(e)=>{ 
-                                if(e.target.value !== systemPrompt) {
-                                  onChangeSystemPrompt?.(e.target.value); 
-                                }
-                              }} 
-                            />
-                            <p className="text-[9px] text-muted-foreground">Saved automatically per model</p>
+                          {/* System Prompt Editor - OpenRouter style with Global + Per-Model */}
+                          <div className="space-y-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                            <div className="text-[10px] font-semibold flex items-center gap-1">
+                              📝 System Prompts
+                              <span className="text-muted-foreground font-normal">(OpenRouter style)</span>
+                            </div>
+                            
+                            {/* Global System Prompt */}
+                            <div className="space-y-1 p-2 rounded bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-medium text-blue-700 dark:text-blue-300 flex items-center gap-1">
+                                  🌍 Global Prompt
+                                  <span className="text-[9px] text-muted-foreground font-normal">(all models)</span>
+                                </label>
+                                {globalPromptHasChanges && (
+                                  <span className="text-[9px] text-orange-500 font-medium">• unsaved</span>
+                                )}
+                              </div>
+                              <textarea 
+                                className="w-full text-[10px] rounded border border-blue-300 dark:border-blue-700 bg-white dark:bg-background p-2 resize-none h-16 focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                                placeholder="Base instructions for ALL models. Example: 'You are a helpful AI assistant.'" 
+                                value={globalPrompt || ''}
+                                onChange={(e) => onChangeGlobalPrompt?.(e.target.value)}
+                              />
+                              <div className="flex items-center justify-between">
+                                <span className="text-[9px] text-muted-foreground">
+                                  {(globalPrompt || '').length} chars
+                                </span>
+                                <Button
+                                  size="sm"
+                                  variant={globalPromptHasChanges ? "default" : "outline"}
+                                  onClick={() => onSaveGlobalPrompt?.()}
+                                  disabled={!globalPromptHasChanges}
+                                  className="h-5 text-[9px] px-2"
+                                >
+                                  <Save size={10} className="mr-1" />
+                                  Save Global
+                                </Button>
+                              </div>
+                            </div>
+                            
+                            {/* Per-Model System Prompt */}
+                            <div className="space-y-1 p-2 rounded bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-medium text-purple-700 dark:text-purple-300 flex items-center gap-1">
+                                  🎯 Model Prompt
+                                  <span className="text-[9px] text-muted-foreground font-normal">({m.display_name || m.name})</span>
+                                </label>
+                                {modelPromptHasChanges && (
+                                  <span className="text-[9px] text-orange-500 font-medium">• unsaved</span>
+                                )}
+                              </div>
+                              <textarea 
+                                className="w-full text-[10px] rounded border border-purple-300 dark:border-purple-700 bg-white dark:bg-background p-2 resize-none h-16 focus:outline-none focus:ring-1 focus:ring-purple-500" 
+                                placeholder="Additional instructions for THIS model. Adds to global prompt." 
+                                value={modelPrompt || ''}
+                                onChange={(e) => onChangeSystemPrompt?.(e.target.value)}
+                              />
+                              <div className="flex items-center justify-between">
+                                <span className="text-[9px] text-muted-foreground">
+                                  {(modelPrompt || '').length} chars • Auto-saves
+                                </span>
+                              </div>
+                            </div>
+                            
+                            {/* Combined Preview */}
+                            {(globalPrompt || modelPrompt) && (
+                              <div className="p-2 rounded bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+                                <div className="text-[9px] text-muted-foreground mb-1 flex items-center gap-1">
+                                  📋 Final prompt preview ({((globalPrompt || '') + (modelPrompt || '')).length} chars)
+                                </div>
+                                <pre className="text-[9px] text-muted-foreground whitespace-pre-wrap max-h-16 overflow-auto">
+                                  {[globalPrompt, modelPrompt].filter(Boolean).join('\n---\n') || '(empty)'}
+                                </pre>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}

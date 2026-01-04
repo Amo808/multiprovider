@@ -1,6 +1,6 @@
 {
-  "activeProvider": "openai",
-  "activeModel": "gpt-5.2",
+  "activeProvider": "deepseek",
+  "activeModel": "deepseek-chat",
   "providers": {
     "deepseek": {
       "id": "deepseek",
@@ -588,19 +588,19 @@
   },
   "model_settings": {
     "deepseek:deepseek-chat": {
-      "temperature": 2,
+      "temperature": 1,
       "max_tokens": 32768,
       "top_p": 1,
       "frequency_penalty": 0,
       "presence_penalty": 0,
       "stream": true,
       "system_prompt": "",
-      "thinking_budget": null,
-      "include_thoughts": false,
-      "verbosity": null,
-      "reasoning_effort": null,
+      "thinking_budget": -1,
+      "include_thoughts": true,
+      "verbosity": "high",
+      "reasoning_effort": "high",
       "cfg_scale": null,
-      "free_tool_calling": false
+      "free_tool_calling": true
     },
     "deepseek:deepseek-reasoner": {
       "temperature": 0.7,
@@ -663,19 +663,19 @@
       "free_tool_calling": false
     },
     "openai:gpt-5.2": {
-      "temperature": 1,
+      "temperature": 0.7,
       "max_tokens": 128000,
       "top_p": 1,
       "frequency_penalty": 0,
       "presence_penalty": 0,
       "stream": true,
       "system_prompt": "",
-      "thinking_budget": -1,
-      "include_thoughts": true,
-      "verbosity": "high",
-      "reasoning_effort": "high",
+      "thinking_budget": 100,
+      "include_thoughts": false,
+      "verbosity": null,
+      "reasoning_effort": null,
       "cfg_scale": null,
-      "free_tool_calling": true
+      "free_tool_calling": false
     },
     "anthropic:claude-opus-4-5-20251101": {
       "temperature": 0.1,

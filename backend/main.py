@@ -1372,6 +1372,68 @@ async def update_generation_config(generation_config: dict, _: str = Depends(get
 
 
 # ============================================================================
+# GLOBAL SYSTEM PROMPT ENDPOINTS
+# ============================================================================
+
+class SystemPromptRequest(BaseModel):
+    system_prompt: str
+
+@api_router.get("/config/system-prompt")
+async def get_global_system_prompt(_: str = Depends(get_current_user)):
+    """Get global system prompt that applies to ALL models."""
+    try:
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                current = json.load(f)
+        else:
+            current = {}
+        
+        system_config = current.get("system", {})
+        prompt = system_config.get("system_prompt", "")
+        
+        return {"prompt": prompt}
+    except Exception as e:
+        logger.error(f"Failed to get global system prompt: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/config/system-prompt")
+async def update_global_system_prompt(request: SystemPromptRequest, _: str = Depends(get_current_user)):
+    """Update global system prompt that applies to ALL models.
+    
+    This is the base system prompt that gets prepended to every request.
+    Per-model system prompts are added AFTER this global prompt.
+    """
+    try:
+        logger.info(f"[CONFIG] Updating global system prompt (length={len(request.system_prompt)})")
+        
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                current = json.load(f)
+        else:
+            current = {}
+        
+        if "system" not in current:
+            current["system"] = {
+                "max_context_tokens": 32768,
+                "auto_save": True,
+                "conversations_limit": 100
+            }
+        
+        current["system"]["system_prompt"] = request.system_prompt
+        
+        with open(config_path, 'w') as f:
+            json.dump(current, f, indent=2)
+        
+        logger.info("[CONFIG] Global system prompt updated successfully")
+        return {"success": True, "prompt": request.system_prompt}
+    except Exception as e:
+        logger.error(f"Failed to update global system prompt: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # MODEL AUTO-DISCOVERY ENDPOINT
 # ============================================================================
 

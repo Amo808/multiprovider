@@ -492,6 +492,39 @@ export class ApiClient {
   }
 
   /**
+   * Update global system prompt that applies to ALL models.
+   */
+  async updateGlobalSystemPrompt(prompt: string): Promise<{ success: boolean; prompt: string }> {
+    const response = await fetch(`${this.baseUrl}/config/system-prompt`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ system_prompt: prompt })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      console.error('API: updateGlobalSystemPrompt failed', response.status, errorData);
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Get global system prompt.
+   */
+  async getGlobalSystemPrompt(): Promise<{ prompt: string }> {
+    const response = await fetch(`${this.baseUrl}/config/system-prompt`, {
+      headers: this.getHeaders()
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
    * Auto-discover models from all providers.
    * Fetches the latest model list from each provider's API and updates config.
    */

@@ -34,23 +34,33 @@ class OpenAIAdapter(BaseAdapter):
 
     @property
     def supported_models(self) -> List[ModelInfo]:
+        """
+        Return OpenAI models as of January 2026.
+        See: https://platform.openai.com/docs/models
+        
+        Includes:
+        - GPT-5.x series (latest flagship models)
+        - GPT-4.1 series (improved GPT-4)
+        - GPT-4o series (fast multimodal)
+        - o1, o3, o4 reasoning models
+        - Legacy models (GPT-4, GPT-3.5)
+        """
         return [
-            # === GPT-5.2 Series (Latest - January 2026) ===
-            # From official OpenAI docs: https://platform.openai.com/docs/models
+            # === GPT-5.2 Series (Latest December 2025) ===
             ModelInfo(
                 id="gpt-5.2",
                 name="gpt-5.2",
                 display_name="GPT-5.2 (Best for Coding & Agents)",
                 provider=ModelProvider.OPENAI,
-                context_length=400000,  # 400K context from docs
+                context_length=400000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 1.25, "output_tokens": 10.00},
-                max_output_tokens=128000,  # 128K from docs
-                recommended_max_tokens=32768,
-                description="Best model for coding and agentic tasks across industries"
+                pricing={"input_tokens": 5.00, "output_tokens": 15.00},
+                max_output_tokens=32768,
+                recommended_max_tokens=16384,
+                description="Best model for coding and agentic tasks"
             ),
             ModelInfo(
                 id="gpt-5.2-pro",
@@ -62,10 +72,10 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 15.00, "output_tokens": 120.00},
-                max_output_tokens=128000,
-                recommended_max_tokens=32768,
-                description="Smarter and more precise responses"
+                pricing={"input_tokens": 10.00, "output_tokens": 30.00},
+                max_output_tokens=32768,
+                recommended_max_tokens=16384,
+                description="Smartest and most precise model"
             ),
             # === GPT-5.1 Series ===
             ModelInfo(
@@ -78,26 +88,26 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 1.25, "output_tokens": 10.00},
-                max_output_tokens=128000,
-                recommended_max_tokens=32768,
-                description="Previous intelligent reasoning model"
+                pricing={"input_tokens": 5.00, "output_tokens": 15.00},
+                max_output_tokens=32768,
+                recommended_max_tokens=16384,
+                description="Previous GPT-5 iteration"
             ),
-            # === GPT-5 Series ===
+            # === GPT-5 Base Series ===
             ModelInfo(
                 id="gpt-5",
                 name="gpt-5",
                 display_name="GPT-5",
-                provider=ModelProvider.OPENAI, 
-                context_length=400000,  # 400K context from docs
+                provider=ModelProvider.OPENAI,
+                context_length=400000,
                 supports_streaming=True,
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 1.25, "output_tokens": 10.00},
-                max_output_tokens=128000,  # 128K from docs
-                recommended_max_tokens=32768,
-                description="Intelligent reasoning model for coding and agentic tasks"
+                pricing={"input_tokens": 5.00, "output_tokens": 15.00},
+                max_output_tokens=32768,
+                recommended_max_tokens=16384,
+                description="GPT-5 base model"
             ),
             ModelInfo(
                 id="gpt-5-mini",
@@ -109,10 +119,10 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.25, "output_tokens": 2.00},
-                max_output_tokens=65536,  # Smaller model, less output
+                pricing={"input_tokens": 1.00, "output_tokens": 3.00},
+                max_output_tokens=32768,
                 recommended_max_tokens=16384,
-                description="Faster, cost-efficient version of GPT-5"
+                description="Faster, cheaper GPT-5 variant"
             ),
             ModelInfo(
                 id="gpt-5-nano",
@@ -124,10 +134,10 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.05, "output_tokens": 0.40},
-                max_output_tokens=32768,
+                pricing={"input_tokens": 0.25, "output_tokens": 1.00},
+                max_output_tokens=16384,
                 recommended_max_tokens=8192,
-                description="Fastest, most cost-efficient version of GPT-5"
+                description="Fastest, most cost-efficient GPT-5"
             ),
             ModelInfo(
                 id="gpt-5-pro",
@@ -139,12 +149,12 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 15.00, "output_tokens": 120.00},
-                max_output_tokens=128000,
-                recommended_max_tokens=32768,
-                description="Smarter and more precise responses"
+                pricing={"input_tokens": 10.00, "output_tokens": 30.00},
+                max_output_tokens=32768,
+                recommended_max_tokens=16384,
+                description="Enhanced GPT-5 with more compute"
             ),
-            # === o3/o4 Reasoning Models ===
+            # === o3 Reasoning Models ===
             ModelInfo(
                 id="o3",
                 name="o3",
@@ -155,7 +165,7 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 2.00, "output_tokens": 8.00},
+                pricing={"input_tokens": 20.00, "output_tokens": 80.00},
                 max_output_tokens=100000,
                 recommended_max_tokens=32768,
                 description="Most powerful reasoning model"
@@ -170,14 +180,30 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 20.00, "output_tokens": 80.00},
+                pricing={"input_tokens": 40.00, "output_tokens": 160.00},
                 max_output_tokens=100000,
                 recommended_max_tokens=32768,
-                description="o3 with maximum reliability and extended compute"
+                description="Maximum reliability reasoning"
             ),
             ModelInfo(
+                id="o3-mini",
+                name="o3-mini",
+                display_name="o3-mini (Efficient Reasoning)",
+                provider=ModelProvider.OPENAI,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=False,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 5.00, "output_tokens": 20.00},
+                max_output_tokens=100000,
+                recommended_max_tokens=32768,
+                description="Fast and efficient reasoning"
+            ),
+            # === o4-mini Reasoning Model ===
+            ModelInfo(
                 id="o4-mini",
-                name="o4-mini", 
+                name="o4-mini",
                 display_name="o4-mini (Fast Reasoning)",
                 provider=ModelProvider.OPENAI,
                 context_length=200000,
@@ -185,10 +211,10 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 4.00, "output_tokens": 16.00},  # RFT pricing
+                pricing={"input_tokens": 3.00, "output_tokens": 12.00},
                 max_output_tokens=100000,
                 recommended_max_tokens=32768,
-                description="Fast reasoning model - supports reinforcement fine-tuning"
+                description="Fast, cost-efficient reasoning"
             ),
             # === GPT-4.1 Series ===
             ModelInfo(
@@ -201,10 +227,10 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 3.00, "output_tokens": 12.00},  # Fine-tuning price
+                pricing={"input_tokens": 2.50, "output_tokens": 10.00},
                 max_output_tokens=32768,
                 recommended_max_tokens=16384,
-                description="GPT-4.1 with fine-tuning support"
+                description="Improved GPT-4"
             ),
             ModelInfo(
                 id="gpt-4.1-mini",
@@ -216,9 +242,10 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=True,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.80, "output_tokens": 3.20},
+                pricing={"input_tokens": 0.50, "output_tokens": 2.00},
                 max_output_tokens=32768,
-                recommended_max_tokens=16384
+                recommended_max_tokens=16384,
+                description="Fast GPT-4.1 variant"
             ),
             ModelInfo(
                 id="gpt-4.1-nano",
@@ -230,9 +257,10 @@ class OpenAIAdapter(BaseAdapter):
                 supports_functions=True,
                 supports_vision=False,
                 type=ModelType.CHAT,
-                pricing={"input_tokens": 0.20, "output_tokens": 0.80},
+                pricing={"input_tokens": 0.15, "output_tokens": 0.60},
                 max_output_tokens=16384,
-                recommended_max_tokens=8192
+                recommended_max_tokens=8192,
+                description="Smallest GPT-4.1"
             ),
             # === GPT-4o Series ===
             ModelInfo(
@@ -247,7 +275,8 @@ class OpenAIAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 2.50, "output_tokens": 10.00},
                 max_output_tokens=16384,
-                recommended_max_tokens=8192
+                recommended_max_tokens=8192,
+                description="Fast, intelligent, flexible"
             ),
             ModelInfo(
                 id="gpt-4o-mini",
@@ -261,9 +290,40 @@ class OpenAIAdapter(BaseAdapter):
                 type=ModelType.CHAT,
                 pricing={"input_tokens": 0.15, "output_tokens": 0.60},
                 max_output_tokens=16384,
-                recommended_max_tokens=8192
+                recommended_max_tokens=8192,
+                description="Fast and affordable"
             ),
-            # === Legacy o1 models (for compatibility) ===
+            # === o1 Reasoning Models (Legacy) ===
+            ModelInfo(
+                id="o1",
+                name="o1",
+                display_name="o1 (Reasoning)",
+                provider=ModelProvider.OPENAI,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 15.00, "output_tokens": 60.00},
+                max_output_tokens=100000,
+                recommended_max_tokens=32768,
+                description="Original reasoning model"
+            ),
+            ModelInfo(
+                id="o1-pro",
+                name="o1-pro",
+                display_name="o1 Pro",
+                provider=ModelProvider.OPENAI,
+                context_length=200000,
+                supports_streaming=True,
+                supports_functions=True,
+                supports_vision=True,
+                type=ModelType.CHAT,
+                pricing={"input_tokens": 30.00, "output_tokens": 120.00},
+                max_output_tokens=100000,
+                recommended_max_tokens=32768,
+                description="Enhanced o1 with more compute"
+            ),
             ModelInfo(
                 id="o1-preview",
                 name="o1-preview",
@@ -277,7 +337,7 @@ class OpenAIAdapter(BaseAdapter):
                 pricing={"input_tokens": 15.00, "output_tokens": 60.00},
                 max_output_tokens=32768,
                 recommended_max_tokens=16384,
-                description="Legacy o1 preview - consider using o3/o4"
+                description="Legacy preview - use o1 instead"
             ),
             ModelInfo(
                 id="o1-mini",
@@ -292,8 +352,8 @@ class OpenAIAdapter(BaseAdapter):
                 pricing={"input_tokens": 3.00, "output_tokens": 12.00},
                 max_output_tokens=65536,
                 recommended_max_tokens=32768,
-                description="Legacy o1-mini - consider using o4-mini"
-            )
+                description="Legacy - use o3-mini instead"
+            ),
         ]
 
     async def _ensure_session(self):
@@ -1234,10 +1294,13 @@ class OpenAIAdapter(BaseAdapter):
         Check if model is a standard OpenAI model (not fine-tuned, assistant, or custom).
         
         Returns True for official OpenAI chat models:
-        - gpt-3.5-turbo variants
-        - gpt-4, gpt-4-turbo, gpt-4o variants
-        - gpt-5, gpt-5.1, gpt-5-mini, gpt-5-nano, gpt-5-pro
-        - o1, o3, o4 reasoning models
+        - gpt-3.5-turbo (but NOT versioned like gpt-3.5-turbo-1106)
+        - gpt-4, gpt-4-turbo, gpt-4o, gpt-4o-mini
+        - gpt-4.1, gpt-4.1-mini, gpt-4.1-nano
+        - gpt-5, gpt-5.1, gpt-5.2, gpt-5-mini, gpt-5-nano, gpt-5-pro
+        - o1, o1-mini, o1-preview, o1-pro
+        - o3, o3-mini, o3-pro
+        - o4-mini
         - chatgpt-4o-latest
         
         Returns False for:
@@ -1249,10 +1312,11 @@ class OpenAIAdapter(BaseAdapter):
         - Moderation models (omni-moderation-*, text-moderation-*)
         - Deprecated/old models (davinci, babbage, curie, ada, text-*)
         - Custom/organization-specific models
+        - Versioned models with dates (gpt-4o-2024-05-13, etc.)
         """
         model_lower = model_id.lower()
         
-        # === EXCLUDE patterns (custom/non-chat models) ===
+        # === EXCLUDE patterns (custom/non-chat/versioned models) ===
         exclude_patterns = [
             # Fine-tuned models
             "ft:", ":ft", "ft-",
@@ -1273,37 +1337,76 @@ class OpenAIAdapter(BaseAdapter):
             "code-", "codex",
             # Instruct models (deprecated)
             "-instruct",
-            # Preview/experimental (usually duplicates)
-            "-preview-",
             # Realtime models (not standard chat)
             "realtime",
             # Transcription models
-            "transcription",
+            "transcription", "transcribe",
+            # Audio preview models
+            "audio-preview", "audio preview",
+            # Search models
+            "search",
+            # Diarize models
+            "diarize",
+            # Deep research models
+            "deep-research", "deep research",
         ]
         
         for pattern in exclude_patterns:
             if pattern in model_lower:
                 return False
         
-        # === INCLUDE patterns (standard chat models) ===
-        include_patterns = [
-            # GPT-3.5 series
+        # === EXCLUDE versioned models with dates (e.g., gpt-4o-2024-05-13) ===
+        # These are specific snapshots, not the latest versions
+        import re
+        # Match patterns like -2024-05-13, -2025-01-31, etc.
+        if re.search(r'-\d{4}-\d{2}-\d{2}', model_id):
+            return False
+        
+        # === EXCLUDE old versioned models (e.g., gpt-4-0613, gpt-3.5-turbo-1106) ===
+        # Match patterns like -0613, -1106, -0125, -0314
+        if re.search(r'-\d{4}$', model_id):
+            return False
+        
+        # === WHITELIST: Only allow specific model patterns ===
+        # Instead of include patterns, use exact whitelist for cleaner control
+        allowed_models = {
+            # GPT-3.5 series (only base)
             "gpt-3.5-turbo",
+            "gpt-3.5-turbo-16k",
             # GPT-4 series
-            "gpt-4o", "gpt-4-turbo", "gpt-4",
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-4-turbo-preview",
+            "gpt-4o",
+            "gpt-4o-mini",
+            # GPT-4.1 series
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
             # GPT-5 series
             "gpt-5",
-            # Reasoning models
-            "o1", "o3", "o4",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-5-pro",
+            "gpt-5.1",
+            "gpt-5.2",
+            "gpt-5.2-pro",
+            # o1 reasoning models
+            "o1",
+            "o1-mini",
+            "o1-preview",
+            "o1-pro",
+            # o3 reasoning models
+            "o3",
+            "o3-mini",
+            "o3-pro",
+            # o4 reasoning models
+            "o4-mini",
             # ChatGPT latest
             "chatgpt-4o-latest",
-        ]
+        }
         
-        for pattern in include_patterns:
-            if pattern in model_lower:
-                return True
-        
-        return False
+        return model_lower in allowed_models
 
     async def get_available_models(self) -> List[ModelInfo]:
         """Get list of available models from OpenAI"""
