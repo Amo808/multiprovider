@@ -1197,6 +1197,82 @@ class OpenAIAdapter(BaseAdapter):
         
         return round(input_cost + output_cost, 6)
 
+    def _is_standard_openai_model(self, model_id: str) -> bool:
+        """
+        Check if model is a standard OpenAI model (not fine-tuned, assistant, or custom).
+        
+        Returns True for official OpenAI chat models:
+        - gpt-3.5-turbo variants
+        - gpt-4, gpt-4-turbo, gpt-4o variants
+        - gpt-5, gpt-5.1, gpt-5-mini, gpt-5-nano, gpt-5-pro
+        - o1, o3, o4 reasoning models
+        - chatgpt-4o-latest
+        
+        Returns False for:
+        - Fine-tuned models (ft:*, *:ft-*, :ft)
+        - Assistant models (asst_*)
+        - Embedding models (text-embedding-*)
+        - Audio/TTS models (tts-*, whisper-*)
+        - Image models (dall-e-*)
+        - Moderation models (omni-moderation-*, text-moderation-*)
+        - Deprecated/old models (davinci, babbage, curie, ada, text-*)
+        - Custom/organization-specific models
+        """
+        model_lower = model_id.lower()
+        
+        # === EXCLUDE patterns (custom/non-chat models) ===
+        exclude_patterns = [
+            # Fine-tuned models
+            "ft:", ":ft", "ft-",
+            # Assistant models
+            "asst_",
+            # Embedding models
+            "text-embedding", "embedding",
+            # Audio/TTS models
+            "tts-", "whisper",
+            # Image generation
+            "dall-e",
+            # Moderation
+            "moderation",
+            # Old completion models (not chat)
+            "davinci", "babbage", "curie", "ada",
+            "text-davinci", "text-curie", "text-babbage", "text-ada",
+            # Codex (deprecated)
+            "code-", "codex",
+            # Instruct models (deprecated)
+            "-instruct",
+            # Preview/experimental (usually duplicates)
+            "-preview-",
+            # Realtime models (not standard chat)
+            "realtime",
+            # Transcription models
+            "transcription",
+        ]
+        
+        for pattern in exclude_patterns:
+            if pattern in model_lower:
+                return False
+        
+        # === INCLUDE patterns (standard chat models) ===
+        include_patterns = [
+            # GPT-3.5 series
+            "gpt-3.5-turbo",
+            # GPT-4 series
+            "gpt-4o", "gpt-4-turbo", "gpt-4",
+            # GPT-5 series
+            "gpt-5",
+            # Reasoning models
+            "o1", "o3", "o4",
+            # ChatGPT latest
+            "chatgpt-4o-latest",
+        ]
+        
+        for pattern in include_patterns:
+            if pattern in model_lower:
+                return True
+        
+        return False
+
     async def get_available_models(self) -> List[ModelInfo]:
         """Get list of available models from OpenAI"""
         await self._ensure_session()
@@ -1216,25 +1292,33 @@ class OpenAIAdapter(BaseAdapter):
                     for model_data in models_data:
                         model_id = model_data.get("id", "")
                         api_model_ids.add(model_id)
+                        
                         # Skip if already in static models (static has better metadata)
                         if model_id in static_models:
                             continue
-                        if "gpt" in model_id.lower() and not model_id.endswith(":ft"):
-                            static_models[model_id] = ModelInfo(
-                                id=model_id,
-                                name=model_id,
-                                display_name=model_id.upper().replace("-", " "),
-                                provider=ModelProvider.OPENAI,
-                                context_length=self._get_context_length(model_id),
-                                supports_streaming=True,
-                                supports_functions="gpt-3.5" in model_id or "gpt-4" in model_id,
-                                supports_vision="gpt-4" in model_id and "vision" in model_id.lower(),
-                                type=ModelType.CHAT
-                            )
+                        
+                        # Filter out custom/non-standard models
+                        if not self._is_standard_openai_model(model_id):
+                            self.logger.debug(f"Skipping non-standard model: {model_id}")
+                            continue
+                        
+                        # Add standard model from API
+                        static_models[model_id] = ModelInfo(
+                            id=model_id,
+                            name=model_id,
+                            display_name=self._format_model_display_name(model_id),
+                            provider=ModelProvider.OPENAI,
+                            context_length=self._get_context_length(model_id),
+                            supports_streaming=True,
+                            supports_functions="gpt-3.5" in model_id or "gpt-4" in model_id or "gpt-5" in model_id or model_id.startswith("o"),
+                            supports_vision="gpt-4o" in model_id or "gpt-4-turbo" in model_id or "gpt-5" in model_id,
+                            type=ModelType.CHAT
+                        )
                     
                     # Cache the models for sync access
                     result = list(static_models.values())
                     self._models = result
+                    self.logger.info(f"Loaded {len(result)} OpenAI models (filtered from {len(models_data)} API models)")
                     return result
                 elif response.status == 401:
                     raise Exception("API key is invalid or missing")
@@ -1247,14 +1331,61 @@ class OpenAIAdapter(BaseAdapter):
             # Return static models on error
             return list(static_models.values())
 
+    def _format_model_display_name(self, model_id: str) -> str:
+        """Format model ID into a readable display name"""
+        # Special formatting for known models
+        display_mappings = {
+            "gpt-3.5-turbo": "GPT-3.5 Turbo",
+            "gpt-4": "GPT-4",
+            "gpt-4-turbo": "GPT-4 Turbo",
+            "gpt-4o": "GPT-4o",
+            "gpt-4o-mini": "GPT-4o Mini",
+            "chatgpt-4o-latest": "ChatGPT-4o (Latest)",
+        }
+        
+        if model_id in display_mappings:
+            return display_mappings[model_id]
+        
+        # Generic formatting: capitalize and clean up
+        name = model_id.replace("-", " ").replace("_", " ")
+        # Capitalize first letter of each word, but keep version numbers
+        parts = name.split()
+        formatted_parts = []
+        for part in parts:
+            if part.lower() in ["gpt", "turbo", "mini", "nano", "pro", "latest"]:
+                formatted_parts.append(part.capitalize())
+            elif part.lower().startswith("gpt"):
+                formatted_parts.append(part.upper())
+            else:
+                formatted_parts.append(part)
+        
+        return " ".join(formatted_parts)
+
     def _get_context_length(self, model_id: str) -> int:
         """Get context length for OpenAI models"""
-        if "gpt-4o" in model_id or "gpt-4-turbo" in model_id:
+        model_lower = model_id.lower()
+        
+        # GPT-5 series - 256K context
+        if "gpt-5" in model_lower:
+            return 256000
+        # o3/o4 reasoning models - 200K context
+        elif model_lower.startswith("o3") or model_lower.startswith("o4"):
+            return 200000
+        # o1 reasoning models - 128K context
+        elif model_lower.startswith("o1"):
             return 128000
-        elif "gpt-4" in model_id:
+        # GPT-4o and GPT-4 Turbo - 128K context
+        elif "gpt-4o" in model_lower or "gpt-4-turbo" in model_lower:
+            return 128000
+        # ChatGPT-4o - 128K context
+        elif "chatgpt-4o" in model_lower:
+            return 128000
+        # Base GPT-4 - 8K context
+        elif "gpt-4" in model_lower:
             return 8192
-        elif "gpt-3.5-turbo" in model_id:
-            if "16k" in model_id:
+        # GPT-3.5 Turbo
+        elif "gpt-3.5-turbo" in model_lower:
+            if "16k" in model_lower:
                 return 16384
             return 4096
         else:

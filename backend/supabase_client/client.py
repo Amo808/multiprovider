@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from multiple locations (later files override)
+# This is a fallback for local development - on Render, env vars come from Dashboard
 env_files = [
     Path(__file__).parent.parent.parent / ".env",  # project root/.env
     Path(__file__).parent.parent.parent / ".env.supabase",  # project root/.env.supabase
@@ -21,25 +22,41 @@ for env_file in env_files:
 
 logger = logging.getLogger(__name__)
 
-# Supabase configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
-# Validate configuration
-if not SUPABASE_URL:
-    logger.warning("SUPABASE_URL not set - Supabase features will be disabled")
-if not SUPABASE_ANON_KEY:
-    logger.warning("SUPABASE_ANON_KEY not set - Supabase features will be disabled")
-if not SUPABASE_SERVICE_KEY:
-    logger.warning("SUPABASE_SERVICE_KEY not set - Service client will be unavailable")
+def _get_supabase_url() -> Optional[str]:
+    """Get Supabase URL lazily from environment"""
+    return os.getenv("SUPABASE_URL")
+
+
+def _get_supabase_anon_key() -> Optional[str]:
+    """Get Supabase anon key lazily from environment (supports both names)"""
+    return os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY")
+
+
+def _get_supabase_service_key() -> Optional[str]:
+    """Get Supabase service key lazily from environment"""
+    return os.getenv("SUPABASE_SERVICE_KEY")
 
 _client = None
 _service_client = None
+_config_logged = False
+
 
 def is_supabase_configured() -> bool:
     """Check if Supabase is properly configured"""
-    return bool(SUPABASE_URL and SUPABASE_ANON_KEY)
+    global _config_logged
+    url = _get_supabase_url()
+    key = _get_supabase_anon_key()
+    configured = bool(url and key)
+    
+    # Log config status once
+    if not _config_logged:
+        logger.info(f"[SUPABASE] URL configured: {bool(url)}")
+        logger.info(f"[SUPABASE] ANON_KEY configured: {bool(key)}")
+        logger.info(f"[SUPABASE] SERVICE_KEY configured: {bool(_get_supabase_service_key())}")
+        _config_logged = True
+    
+    return configured
 
 
 def get_supabase_client():
@@ -50,7 +67,9 @@ def get_supabase_client():
             raise ValueError("Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY")
         
         import supabase as supabase_lib
-        _client = supabase_lib.create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        url = _get_supabase_url()
+        key = _get_supabase_anon_key()
+        _client = supabase_lib.create_client(url, key)
         logger.info("Supabase anon client initialized")
     return _client
 
@@ -59,11 +78,13 @@ def get_supabase_service_client():
     """Get Supabase client with service key (bypasses RLS - use carefully!)"""
     global _service_client
     if _service_client is None:
-        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        url = _get_supabase_url()
+        service_key = _get_supabase_service_key()
+        if not url or not service_key:
             raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set for service client")
         
         import supabase as supabase_lib
-        _service_client = supabase_lib.create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        _service_client = supabase_lib.create_client(url, service_key)
         logger.info("Supabase service client initialized")
     return _service_client
 
@@ -74,7 +95,9 @@ def get_authenticated_client(access_token: str):
         raise ValueError("Supabase is not configured")
     
     import supabase as supabase_lib
-    client = supabase_lib.create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    url = _get_supabase_url()
+    key = _get_supabase_anon_key()
+    client = supabase_lib.create_client(url, key)
     client.auth.set_session(access_token, "")
     return client
 

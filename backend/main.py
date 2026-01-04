@@ -12,10 +12,38 @@ import uuid
 from datetime import datetime
 import os
 from dotenv import load_dotenv
-
-# Import our custom modules
-import sys
 from pathlib import Path
+
+# ============================================================================
+# CRITICAL: Load environment variables BEFORE any other imports that might
+# need API keys (like adapters module which creates provider_manager)
+# ============================================================================
+
+# First, load from backend/.env (primary source with real keys)
+backend_env = Path(__file__).parent / ".env"
+if backend_env.exists():
+    load_dotenv(backend_env, override=True)
+    print(f"[ENV] Loaded environment from: {backend_env}")
+
+# Also try project root .env as fallback
+project_root_env = Path(__file__).parent.parent / ".env"
+if project_root_env.exists():
+    load_dotenv(project_root_env, override=False)  # Don't override existing keys
+    print(f"[ENV] Also loaded from: {project_root_env}")
+
+# Log loaded API keys status (without exposing actual keys)
+print(f"[ENV] DEEPSEEK_API_KEY loaded: {bool(os.getenv('DEEPSEEK_API_KEY'))}")
+print(f"[ENV] OPENAI_API_KEY loaded: {bool(os.getenv('OPENAI_API_KEY'))}")
+print(f"[ENV] ANTHROPIC_API_KEY loaded: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
+print(f"[ENV] GEMINI_API_KEY loaded: {bool(os.getenv('GEMINI_API_KEY'))}")
+print(f"[ENV] SUPABASE_URL loaded: {bool(os.getenv('SUPABASE_URL'))}")
+print(f"[ENV] SUPABASE_KEY loaded: {bool(os.getenv('SUPABASE_KEY') or os.getenv('SUPABASE_ANON_KEY'))}")
+
+# ============================================================================
+# Now import our custom modules (they will have access to env variables)
+# ============================================================================
+
+import sys
 # Ensure backend directory itself is on sys.path for direct module imports when running via `py -m uvicorn backend.main:app`
 backend_dir = Path(__file__).parent
 if str(backend_dir) not in sys.path:
@@ -85,29 +113,6 @@ else:
         f"[DEV-AUTH] Bypass DISABLED | DEV_MODE_FLAG={DEV_MODE_FLAG} LOCAL_ENV={LOCAL_ENV} FORCE_DEV_AUTH={FORCE_DEV_AUTH} PRODUCTION_DEV_MODE={PRODUCTION_DEV_MODE} FORCE_PRODUCTION_DEV={FORCE_PRODUCTION_DEV}"
     )
 # ----------------------------------------------------------------------------
-
-# Load environment variables from .env files
-from pathlib import Path
-
-# First, load from backend/.env (primary source with real keys)
-backend_env = Path(__file__).parent / ".env"
-if backend_env.exists():
-    load_dotenv(backend_env, override=True)
-    print(f"[ENV] Loaded environment from: {backend_env}")
-
-# Also try project root .env as fallback
-project_root = Path(__file__).parent.parent
-env_path = project_root / ".env"
-if env_path.exists():
-    load_dotenv(env_path, override=False)  # Don't override existing keys
-    print(f"[ENV] Also loaded from: {env_path}")
-
-# Log loaded API keys status (without exposing actual keys)
-import os
-print(f"[ENV] DEEPSEEK_API_KEY loaded: {bool(os.getenv('DEEPSEEK_API_KEY'))}")
-print(f"[ENV] OPENAI_API_KEY loaded: {bool(os.getenv('OPENAI_API_KEY'))}")
-print(f"[ENV] ANTHROPIC_API_KEY loaded: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
-print(f"[ENV] GEMINI_API_KEY loaded: {bool(os.getenv('GEMINI_API_KEY'))}")
 
 # Configure logging
 logging.basicConfig(
