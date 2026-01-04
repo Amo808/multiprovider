@@ -49,8 +49,8 @@ def get_supabase_client():
         if not is_supabase_configured():
             raise ValueError("Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY")
         
-        from supabase import create_client
-        _client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        import supabase as supabase_lib
+        _client = supabase_lib.create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
         logger.info("Supabase anon client initialized")
     return _client
 
@@ -62,8 +62,8 @@ def get_supabase_service_client():
         if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
             raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set for service client")
         
-        from supabase import create_client
-        _service_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        import supabase as supabase_lib
+        _service_client = supabase_lib.create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         logger.info("Supabase service client initialized")
     return _service_client
 
@@ -73,8 +73,8 @@ def get_authenticated_client(access_token: str):
     if not is_supabase_configured():
         raise ValueError("Supabase is not configured")
     
-    from supabase import create_client
-    client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    import supabase as supabase_lib
+    client = supabase_lib.create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
     client.auth.set_session(access_token, "")
     return client
 

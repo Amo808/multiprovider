@@ -312,6 +312,8 @@ class OpenAIAdapter(BaseAdapter):
         # Check if this is a reasoning model (o1, o3, o4 series)
         is_reasoning_model = any(model.startswith(prefix) for prefix in ['o1', 'o3', 'o4'])
         is_gpt5 = model.startswith('gpt-5')
+        # GPT-5 Pro with reasoning_effort is also a reasoning model
+        is_gpt5_reasoning = is_gpt5 and params.reasoning_effort in ["minimal", "medium", "high"]
         
         # Validate and clamp max_tokens based on model
         max_tokens = params.max_tokens
@@ -375,15 +377,18 @@ class OpenAIAdapter(BaseAdapter):
         
         # WARNING for reasoning effort
         if params.reasoning_effort in ["medium", "high"]:
+            effort_desc = "deep" if params.reasoning_effort == "high" else "moderate"
             yield ChatResponse(
                 content="",
+                reasoning_content=f"🧠 GPT-5 Pro {effort_desc} reasoning mode\n\n⚠️ OpenAI не транслирует мысли GPT-5 в реальном времени.\nМодель думает внутри себя и выдаст улучшенный ответ.\n\nДля просмотра реальных мыслей используйте Claude (Anthropic) с Extended Thinking.\n",
                 done=False,
                 meta={
                     "provider": ModelProvider.OPENAI,
                     "model": model,
-                    "reasoning_effort": params.reasoning_effort
+                    "reasoning_effort": params.reasoning_effort,
+                    "is_thinking": True
                 },
-                stage_message=f"Reasoning effort: {params.reasoning_effort}. OpenAI may take 3-5 minutes and sometimes times out. Please be patient..."
+                stage_message=f"🧠 GPT-5 Pro {effort_desc} reasoning - мысли не транслируются, только улучшенный результат"
             )
 
         payload = {
@@ -550,6 +555,7 @@ class OpenAIAdapter(BaseAdapter):
         self.logger.info(f"[OPENAI] About to enter try block for HTTP request...")
 
         accumulated_content = ""
+        accumulated_reasoning = ""  # For GPT-5 reasoning/thinking content
         output_tokens = 0
         collected_tool_calls = []  # For responses endpoint tool calls
         current_partial_calls = {}  # call_id -> accumulating input
@@ -771,27 +777,31 @@ class OpenAIAdapter(BaseAdapter):
                         
                         if silence_duration < 60:
                             if is_high_reasoning:
-                                message = f"GPT-5 reasoning... ({silence_duration:.0f}s since last token)"
+                                message = f"🧠 GPT-5 reasoning... ({silence_duration:.0f}s)"
                             else:
                                 message = f"Processing... ({silence_duration:.0f}s since last token)"
                         elif silence_duration < 300:  # 5 minutes
                             if is_high_reasoning:
-                                message = f"GPT-5 deep reasoning... ({silence_duration:.0f}s since last token) - High reasoning effort can take many minutes"
+                                message = f"🧠 GPT-5 deep reasoning... ({silence_duration:.0f}s) - analyzing problem thoroughly"
                             else:
                                 message = f"Still processing... ({silence_duration:.0f}s since last token) - OpenAI reasoning can take 5-15 minutes"
                         elif silence_duration < 900:  # 15 minutes
                             if is_high_reasoning:
-                                message = f"GPT-5 complex reasoning... ({silence_duration:.0f}s since last token) - High effort reasoning can be very thorough"
+                                message = f"🧠 GPT-5 complex reasoning... ({silence_duration:.0f}s) - considering multiple approaches"
                             else:
                                 message = f"Long processing... ({silence_duration:.0f}s since last token) - This is taking longer than usual but we're waiting"
                         else:  # 15+ minutes
                             if is_high_reasoning:
-                                message = f"GPT-5 extensive reasoning... ({silence_duration:.0f}s since last token) - Waiting as long as needed"
+                                message = f"🧠 GPT-5 extensive reasoning... ({silence_duration:.0f}s) - building comprehensive response"
                             else:
                                 message = f"Very long processing... ({silence_duration:.0f}s since last token) - We will wait as long as OpenAI needs"
                         
+                        # Don't send repeated "Analyzing..." to reasoning_content - it clutters the panel
+                        # Just send stage_message for status updates
+                        
                         yield ChatResponse(
                             content="",
+                            reasoning_content=None,  # Don't add more to reasoning panel
                             done=False,
                             heartbeat="Processing... connection active",
                             meta={
@@ -799,7 +809,8 @@ class OpenAIAdapter(BaseAdapter):
                                 "model": model,
                                 "elapsed_time": elapsed,
                                 "timestamp": current_time,
-                                "consecutive_timeouts": consecutive_timeouts
+                                "consecutive_timeouts": consecutive_timeouts,
+                                "is_thinking": is_high_reasoning
                             },
                             stage_message=message
                         )
@@ -861,6 +872,18 @@ class OpenAIAdapter(BaseAdapter):
                         if uses_responses_endpoint:
                             event_type = json_data.get("type")
                             content_segments: List[str] = []
+                            reasoning_segments: List[str] = []
+                            
+                            # Handle reasoning/thinking events for GPT-5 Pro
+                            if event_type in {"response.reasoning.delta", "response.reasoning_summary.delta", 
+                                             "response.thinking.delta", "response.output_reasoning.delta"}:
+                                delta_value = json_data.get("delta")
+                                if isinstance(delta_value, str):
+                                    reasoning_segments.append(delta_value)
+                                elif isinstance(delta_value, dict):
+                                    text = delta_value.get("text") or delta_value.get("content")
+                                    if text:
+                                        reasoning_segments.append(text)
                             
                             if event_type in {"response.output_text.delta", "response.output_text.delta.v1"}:
                                 delta_value = json_data.get("delta")
@@ -881,6 +904,26 @@ class OpenAIAdapter(BaseAdapter):
                                             content_segments.append(segment)
                             elif event_type == "response.output_text.done":
                                 pass
+                            
+                            # Process reasoning/thinking segments for GPT-5 Pro
+                            for reasoning_text in reasoning_segments:
+                                accumulated_reasoning += reasoning_text
+                                self.logger.debug(f"[GPT-5] Reasoning chunk: {reasoning_text[:50]}...")
+                                yield ChatResponse(
+                                    content="",
+                                    reasoning_content=reasoning_text,
+                                    id=json_data.get("response_id") or json_data.get("id"),
+                                    done=False,
+                                    meta={
+                                        "tokens_in": input_tokens,
+                                        "tokens_out": output_tokens,
+                                        "is_thinking": True,
+                                        "provider": ModelProvider.OPENAI,
+                                        "model": model,
+                                        "reasoning": True,
+                                        "status": "reasoning"
+                                    }
+                                )
                             
                             for content in content_segments:
                                 if is_gpt5 and first_content_chunk:
@@ -965,6 +1008,15 @@ class OpenAIAdapter(BaseAdapter):
                                 usage_payload = json_data.get("usage") or json_data.get("response", {}).get("usage")
                                 if usage_payload:
                                     response_usage = usage_payload
+                                # Check for reasoning_summary in completed response
+                                response_data = json_data.get("response", {})
+                                reasoning_summary = response_data.get("reasoning_summary") or response_data.get("reasoning") or json_data.get("reasoning_summary")
+                                if reasoning_summary and not accumulated_reasoning:
+                                    if isinstance(reasoning_summary, str):
+                                        accumulated_reasoning = reasoning_summary
+                                    elif isinstance(reasoning_summary, dict):
+                                        accumulated_reasoning = reasoning_summary.get("summary") or reasoning_summary.get("content") or str(reasoning_summary)
+                                    self.logger.info(f"[GPT-5] Got reasoning_summary: {accumulated_reasoning[:100]}...")
                                 stream_finished = True
                                 break
                             
@@ -987,6 +1039,16 @@ class OpenAIAdapter(BaseAdapter):
                                     meta={"provider": ModelProvider.OPENAI, "model": model}
                                 )
                                 return
+                            
+                            # Log unknown event types for debugging GPT-5 reasoning
+                            if event_type and "reasoning" in event_type.lower():
+                                self.logger.info(f"[GPT-5] Unknown reasoning event: {event_type} - data: {json_data}")
+                            elif event_type and event_type.startswith("response.") and event_type not in {
+                                "response.created", "response.in_progress", "response.output_item.added",
+                                "response.content_part.added", "response.content_part.done",
+                                "response.output_item.done"
+                            }:
+                                self.logger.debug(f"[GPT-5] Event type: {event_type}")
                             
                             continue
                         
@@ -1104,7 +1166,14 @@ class OpenAIAdapter(BaseAdapter):
             final_meta["tool_calls"] = collected_tool_calls
         if is_gpt5:
             final_meta["openai_completion"] = True
-        yield ChatResponse(content="", done=True, meta=final_meta)
+        if accumulated_reasoning:
+            final_meta["reasoning_tokens"] = self.estimate_tokens(accumulated_reasoning)
+        yield ChatResponse(
+            content="", 
+            reasoning_content=accumulated_reasoning if accumulated_reasoning else None,
+            done=True, 
+            meta=final_meta
+        )
 
     def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
         """Calculate estimated cost based on model pricing"""
@@ -1132,6 +1201,9 @@ class OpenAIAdapter(BaseAdapter):
         """Get list of available models from OpenAI"""
         await self._ensure_session()
         
+        # Start with static/premium models that may not be in API list
+        static_models = {m.id: m for m in self.supported_models}
+        
         try:
             url = f"{self.base_url}/models"
             async with self.session.get(url) as response:
@@ -1140,11 +1212,15 @@ class OpenAIAdapter(BaseAdapter):
                     models_data = data.get("data", [])
                     
                     # Convert API models to ModelInfo format
-                    models = []
+                    api_model_ids = set()
                     for model_data in models_data:
                         model_id = model_data.get("id", "")
+                        api_model_ids.add(model_id)
+                        # Skip if already in static models (static has better metadata)
+                        if model_id in static_models:
+                            continue
                         if "gpt" in model_id.lower() and not model_id.endswith(":ft"):
-                            models.append(ModelInfo(
+                            static_models[model_id] = ModelInfo(
                                 id=model_id,
                                 name=model_id,
                                 display_name=model_id.upper().replace("-", " "),
@@ -1154,9 +1230,12 @@ class OpenAIAdapter(BaseAdapter):
                                 supports_functions="gpt-3.5" in model_id or "gpt-4" in model_id,
                                 supports_vision="gpt-4" in model_id and "vision" in model_id.lower(),
                                 type=ModelType.CHAT
-                            ))
+                            )
                     
-                    return models if models else self.supported_models
+                    # Cache the models for sync access
+                    result = list(static_models.values())
+                    self._models = result
+                    return result
                 elif response.status == 401:
                     raise Exception("API key is invalid or missing")
                 elif response.status == 403:
@@ -1165,8 +1244,8 @@ class OpenAIAdapter(BaseAdapter):
                     raise Exception(f"Failed to fetch models: HTTP {response.status}")
         except Exception as e:
             self.logger.error(f"Error fetching models: {e}")
-            # Don't return fallback models on error - let validation know we failed
-            raise e
+            # Return static models on error
+            return list(static_models.values())
 
     def _get_context_length(self, model_id: str) -> int:
         """Get context length for OpenAI models"""

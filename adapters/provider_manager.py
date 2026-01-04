@@ -531,12 +531,16 @@ class ProviderManager:
         return self.registry.get_all_models()
 
     def get_models_by_provider(self, provider_id: Union[str, ModelProvider]) -> List[ModelInfo]:
-        """Get models from specific provider"""
+        """Get models from specific provider (combines static and cached dynamic models)"""
         if isinstance(provider_id, str):
             provider_id = ModelProvider(provider_id)
             
         adapter = self.registry.get(provider_id)
-        return adapter.supported_models if adapter else []
+        if not adapter:
+            return []
+        
+        # Use get_available_models_sync() which returns cached models or static models
+        return adapter.get_available_models_sync()
 
     def get_enabled_providers(self) -> List[ProviderStatus]:
         """Get all enabled providers with their status"""

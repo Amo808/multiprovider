@@ -145,6 +145,16 @@ class BaseAdapter(ABC):
         """Fetch available models from provider"""
         pass
     
+    def get_available_models_sync(self) -> List[ModelInfo]:
+        """
+        Get available models synchronously.
+        Returns cached dynamic models if available, otherwise just static supported_models.
+        Use this method when you need models outside of async context.
+        """
+        if self._models:
+            return self._models
+        return self.supported_models
+    
     async def validate_connection(self) -> tuple[bool, Optional[str]]:
         """Validate connection to provider"""
         try:
@@ -246,11 +256,11 @@ class ProviderRegistry:
         return results
     
     def get_all_models(self) -> List[ModelInfo]:
-        """Get all models from all providers"""
+        """Get all models from all providers (combines static and cached dynamic models)"""
         all_models = []
         for adapter in self._providers.values():
             if adapter.config.enabled:
-                all_models.extend(adapter.supported_models)
+                all_models.extend(adapter.get_available_models_sync())
         return all_models
 
 # Global registry instance

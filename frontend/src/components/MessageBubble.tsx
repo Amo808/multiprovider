@@ -336,14 +336,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
   const handleCopy = async () => {
     const content = isStreaming ? currentResponse : message.content;
-    await navigator.clipboard.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (content) {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const displayContent = isStreaming ? currentResponse : message.content;
   const isUser = message.role === 'user';
   const isError = message.content?.startsWith('Error:') ?? false;
+  // Allow copy for errors and any message with content
+  const canCopy = !!(message.content || displayContent);
   
   // Check for reasoning content from various sources - prioritize thinkingContent (live streaming)
   // then fall back to message.meta values
@@ -516,7 +520,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           </div>
 
           {/* Copy button */}
-          {displayContent && !isStreaming && (
+          {canCopy && !isStreaming && (
             <button
               onClick={handleCopy}
               className={cn(

@@ -784,6 +784,8 @@ class GeminiAdapter(BaseAdapter):
 
     async def get_available_models(self) -> List[ModelInfo]:
         """Get list of available models from Gemini"""
+        # Cache for sync access
+        self._models = self.supported_models
         return self.supported_models
 
     def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:

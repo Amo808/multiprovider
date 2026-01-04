@@ -1,5 +1,6 @@
 // Core Components
 export { ChatInterface } from './ChatInterface';
+export { DraggableMessageList } from './DraggableMessageList';
 export { GenerationSettings } from './GenerationSettings';
 export { ProviderManager } from './ProviderManager';
 export { UnlockModal } from './UnlockModal';

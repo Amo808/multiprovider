@@ -1207,7 +1207,7 @@ async def get_config(_: str = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/config")
-async def update_config(config_data: dict, _: str = Depends(get_current_user)):
+async def update_config(config_data: dict, user: str = Depends(get_current_user)):
     """Update application configuration."""
     try:
         global app_config
@@ -1243,7 +1243,8 @@ async def update_config(config_data: dict, _: str = Depends(get_current_user)):
         # Update in-memory config with merged result
         app_config = merged_config
         
-        return {"message": "Configuration updated successfully", "config": app_config}
+        # Return full config with providers and models (same as GET /config)
+        return await get_config(user)
         
     except Exception as e:
         logger.error(f"Failed to update config: {e}")

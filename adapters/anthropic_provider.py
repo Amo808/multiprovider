@@ -514,6 +514,27 @@ class AnthropicAdapter(BaseAdapter):
                 error="Request timed out",
                 meta={"provider": ModelProvider.ANTHROPIC, "model": model}
             )
+        except aiohttp.ClientPayloadError as e:
+            # Handle incomplete response (TransferEncodingError)
+            self.logger.warning(f"Anthropic stream interrupted: {e}")
+            # If we have accumulated content, consider it a partial success
+            if accumulated_content:
+                self.logger.info(f"Returning partial response ({len(accumulated_content)} chars)")
+                # Don't yield error, just finalize with what we have
+            else:
+                yield ChatResponse(
+                    error=f"Stream interrupted: {str(e)}",
+                    meta={"provider": ModelProvider.ANTHROPIC, "model": model}
+                )
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network error in Anthropic API call: {e}")
+            if accumulated_content:
+                self.logger.info(f"Returning partial response after network error ({len(accumulated_content)} chars)")
+            else:
+                yield ChatResponse(
+                    error=f"Network error: {str(e)}",
+                    meta={"provider": ModelProvider.ANTHROPIC, "model": model}
+                )
         except Exception as e:
             self.logger.error(f"Error in Anthropic API call: {e}")
             yield ChatResponse(
@@ -543,6 +564,8 @@ class AnthropicAdapter(BaseAdapter):
     async def get_available_models(self) -> List[ModelInfo]:
         """Get list of available models (static for Anthropic)"""
         # Anthropic doesn't have a models endpoint, return supported models
+        # Cache for sync access
+        self._models = self.supported_models
         return self.supported_models
 
     def estimate_tokens(self, text: str) -> int:

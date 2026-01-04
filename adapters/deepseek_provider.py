@@ -335,7 +335,10 @@ class DeepSeekAdapter(BaseAdapter):
                                 type=ModelType.CHAT
                             ))
                     
-                    return models if models else self.supported_models
+                    result = models if models else self.supported_models
+                    # Cache the models for sync access
+                    self._models = result
+                    return result
                 else:
                     self.logger.error(f"Failed to fetch models: {response.status}")
                     return self.supported_models

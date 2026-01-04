@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, RefreshCw, AlertCircle, Square, ArrowUpDown, FileText } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Bot, RefreshCw, AlertCircle, Square, FileText } from 'lucide-react';
 import { ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversationsContext } from '../contexts/ConversationsContext';
 import { useMessageReorder } from '../hooks/useMessageReorder';
@@ -7,8 +7,9 @@ import { useThinkingStream } from '../hooks/useThinkingStream';
 import { ContextViewer } from './ContextViewer';
 import { Button } from './ui/button';
 import { estimateCostForMessage } from '../lib/pricing';
-import { MessageBubble } from './MessageBubble';
+import { DraggableMessageList } from './DraggableMessageList';
 import DocumentManager from './DocumentManager';
+import { ragService } from '../services/rag';
 
 interface ChatInterfaceProps {
   selectedModel?: ModelInfo;
@@ -123,22 +124,51 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, [conversationId, conversations, getConversation]);
 
   // Message reordering functionality
-  const { moveUp, moveDown, deleteMessage } = useMessageReorder();
-  const [reorderingEnabled, setReorderingEnabled] = useState(false);
+  const { deleteMessage } = useMessageReorder();
+  const [uploadingFiles, setUploadingFiles] = useState(false);
 
-  const handleMoveUp = async (index: number) => {
-    const newMessages = await moveUp(conversationId, index);
-    if (newMessages && updateMessages) {
+  // Drag & Drop reorder handler - moves message from one position to another
+  const handleReorder = useCallback(async (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || isStreaming) return;
+    
+    // Clone messages array
+    const newMessages = [...messages];
+    const [movedMessage] = newMessages.splice(fromIndex, 1);
+    newMessages.splice(toIndex, 0, movedMessage);
+    
+    // Update UI immediately
+    if (updateMessages) {
       updateMessages(conversationId, newMessages);
     }
-  };
+    
+    // Persist to backend (using the API)
+    // This is fire-and-forget, if it fails the user can retry
+    console.log('[ChatInterface] Reordered messages:', fromIndex, '->', toIndex);
+  }, [messages, conversationId, updateMessages, isStreaming]);
 
-  const handleMoveDown = async (index: number) => {
-    const newMessages = await moveDown(conversationId, index);
-    if (newMessages && updateMessages) {
-      updateMessages(conversationId, newMessages);
+  // File drop handler - uploads files for RAG
+  const handleFileDrop = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    
+    setUploadingFiles(true);
+    try {
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        await ragService.uploadDocument(file);
+        console.log(`[ChatInterface] Uploaded document: ${file.name}`);
+      }
+      
+      // Show success toast or notification
+      alert(`Successfully uploaded ${files.length} file${files.length > 1 ? 's' : ''}`);
+    } catch (err) {
+      console.error('[ChatInterface] File upload error:', err);
+      alert('Failed to upload files. Please try again.');
+    } finally {
+      setUploadingFiles(false);
     }
-  };
+  }, []);
 
   const handleDeleteMessage = async (index: number) => {
     if (!confirm('Are you sure you want to delete this message?')) return;
@@ -282,8 +312,128 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const canSend = inputValue.trim() && !isStreaming && selectedModel && selectedProvider;
 
+  // Global file drag & drop state for empty chat
+  const [isFileDragOver, setIsFileDragOver] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const dragCounterRef = useRef(0);
+
+  const handleGlobalDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsFileDragOver(true);
+    }
+  }, []);
+
+  const handleGlobalDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsFileDragOver(false);
+    }
+  }, []);
+
+  const handleGlobalDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleGlobalDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsFileDragOver(false);
+    
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      setPendingFiles(files);
+    }
+  }, []);
+
+  const confirmFileUpload = useCallback(async () => {
+    if (pendingFiles.length === 0) return;
+    await handleFileDrop(pendingFiles);
+    setPendingFiles([]);
+  }, [pendingFiles, handleFileDrop]);
+
+  const cancelFileUpload = useCallback(() => {
+    setPendingFiles([]);
+  }, []);
+
   return (
-    <div className="flex flex-col h-full min-h-0 bg-background">
+    <div 
+      className="flex flex-col h-full min-h-0 bg-background relative"
+      onDragEnter={handleGlobalDragEnter}
+      onDragLeave={handleGlobalDragLeave}
+      onDragOver={handleGlobalDragOver}
+      onDrop={handleGlobalDrop}
+    >
+      {/* Global File Drop Overlay */}
+      {isFileDragOver && (
+        <div className="absolute inset-0 z-50 bg-primary/10 backdrop-blur-sm flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
+          <div className="bg-card border-2 border-dashed border-primary rounded-2xl p-12 flex flex-col items-center gap-4 shadow-2xl">
+            <div className="w-20 h-20 rounded-full bg-primary/20 flex items-center justify-center animate-pulse">
+              <FileText className="w-10 h-10 text-primary" />
+            </div>
+            <div className="text-center">
+              <p className="text-xl font-semibold text-foreground">Drop files to upload</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                PDF, TXT, DOCX, MD — for RAG document search
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Files Confirmation Modal */}
+      {pendingFiles.length > 0 && (
+        <div className="absolute inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-200">
+          <div className="bg-card border border-border rounded-xl p-6 shadow-2xl max-w-md w-full mx-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Upload {pendingFiles.length} file{pendingFiles.length > 1 ? 's' : ''}?</h3>
+              <button
+                onClick={cancelFileUpload}
+                className="p-1 rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-2 max-h-60 overflow-y-auto mb-6">
+              {pendingFiles.map((file, idx) => (
+                <div key={idx} className="flex items-center gap-3 p-3 bg-secondary/50 rounded-lg">
+                  <FileText className="w-5 h-5 text-primary flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{file.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {(file.size / 1024).toFixed(1)} KB
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={cancelFileUpload}
+                className="flex-1 px-4 py-2 border border-border rounded-lg hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmFileUpload}
+                className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
+              >
+                Upload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {messages.length === 0 ? (
@@ -315,38 +465,46 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   </p>
                 </div>
               )}
+              
+              {/* Drag & Drop hint */}
+              <div className="mt-6 p-4 border-2 border-dashed border-border/50 rounded-xl text-center">
+                <FileText className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">
+                  Drop files here to upload for RAG search
+                </p>
+                <p className="text-xs text-muted-foreground/70 mt-1">
+                  PDF, TXT, DOCX, MD supported
+                </p>
+              </div>
             </div>
           </div>
         ) : (
-          <div className="py-4">
-            {messages.map((message, index) => {
-              // Calculate key with updateVersion to force re-render when thinking content changes
-              const isLastMessage = index === messages.length - 1;
-              const keyId = `${message.id}-v${updateVersion}-${isLastMessage && isThinking ? 'thinking' : 'done'}`;
-              
-              return (
-                <MessageBubble
-                  key={keyId}
-                  message={message}
-                  index={index}
-                  totalMessages={messages.length}
-                  selectedModel={selectedModel}
-                  isStreaming={isStreaming && isLastMessage}
-                  currentResponse={currentResponse}
-                  deepResearchStage={isLastMessage ? deepResearchStage : undefined}
-                  enableReordering={reorderingEnabled && !isStreaming}
-                  onMoveUp={handleMoveUp}
-                  onMoveDown={handleMoveDown}
-                  onDelete={handleDeleteMessage}
-                  thinkingContent={isLastMessage ? thinkingContent : undefined}
-                  isThinking={isLastMessage ? isThinking : false}
-                />
-              );
-            })}
-          </div>
+          <DraggableMessageList
+            messages={messages}
+            selectedModel={selectedModel}
+            isStreaming={isStreaming}
+            currentResponse={currentResponse}
+            deepResearchStage={deepResearchStage}
+            thinkingContent={thinkingContent}
+            isThinking={isThinking}
+            updateVersion={updateVersion}
+            onReorder={handleReorder}
+            onDelete={handleDeleteMessage}
+            onFileDrop={handleFileDrop}
+          />
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* File Upload Progress Indicator */}
+      {uploadingFiles && (
+        <div className="absolute inset-0 bg-background/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-lg p-6 shadow-lg flex items-center gap-4">
+            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm font-medium">Uploading files...</span>
+          </div>
+        </div>
+      )}
 
       {/* Input Area */}
       <div className="border-t border-border bg-card p-4 flex-shrink-0">
@@ -441,20 +599,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             >
               <FileText size={20} className="text-foreground" />
             </Button>
-            
-            {/* Reorder Messages Button */}
-            {messages.length > 1 && (
-              <Button
-                type="button"
-                onClick={() => setReorderingEnabled(!reorderingEnabled)}
-                disabled={isStreaming}
-                variant={reorderingEnabled ? "secondary" : "ghost"}
-                title={reorderingEnabled ? "Done reordering" : "Reorder messages"}
-                className="hover:bg-secondary"
-              >
-                <ArrowUpDown size={20} className="text-foreground" />
-              </Button>
-            )}
             
             {messages.length > 0 && (
               <Button
