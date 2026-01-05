@@ -117,6 +117,7 @@ export function useModelSettings(
       const data = await apiClient.getModelSettings(provider, modelId);
       const backendSettings = data.settings || {};
       console.log(`[useModelSettings] Loaded from backend for ${provider}:${modelId}:`, backendSettings);
+      console.log(`[useModelSettings] Backend system_prompt for ${provider}:${modelId}:`, backendSettings.system_prompt || 'EMPTY');
       
       // If backend has no settings (empty or all defaults), use MAX defaults instead
       const backendKeys = Object.keys(backendSettings) as Array<keyof ModelSettings>;

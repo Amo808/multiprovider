@@ -313,8 +313,15 @@ class DeepSeekAdapter(BaseAdapter):
         )
 
     async def get_available_models(self) -> List[ModelInfo]:
-        """Get list of available models from DeepSeek"""
+        """Get list of available models from DeepSeek.
+        
+        Uses official specs from supported_models for known models,
+        merges with API data for any new models discovered.
+        """
         await self._ensure_session()
+        
+        # Build lookup from supported_models (official specs)
+        known_models = {m.id: m for m in self.supported_models}
         
         try:
             url = f"{self.base_url}/models"
@@ -323,20 +330,36 @@ class DeepSeekAdapter(BaseAdapter):
                     data = await response.json()
                     models_data = data.get("data", [])
                     
-                    # Convert API models to ModelInfo format
+                    # Collect models from API
+                    api_model_ids = set()
                     models = []
+                    
                     for model_data in models_data:
                         model_id = model_data.get("id", "")
                         if "chat" in model_id.lower() or "coder" in model_id.lower() or "reasoner" in model_id.lower():
-                            models.append(ModelInfo(
-                                id=model_id,
-                                name=model_id,
-                                display_name=model_data.get("display_name", model_id),
-                                provider=ModelProvider.DEEPSEEK,
-                                context_length=model_data.get("context_length", 32768),
-                                supports_streaming=True,
-                                type=ModelType.CHAT
-                            ))
+                            api_model_ids.add(model_id)
+                            
+                            # Use known specs if available (official), otherwise use API data
+                            if model_id in known_models:
+                                models.append(known_models[model_id])
+                            else:
+                                # New model not in our specs - use API data with safe defaults
+                                models.append(ModelInfo(
+                                    id=model_id,
+                                    name=model_id,
+                                    display_name=model_data.get("display_name", model_id),
+                                    provider=ModelProvider.DEEPSEEK,
+                                    context_length=128000,  # V3.2 default
+                                    max_output_tokens=8192,
+                                    supports_streaming=True,
+                                    supports_functions=True,
+                                    type=ModelType.CHAT
+                                ))
+                    
+                    # Also add known models that weren't in API response (safety)
+                    for model_id, model_info in known_models.items():
+                        if model_id not in api_model_ids:
+                            models.append(model_info)
                     
                     result = models if models else self.supported_models
                     # Cache the models for sync access
@@ -344,9 +367,11 @@ class DeepSeekAdapter(BaseAdapter):
                     return result
                 else:
                     self.logger.error(f"Failed to fetch models: {response.status}")
+                    self._models = self.supported_models
                     return self.supported_models
         except Exception as e:
             self.logger.error(f"Error fetching models: {e}")
+            self._models = self.supported_models
             return self.supported_models
 
     def estimate_tokens(self, text: str) -> int:

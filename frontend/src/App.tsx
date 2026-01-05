@@ -74,6 +74,7 @@ function App() {
     settings: modelSettings, 
     loading: modelSettingsLoading,
     updateSettings: updateModelSettings,
+    saveSettings: saveModelSettings,  // NEW: explicit save function
     hasChanges: modelSettingsHasChanges,
     applyMaxPreset,
     cyclePreset,
@@ -93,11 +94,30 @@ function App() {
   // Per-model system prompt (from model settings)
   const modelSystemPrompt = modelSettings.system_prompt || '';
   
+  // DEBUG: Log when modelSystemPrompt changes
+  useEffect(() => {
+    console.log('[App] modelSystemPrompt changed:', {
+      value: modelSystemPrompt,
+      length: modelSystemPrompt.length,
+      preview: modelSystemPrompt.substring(0, 100),
+      modelId: selectedModel?.id,
+      provider: selectedProvider
+    });
+  }, [modelSystemPrompt, selectedModel?.id, selectedProvider]);
+  
   // Combined system prompt: Global + Per-Model (OpenRouter style)
   // Final prompt = [Global prompt] + "\n\n" + [Per-model prompt]
   const combinedSystemPrompt = useMemo(() => {
     const parts = [globalPrompt, modelSystemPrompt].filter(Boolean);
-    return parts.join('\n\n---\n\n');
+    const combined = parts.join('\n\n---\n\n');
+    console.log('[App] System prompt computation:', {
+      globalPromptLength: globalPrompt?.length || 0,
+      modelSystemPromptLength: modelSystemPrompt?.length || 0,
+      combinedLength: combined?.length || 0,
+      globalPromptPreview: globalPrompt?.substring(0, 50) || 'EMPTY',
+      modelSystemPromptPreview: modelSystemPrompt?.substring(0, 50) || 'EMPTY'
+    });
+    return combined;
   }, [globalPrompt, modelSystemPrompt]);
   
   // Build effective generation config from model settings
@@ -736,6 +756,7 @@ interface GoogleCredentialResponse {
         // Per-model prompt props
         modelPrompt={modelSystemPrompt}
         modelPromptHasChanges={modelSettingsHasChanges}
+        onSaveModelPrompt={saveModelSettings}  // NEW: explicit save for model prompt
         tokenUsage={tokenUsage}
         generationConfig={effectiveGenerationConfig}
         health={health}
