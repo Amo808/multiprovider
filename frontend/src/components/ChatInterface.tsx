@@ -128,30 +128,50 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   // Message reordering functionality
   const { deleteMessage, moveTo } = useMessageReorder();
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [isReordering, setIsReordering] = useState(false); // Prevent race conditions
 
   // Drag & Drop reorder handler - moves message from one position to another
   const handleReorder = useCallback(async (fromIndex: number, toIndex: number) => {
     console.log('[ChatInterface] handleReorder called:', { fromIndex, toIndex, messagesLength: messages.length });
+    
+    // CRITICAL: Block concurrent reorder operations to prevent race conditions
+    if (isReordering) {
+      console.log('[ChatInterface] Reorder blocked: another reorder in progress');
+      return;
+    }
     
     if (fromIndex === toIndex || isStreaming) {
       console.log('[ChatInterface] Reorder skipped:', { sameIndex: fromIndex === toIndex, isStreaming });
       return;
     }
     
+    // SAFETY: Don't allow reordering with no messages
+    if (messages.length === 0) {
+      console.error('[ChatInterface] Reorder blocked: no messages to reorder');
+      return;
+    }
+    
+    // Validate indices
+    if (fromIndex < 0 || fromIndex >= messages.length || toIndex < 0 || toIndex >= messages.length) {
+      console.error('[ChatInterface] Reorder blocked: invalid indices', { fromIndex, toIndex, max: messages.length - 1 });
+      return;
+    }
+    
+    setIsReordering(true);
+    
+    // Save original messages for rollback
+    const originalMessages = [...messages];
+    
     // Clone messages array and perform reorder
     const newMessages = [...messages];
     const [movedMessage] = newMessages.splice(fromIndex, 1);
-    
-    // Calculate correct insertion index
-    // If moving down (fromIndex < toIndex), we need to account for the removal
-    const insertIndex = fromIndex < toIndex ? toIndex : toIndex;
-    newMessages.splice(insertIndex, 0, movedMessage);
+    newMessages.splice(toIndex, 0, movedMessage);
     
     console.log('[ChatInterface] Reordered messages:', {
       from: fromIndex,
       to: toIndex,
-      insertAt: insertIndex,
-      movedContent: movedMessage.content.substring(0, 50)
+      movedContent: movedMessage.content.substring(0, 50),
+      newOrder: newMessages.map((m, i) => `${i}: ${m.content.substring(0, 20)}...`)
     });
     
     // Update UI immediately (optimistic update)
@@ -162,27 +182,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     // Persist to backend using move_to API
     try {
       const result = await moveTo(conversationId, fromIndex, toIndex);
-      if (result) {
-        console.log('[ChatInterface] Reorder saved to backend successfully');
-        // Update with backend response to ensure consistency
+      if (result && result.length > 0) {
+        console.log('[ChatInterface] Reorder saved to backend, messages:', result.length);
+        // Check if backend result matches our expectation
+        const backendOrder = result.map((m, i) => `${i}: ${m.content.substring(0, 20)}...`);
+        console.log('[ChatInterface] Backend order:', backendOrder);
+        // Use backend result as source of truth
         if (updateMessages) {
           updateMessages(conversationId, result);
         }
-      } else {
-        console.error('[ChatInterface] Failed to save reorder to backend, reverting');
-        // Revert to original order on failure
+      } else if (result && result.length === 0) {
+        console.error('[ChatInterface] Backend returned empty, reverting');
         if (updateMessages) {
-          updateMessages(conversationId, messages);
+          updateMessages(conversationId, originalMessages);
+        }
+      } else {
+        console.error('[ChatInterface] Failed to save, reverting');
+        if (updateMessages) {
+          updateMessages(conversationId, originalMessages);
         }
       }
     } catch (err) {
       console.error('[ChatInterface] Error saving reorder:', err);
-      // Revert on error
       if (updateMessages) {
-        updateMessages(conversationId, messages);
+        updateMessages(conversationId, originalMessages);
       }
+    } finally {
+      setIsReordering(false);
     }
-  }, [messages, conversationId, updateMessages, isStreaming, moveTo]);
+  }, [messages, conversationId, updateMessages, isStreaming, moveTo, isReordering]);
 
   // File drop handler - uploads files for RAG
   const handleFileDrop = useCallback(async (files: File[]) => {
@@ -209,7 +237,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, []);
 
   const handleDeleteMessage = async (index: number) => {
-    if (!confirm('Are you sure you want to delete this message?')) return;
+    // Block if reordering in progress
+    if (isReordering) {
+      console.log('[ChatInterface] Delete blocked: reorder in progress');
+      return;
+    }
+    // No confirmation needed - instant delete with visual feedback
     const newMessages = await deleteMessage(conversationId, index);
     if (newMessages && updateMessages) {
       updateMessages(conversationId, newMessages);
@@ -320,6 +353,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       config: generationConfig,
       ...(systemPrompt && systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {})
     };
+    
+    // Debug logging for system prompt
+    console.log('[ChatInterface] System prompt info:', {
+      hasSystemPrompt: !!systemPrompt,
+      systemPromptLength: systemPrompt?.length || 0,
+      systemPromptPreview: systemPrompt?.substring(0, 100) || 'EMPTY',
+      requestHasSystemPrompt: !!request.system_prompt,
+      requestSystemPromptLength: request.system_prompt?.length || 0
+    });
 
     setInputValue('');
     
@@ -633,6 +675,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               messages={messages}
               currentInput={inputValue}
               generationConfig={generationConfig}
+              systemPrompt={systemPrompt}
             />
             
             {/* Document Manager */}

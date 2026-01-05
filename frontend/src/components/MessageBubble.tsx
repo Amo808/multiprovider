@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useReducer } from 'react';
-import { Bot, User, Copy, Brain, Zap, ChevronUp, ChevronDown, Trash2, ChevronRight, Clock, Sparkles, Eye, EyeOff, GitBranch } from 'lucide-react';
+import { Bot, User, Copy, Brain, Zap, ChevronUp, ChevronDown, Trash2, ChevronRight, Clock, Sparkles, Eye, EyeOff, GitBranch, Check, X } from 'lucide-react';
 import { Message, ModelInfo } from '../types';
 import { cn } from '../lib/utils';
 
@@ -16,7 +16,7 @@ interface MessageBubbleProps {
   enableReordering?: boolean;
   onMoveUp?: (index: number) => void;
   onMoveDown?: (index: number) => void;
-  onDelete?: (index: number) => void;
+  onDelete?: () => void;
   onBranchFrom?: (index: number) => void;
 }
 
@@ -333,6 +333,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onBranchFrom
 }) => {
   const [copied, setCopied] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   // Force re-render counter when reasoning content changes
   const [, forceUpdate] = useReducer(x => x + 1, 0);
 
@@ -524,21 +525,21 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           {/* Action buttons - Copy and Branch */}
           {!isStreaming && (
             <div className={cn(
-              "absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              "absolute top-2 right-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
             )}>
               {/* Branch button */}
               {onBranchFrom && index !== undefined && (
                 <button
                   onClick={() => onBranchFrom?.(index)}
                   className={cn(
-                    "p-1.5 rounded-md transition-colors",
+                    "p-2 rounded-md transition-colors",
                     isUser 
                       ? "text-white/70 hover:text-emerald-300 hover:bg-white/20" 
                       : "text-emerald-500/70 hover:text-emerald-500 hover:bg-emerald-500/10"
                   )}
                   title="Branch: Start new chat from this point"
                 >
-                  <GitBranch size={14} />
+                  <GitBranch size={16} />
                 </button>
               )}
               {/* Copy button */}
@@ -546,14 +547,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 <button
                   onClick={handleCopy}
                   className={cn(
-                    "p-1.5 rounded-md transition-colors",
+                    "p-2 rounded-md transition-colors",
                     isUser 
                       ? "text-white/70 hover:text-white hover:bg-white/20" 
                       : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                   )}
                   title={copied ? 'Copied!' : 'Copy message'}
                 >
-                  <Copy size={14} />
+                  <Copy size={16} />
                 </button>
               )}
             </div>
@@ -562,42 +563,76 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           {/* Reorder controls */}
           {enableReordering && index !== undefined && totalMessages !== undefined && (
             <div className={cn(
-              "absolute top-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity",
-              isUser ? "left-2" : "right-12"
+              "absolute top-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity",
+              isUser ? "left-2" : "right-14"
             )}>
               <button
                 onClick={() => onMoveUp?.(index)}
                 disabled={index === 0}
                 className={cn(
-                  "p-1.5 rounded-md transition-colors",
+                  "p-2 rounded-md transition-colors",
                   index === 0 
                     ? "text-muted-foreground/40 cursor-not-allowed" 
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                 )}
                 title="Move up"
               >
-                <ChevronUp size={14} />
+                <ChevronUp size={16} />
               </button>
               <button
                 onClick={() => onMoveDown?.(index)}
                 disabled={index === totalMessages - 1}
                 className={cn(
-                  "p-1.5 rounded-md transition-colors",
+                  "p-2 rounded-md transition-colors",
                   index === totalMessages - 1 
                     ? "text-muted-foreground/40 cursor-not-allowed" 
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                 )}
                 title="Move down"
               >
-                <ChevronDown size={14} />
+                <ChevronDown size={16} />
               </button>
-              <button
-                onClick={() => onDelete?.(index)}
-                className="p-1.5 rounded-md text-destructive/70 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                title="Delete message"
-              >
-                <Trash2 size={14} />
-              </button>
+            </div>
+          )}
+
+          {/* Delete button with inline confirmation */}
+          {onDelete && (
+            <div className={cn(
+              "absolute top-12 transition-opacity",
+              showDeleteConfirm ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+              isUser ? "left-2" : "right-2"
+            )}>
+              {showDeleteConfirm ? (
+                // Confirmation buttons
+                <div className="flex items-center gap-1 bg-card border border-border rounded-lg p-1 shadow-lg">
+                  <button
+                    onClick={() => {
+                      onDelete();
+                      setShowDeleteConfirm(false);
+                    }}
+                    className="p-1.5 rounded text-green-500 hover:bg-green-500/20 transition-colors"
+                    title="Confirm delete"
+                  >
+                    <Check size={16} />
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="p-1.5 rounded text-muted-foreground hover:bg-secondary transition-colors"
+                    title="Cancel"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              ) : (
+                // Delete button
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="p-2 rounded-md text-destructive/70 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  title="Delete message"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
             </div>
           )}
         </div>

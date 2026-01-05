@@ -18,6 +18,10 @@ from .rag import (
     get_rag_store
 )
 from .api import router as rag_router
+from .parallel_conversations import (
+    SupabaseParallelStore,
+    get_parallel_store
+)
 
 __all__ = [
     # Client
@@ -29,6 +33,9 @@ __all__ = [
     # Conversations
     "SupabaseConversationStore",
     "get_supabase_conversation_store",
+    # Parallel Conversations
+    "SupabaseParallelStore",
+    "get_parallel_store",
     # RAG
     "RAGStore",
     "get_rag_store",

@@ -21,10 +21,34 @@ interface UseModelSettingsReturn {
   cyclePreset: () => void;
 }
 
+/**
+ * Calculate max output tokens for a model - centralized logic
+ * This should be synced with UnifiedModelMenu.tsx getMaxTokensLimit()
+ */
+export const getMaxTokensForModel = (model?: ModelInfo): number => {
+  if (!model) return 8192;
+  if (model.max_output_tokens) return model.max_output_tokens;
+  
+  const provider = model.provider;
+  const id = model.id;
+  
+  if (provider === 'deepseek') return id === 'deepseek-reasoner' ? 65536 : 32768;
+  if (provider === 'openai') {
+    if (id?.startsWith('o1') || id?.startsWith('o3') || id?.startsWith('o4')) return 100000;
+    if (id?.startsWith('gpt-5')) return 100000;
+    if (id?.includes('gpt-4o')) return 16384;
+    return 4096;
+  }
+  if (provider === 'anthropic') return 8192;
+  if (provider === 'gemini') return 65536;
+  
+  return model.context_length || 8192;
+};
+
 // Default MAX settings for new models - everything at maximum for best results
 const getMaxDefaultSettings = (model?: ModelInfo): ModelSettings => {
   // Calculate max_tokens based on model's capabilities
-  const maxTokens = model?.max_output_tokens || model?.context_length || 8192;
+  const maxTokens = getMaxTokensForModel(model);
   
   return {
     temperature: 1.0,              // Max creativity

@@ -3,7 +3,7 @@ Conversations CRUD operations for Supabase
 Handles conversations and messages with full user isolation
 """
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4, uuid5, NAMESPACE_DNS
 import hashlib
 import logging
@@ -495,49 +495,81 @@ class SupabaseConversationStore:
         try:
             db_id = self._to_db_id(conversation_id)
             
-            # First delete all existing messages
-            self.client.table("messages")\
-                .delete()\
+            # SAFETY: Get current messages count first
+            current_result = self.client.table("messages")\
+                .select("id")\
                 .eq("conversation_id", db_id)\
                 .execute()
+            current_count = len(current_result.data or [])
             
-            # Then insert messages in new order with sequential position
-            for position, msg in enumerate(messages):
-                meta = msg.get('meta', {}) or {}
-                
+            # SAFETY: Prevent accidental deletion of all messages
+            if current_count > 0 and len(messages) == 0:
+                logger.error(f"[REORDER] BLOCKED: Refusing to delete {current_count} messages with empty replacement for {conversation_id}")
+                return False
+            
+            # SAFETY: Backup current messages in case insert fails
+            backup_messages = []
+            if current_count > 0:
+                backup_result = self.client.table("messages")\
+                    .select("*")\
+                    .eq("conversation_id", db_id)\
+                    .execute()
+                backup_messages = backup_result.data or []
+            
+            # Prepare all new message data before deleting - MINIMAL FIELDS ONLY
+            new_messages_data = []
+            base_time = datetime.utcnow()
+            
+            for idx, msg in enumerate(messages):
                 # Generate new message ID if not valid UUID
                 msg_id = msg.get('id')
                 if not is_valid_uuid(msg_id):
                     msg_id = str(uuid4())
                 
-                # Parse timestamp
-                timestamp = msg.get('timestamp')
-                if isinstance(timestamp, str):
-                    try:
-                        timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                    except:
-                        timestamp = datetime.utcnow()
-                elif not timestamp:
-                    timestamp = datetime.utcnow()
+                # Use position-based timestamps to preserve order
+                # Each message gets a timestamp 1 second apart to ensure ordering
+                timestamp = base_time + timedelta(seconds=idx)
                 
+                # Build MINIMAL data only - these fields definitely exist in schema
                 data = {
                     "id": msg_id,
                     "conversation_id": db_id,
                     "role": msg.get('role', 'user'),
                     "content": msg.get('content', ''),
-                    "model": meta.get('model'),
-                    "provider": meta.get('provider'),
-                    "reasoning_content": meta.get('reasoning_content'),
-                    "tokens_input": meta.get('tokens_input') or meta.get('tokens_in'),
-                    "tokens_output": meta.get('tokens_output') or meta.get('tokens_out'),
-                    "tokens_reasoning": meta.get('tokens_reasoning') or meta.get('thought_tokens'),
-                    "latency_ms": meta.get('latency_ms'),
-                    "metadata": meta,
-                    "position": position,  # Store position to maintain order
-                    "created_at": timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)
+                    "created_at": timestamp.isoformat()
                 }
                 
-                self.client.table("messages").insert(data).execute()
+                new_messages_data.append(data)
+            
+            # Now do the delete
+            self.client.table("messages")\
+                .delete()\
+                .eq("conversation_id", db_id)\
+                .execute()
+            
+            # Insert new messages
+            insert_success = True
+            try:
+                for data in new_messages_data:
+                    logger.info(f"[REORDER] Inserting: role={data['role']}, content={data['content'][:50]}...")
+                    self.client.table("messages").insert(data).execute()
+            except Exception as insert_error:
+                logger.error(f"[REORDER] Insert failed: {insert_error}")
+                insert_success = False
+            
+            if not insert_success:
+                logger.error(f"[REORDER] Insert failed, attempting to restore backup")
+                # Restore backup - filter out unknown columns
+                ALLOWED_COLUMNS = {'id', 'conversation_id', 'role', 'content', 'created_at'}
+                try:
+                    for backup_msg in backup_messages:
+                        # Remove any columns that don't exist in schema
+                        clean_msg = {k: v for k, v in backup_msg.items() if k in ALLOWED_COLUMNS}
+                        self.client.table("messages").insert(clean_msg).execute()
+                    logger.info(f"[REORDER] Successfully restored {len(backup_messages)} backup messages")
+                except Exception as restore_error:
+                    logger.error(f"[REORDER] CRITICAL: Failed to restore backup: {restore_error}")
+                return False
             
             logger.info(f"[REORDER] Replaced {len(messages)} messages in conversation {conversation_id}")
             return True

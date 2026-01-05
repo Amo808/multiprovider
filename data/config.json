@@ -1,6 +1,6 @@
 {
   "activeProvider": "deepseek",
-  "activeModel": "deepseek-chat",
+  "activeModel": "deepseek-reasoner",
   "providers": {
     "deepseek": {
       "id": "deepseek",
@@ -581,41 +581,41 @@
     "compactMode": false
   },
   "system": {
-    "system_prompt": "You are a helpful AI assistant.",
+    "system_prompt": "Global prompt",
     "max_context_tokens": 32768,
     "auto_save": true,
     "conversations_limit": 100
   },
   "model_settings": {
     "deepseek:deepseek-chat": {
-      "temperature": 1,
+      "temperature": 2,
       "max_tokens": 32768,
       "top_p": 1,
       "frequency_penalty": 0,
       "presence_penalty": 0,
       "stream": true,
       "system_prompt": "",
+      "thinking_budget": null,
+      "include_thoughts": false,
+      "verbosity": null,
+      "reasoning_effort": null,
+      "cfg_scale": null,
+      "free_tool_calling": false
+    },
+    "deepseek:deepseek-reasoner": {
+      "temperature": 1,
+      "max_tokens": 65536,
+      "top_p": 1,
+      "frequency_penalty": 0,
+      "presence_penalty": 0,
+      "stream": true,
+      "system_prompt": "You are a senior software engineer. Write clean, efficient, well-documented code with best practices.",
       "thinking_budget": -1,
       "include_thoughts": true,
       "verbosity": "high",
       "reasoning_effort": "high",
       "cfg_scale": null,
       "free_tool_calling": true
-    },
-    "deepseek:deepseek-reasoner": {
-      "temperature": 0.7,
-      "max_tokens": 65536,
-      "top_p": 1,
-      "frequency_penalty": 0,
-      "presence_penalty": 0,
-      "stream": true,
-      "system_prompt": "",
-      "thinking_budget": 100,
-      "include_thoughts": true,
-      "verbosity": null,
-      "reasoning_effort": null,
-      "cfg_scale": null,
-      "free_tool_calling": false
     },
     "anthropic:claude-opus-4-20250514": {
       "temperature": 0.7,
@@ -691,6 +691,21 @@
       "reasoning_effort": "minimal",
       "cfg_scale": null,
       "free_tool_calling": false
+    },
+    "openai:gpt-5.2-pro": {
+      "temperature": 1,
+      "max_tokens": 32768,
+      "top_p": 1,
+      "frequency_penalty": 0,
+      "presence_penalty": 0,
+      "stream": true,
+      "system_prompt": "",
+      "thinking_budget": -1,
+      "include_thoughts": true,
+      "verbosity": "high",
+      "reasoning_effort": "high",
+      "cfg_scale": null,
+      "free_tool_calling": true
     }
   }
 }

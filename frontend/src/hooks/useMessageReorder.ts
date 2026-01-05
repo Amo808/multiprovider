@@ -68,6 +68,12 @@ export function useMessageReorder(): UseMessageReorderReturn {
         throw new Error('Reorder operation failed');
       }
 
+      // SAFETY: Check for empty messages response (indicates backend error)
+      if (!result.messages || result.messages.length === 0) {
+        console.error('[useMessageReorder] Backend returned empty messages array - this is likely a bug');
+        throw new Error('Reorder returned empty messages - operation may have failed');
+      }
+
       // Convert API response to Message[]
       const messages: Message[] = result.messages.map(msg => ({
         id: msg.id,
@@ -77,6 +83,7 @@ export function useMessageReorder(): UseMessageReorderReturn {
         meta: msg.meta
       }));
 
+      console.log(`[useMessageReorder] Success: ${messages.length} messages returned`);
       return messages;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to reorder messages';

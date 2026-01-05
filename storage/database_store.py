@@ -391,6 +391,27 @@ class DatabaseConversationStore:
             try:
                 cursor = conn.cursor()
                 
+                # SAFETY: Get current messages count first
+                if self.db_type == 'postgresql':
+                    cursor.execute('SELECT COUNT(*) FROM messages WHERE conversation_id=%s', (storage_id,))
+                else:
+                    cursor.execute('SELECT COUNT(*) FROM messages WHERE conversation_id=?', (storage_id,))
+                current_count = cursor.fetchone()[0]
+                
+                # SAFETY: Prevent accidental deletion of all messages
+                if current_count > 0 and len(messages) == 0:
+                    logger.error(f"[DatabaseStore] BLOCKED: Refusing to delete {current_count} messages with empty replacement for {conversation_id}")
+                    return False
+                
+                # SAFETY: Backup current messages in case insert fails
+                backup_messages = []
+                if current_count > 0:
+                    if self.db_type == 'postgresql':
+                        cursor.execute('SELECT id, role, content, timestamp, meta FROM messages WHERE conversation_id=%s', (storage_id,))
+                    else:
+                        cursor.execute('SELECT id, role, content, timestamp, meta FROM messages WHERE conversation_id=?', (storage_id,))
+                    backup_messages = cursor.fetchall()
+                
                 # Delete all existing messages
                 if self.db_type == 'postgresql':
                     cursor.execute('DELETE FROM messages WHERE conversation_id=%s', (storage_id,))
@@ -398,28 +419,51 @@ class DatabaseConversationStore:
                     cursor.execute('DELETE FROM messages WHERE conversation_id=?', (storage_id,))
                 
                 # Insert messages in new order
-                for position, msg in enumerate(messages):
-                    msg_id = msg.get('id') or str(uuid.uuid4())
-                    role = msg.get('role', 'user')
-                    content = msg.get('content', '')
-                    timestamp = msg.get('timestamp', datetime.now().isoformat())
-                    meta = msg.get('meta', {})
-                    
-                    if isinstance(meta, dict):
-                        meta_json = json.dumps(meta)
-                    else:
-                        meta_json = str(meta) if meta else '{}'
-                    
-                    if self.db_type == 'postgresql':
-                        cursor.execute(
-                            'INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                            (msg_id, storage_id, role, content, timestamp, meta_json, datetime.now().isoformat())
-                        )
-                    else:
-                        cursor.execute(
-                            'INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                            (msg_id, storage_id, role, content, timestamp, meta_json, datetime.now().isoformat())
-                        )
+                try:
+                    for position, msg in enumerate(messages):
+                        msg_id = msg.get('id') or str(uuid.uuid4())
+                        role = msg.get('role', 'user')
+                        content = msg.get('content', '')
+                        timestamp = msg.get('timestamp', datetime.now().isoformat())
+                        meta = msg.get('meta', {})
+                        
+                        if isinstance(meta, dict):
+                            meta_json = json.dumps(meta)
+                        else:
+                            meta_json = str(meta) if meta else '{}'
+                        
+                        if self.db_type == 'postgresql':
+                            cursor.execute(
+                                'INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                                (msg_id, storage_id, role, content, timestamp, meta_json, datetime.now().isoformat())
+                            )
+                        else:
+                            cursor.execute(
+                                'INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                                (msg_id, storage_id, role, content, timestamp, meta_json, datetime.now().isoformat())
+                            )
+                except Exception as insert_error:
+                    # Restore backup on insert failure
+                    logger.error(f"[DatabaseStore] Insert failed, restoring backup: {insert_error}")
+                    try:
+                        for backup_msg in backup_messages:
+                            msg_id, role, content, timestamp, meta_json = backup_msg
+                            if self.db_type == 'postgresql':
+                                cursor.execute(
+                                    'INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                                    (msg_id, storage_id, role, content, timestamp, meta_json, datetime.now().isoformat())
+                                )
+                            else:
+                                cursor.execute(
+                                    'INSERT INTO messages (id, conversation_id, role, content, timestamp, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                                    (msg_id, storage_id, role, content, timestamp, meta_json, datetime.now().isoformat())
+                                )
+                        conn.commit()
+                        logger.info(f"[DatabaseStore] Restored {len(backup_messages)} backup messages")
+                    except Exception as restore_error:
+                        logger.error(f"[DatabaseStore] CRITICAL: Failed to restore backup: {restore_error}")
+                        conn.rollback()
+                    return False
                 
                 # Update conversation metadata
                 if self.db_type == 'postgresql':

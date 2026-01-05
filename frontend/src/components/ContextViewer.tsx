@@ -6,6 +6,7 @@ interface ContextViewerProps {
   messages: Message[];
   currentInput?: string;
   generationConfig: GenerationConfig;
+  systemPrompt?: string; // Add system prompt prop
   className?: string;
 }
 
@@ -13,6 +14,7 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
   messages,
   currentInput = '',
   generationConfig,
+  systemPrompt = '',
   className = ''
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -24,10 +26,10 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
     // Build the messages array as it would be sent to API
     const apiMessages = [];
     
-    // Add system message if any (this would be added by backend)
+    // Add system message - use actual systemPrompt or default
     apiMessages.push({
       role: 'system',
-      content: 'You are a helpful AI assistant. Respond clearly and concisely.'
+      content: systemPrompt || 'You are a helpful AI assistant.'
     });
     
     // Add conversation history

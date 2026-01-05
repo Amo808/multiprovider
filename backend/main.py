@@ -72,6 +72,7 @@ from supabase_client import (
     is_supabase_configured
 )
 from supabase_client.api import router as rag_router
+from supabase_client.parallel_conversations import get_parallel_store
 from process_events import (
     process_emitter, ProcessType, ProcessStatus, ProcessContext,
     stream_process_events, track_compression, track_multi_model
@@ -713,6 +714,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         
         # Add system prompt if provided
         system_prompt_content = request.system_prompt or ""
+        logger.info(f"[CHAT] System prompt from request: length={len(system_prompt_content)}, preview={system_prompt_content[:100] if system_prompt_content else 'EMPTY'}...")
         
         # Inject memory context into system prompt if available
         if memory_context:
@@ -722,6 +724,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                 system_prompt_content = f"You are a helpful AI assistant.\n\n{memory_context}"
         
         if system_prompt_content:
+            logger.info(f"[CHAT] Final system prompt: length={len(system_prompt_content)}")
             system_msg = Message(
                 id=str(uuid.uuid4()),
                 role="system",
@@ -1829,6 +1832,21 @@ async def reorder_messages(request: ReorderMessagesRequest, user_email: str = De
             user_email=user_email
         )
         
+        # SAFETY: Check if conversation has messages
+        original_count = len(messages)
+        logger.info(f"[REORDER] Starting {request.operation} for conversation {request.conversation_id} with {original_count} messages")
+        
+        if original_count == 0:
+            logger.warning(f"[REORDER] No messages found in conversation {request.conversation_id}")
+            return {
+                "success": True,
+                "operation": request.operation,
+                "message_count": 0,
+                "preview": [],
+                "messages": [],
+                "saved_to_db": False,
+                "warning": "No messages to reorder"
+            }
         # Convert to dict format
         messages_dict = [
             {
@@ -1867,6 +1885,16 @@ async def reorder_messages(request: ReorderMessagesRequest, user_email: str = De
         # Get the reordered messages
         reordered_messages = manager.to_list()
         
+        # SAFETY: Validate that operation didn't lose messages (except for remove operation)
+        if request.operation != 'remove' and len(reordered_messages) != original_count:
+            logger.error(f"[REORDER] Message count mismatch: original={original_count}, after={len(reordered_messages)}")
+            raise HTTPException(status_code=500, detail=f"Message count mismatch after reorder: expected {original_count}, got {len(reordered_messages)}")
+        
+        # SAFETY: Don't save empty list if we had messages before
+        if original_count > 0 and len(reordered_messages) == 0:
+            logger.error(f"[REORDER] BLOCKED: Operation would delete all {original_count} messages")
+            raise HTTPException(status_code=400, detail="Operation would delete all messages - blocked for safety")
+
         # IMPORTANT: Save the reordered messages to database!
         save_success = conversation_store.replace_messages(
             request.conversation_id,
@@ -2374,6 +2402,262 @@ async def get_message_stats(
         return stats
     except Exception as e:
         logger.error(f"Failed to get message stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== PARALLEL CONVERSATIONS API ====================
+
+class ParallelConversationCreate(BaseModel):
+    title: str = "Parallel Chat"
+    shared_history_mode: bool = False
+    metadata: Optional[Dict[str, Any]] = None
+
+class ParallelTurnCreate(BaseModel):
+    user_message: str
+    responses: List[Dict[str, Any]]
+    metadata: Optional[Dict[str, Any]] = None
+
+class ParallelResponseUpdate(BaseModel):
+    content: Optional[str] = None
+    enabled: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class ParallelRegenerateRequest(BaseModel):
+    content: str
+    meta: Optional[Dict[str, Any]] = None
+
+
+@api_router.get("/parallel/conversations")
+async def list_parallel_conversations(
+    limit: int = 50,
+    offset: int = 0,
+    user_email: str = Depends(get_current_user)
+):
+    """List parallel conversations for the current user."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            return {"conversations": [], "message": "Supabase not configured"}
+        
+        conversations = store.list_conversations(
+            user_email=user_email,
+            limit=limit,
+            offset=offset
+        )
+        return {"conversations": conversations}
+    except Exception as e:
+        logger.error(f"Failed to list parallel conversations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/parallel/conversations")
+async def create_parallel_conversation(
+    request: ParallelConversationCreate,
+    user_email: str = Depends(get_current_user)
+):
+    """Create a new parallel conversation."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        conversation = store.create_conversation(
+            user_email=user_email,
+            title=request.title,
+            shared_history_mode=request.shared_history_mode,
+            metadata=request.metadata
+        )
+        return {"conversation": conversation}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create parallel conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/parallel/conversations/{conversation_id}")
+async def get_parallel_conversation(
+    conversation_id: str,
+    _: str = Depends(get_current_user)
+):
+    """Get a parallel conversation with all turns and responses."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        conversation = store.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return {"conversation": conversation}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get parallel conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.put("/parallel/conversations/{conversation_id}")
+async def update_parallel_conversation(
+    conversation_id: str,
+    title: Optional[str] = None,
+    shared_history_mode: Optional[bool] = None,
+    _: str = Depends(get_current_user)
+):
+    """Update parallel conversation settings."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        conversation = store.update_conversation(
+            conversation_id=conversation_id,
+            title=title,
+            shared_history_mode=shared_history_mode
+        )
+        return {"conversation": conversation}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update parallel conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.delete("/parallel/conversations/{conversation_id}")
+async def delete_parallel_conversation(
+    conversation_id: str,
+    _: str = Depends(get_current_user)
+):
+    """Delete a parallel conversation and all its data."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        store.delete_conversation(conversation_id)
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete parallel conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/parallel/conversations/{conversation_id}/turns")
+async def add_parallel_turn(
+    conversation_id: str,
+    request: ParallelTurnCreate,
+    _: str = Depends(get_current_user)
+):
+    """Add a new turn with responses to a parallel conversation."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        turn = store.add_turn(
+            conversation_id=conversation_id,
+            user_message=request.user_message,
+            responses=request.responses,
+            metadata=request.metadata
+        )
+        return {"turn": turn}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add parallel turn: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.delete("/parallel/turns/{turn_id}")
+async def delete_parallel_turn(
+    turn_id: str,
+    _: str = Depends(get_current_user)
+):
+    """Delete a turn and all its responses."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        store.delete_turn(turn_id)
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete parallel turn: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.put("/parallel/responses/{response_id}")
+async def update_parallel_response(
+    response_id: str,
+    request: ParallelResponseUpdate,
+    _: str = Depends(get_current_user)
+):
+    """Update a specific response (enable/disable, update content)."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        response = store.update_response(
+            response_id=response_id,
+            content=request.content,
+            enabled=request.enabled,
+            metadata=request.metadata
+        )
+        return {"response": response}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update parallel response: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.delete("/parallel/responses/{response_id}")
+async def delete_parallel_response(
+    response_id: str,
+    _: str = Depends(get_current_user)
+):
+    """Delete a specific response."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        store.delete_response(response_id)
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete parallel response: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/parallel/responses/{response_id}/regenerate")
+async def regenerate_parallel_response(
+    response_id: str,
+    request: ParallelRegenerateRequest,
+    _: str = Depends(get_current_user)
+):
+    """Update response after regeneration."""
+    try:
+        store = get_parallel_store()
+        if not store:
+            raise HTTPException(status_code=503, detail="Supabase not configured")
+        
+        response = store.regenerate_response(
+            response_id=response_id,
+            new_content=request.content,
+            new_meta=request.meta
+        )
+        return {"response": response}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to regenerate parallel response: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

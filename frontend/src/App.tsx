@@ -16,6 +16,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider } from './components/ToastProvider';
 import { PresetPrompts } from './components/PresetPrompts';
 import { ParallelChatInterface } from './components/ParallelChatInterface';
+import { ParallelConversationHistory } from './components/ParallelConversationHistory';
 import { apiClient } from './services/api';
 import { useTokenUsage } from './hooks/useTokenUsage';
 import { useModelSettings } from './hooks/useModelSettings';
@@ -34,6 +35,7 @@ function App() {
   const [currentConversationId, setCurrentConversationId] = useState<string>('default');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [chatMode, setChatMode] = useState<ChatMode>('single');
+  const [currentParallelConversationId, setCurrentParallelConversationId] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>(() => {
     // Load theme from localStorage or default to 'auto'
     try {
@@ -802,6 +804,18 @@ interface GoogleCredentialResponse {
             onDeleteConversation={handleDeleteConversation}
           />
         )}
+        {showHistory && chatMode === 'parallel' && (
+          <ParallelConversationHistory
+            currentConversationId={currentParallelConversationId}
+            onNewConversation={() => setCurrentParallelConversationId(null)}
+            onSelectConversation={(id) => setCurrentParallelConversationId(id)}
+            onConversationDeleted={(id) => {
+              if (id === currentParallelConversationId) {
+                setCurrentParallelConversationId(null);
+              }
+            }}
+          />
+        )}
         <div className="flex-1 flex flex-col min-h-0">
           {chatMode === 'parallel' ? (
             <ParallelChatInterface
@@ -809,6 +823,8 @@ interface GoogleCredentialResponse {
               generationConfig={effectiveGenerationConfig}
               systemPrompt={combinedSystemPrompt}
               onClose={() => setChatMode('single')}
+              initialConversationId={currentParallelConversationId}
+              onConversationChange={setCurrentParallelConversationId}
             />
           ) : currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
             <>

@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Bot, Zap, Eye, ChevronDown, Settings, Save } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { getMaxTokensForModel } from '../hooks/useModelSettings';
 
 // Simple debounce hook
 function useDebounce<T extends (...args: never[]) => void>(fn: T, delay: number): (...args: Parameters<T>) => void {
@@ -41,6 +42,7 @@ interface UnifiedModelMenuProps {
   // Per-model prompt props
   modelPrompt?: string;
   modelPromptHasChanges?: boolean;
+  onSaveModelPrompt?: () => Promise<void>;  // NEW: explicit save for model prompt
 }
 
 // Helper to render capability badges
@@ -64,18 +66,46 @@ const ProviderHeader: React.FC<{ provider: ModelProvider; count: number; connect
 );
 
 export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: boolean }> = ({ 
-  config, activeModel, activeProvider, onSelectModel, onManageProviders, className, loading, onUpdateModel, 
-  generationConfig, onChangeGeneration, systemPrompt, onChangeSystemPrompt,
+  config, activeModel, activeProvider, onSelectModel, onManageProviders, className, loading, onUpdateModel: _onUpdateModel, 
+  generationConfig, onChangeGeneration, systemPrompt: _systemPrompt, onChangeSystemPrompt,
   globalPrompt, onChangeGlobalPrompt, onSaveGlobalPrompt, globalPromptHasChanges,
-  modelPrompt, modelPromptHasChanges
+  modelPrompt, modelPromptHasChanges, onSaveModelPrompt
 }) => {
   const [open, setOpen] = useState(false);
   const [hoveredModelId, setHoveredModelId] = useState<string | null>(null);
-  const [settingsModelId, setSettingsModelId] = useState<string | null>(null); // Track which model's settings panel is open
+  const [settingsModelId, setSettingsModelId] = useState<string | null>(null);
   const [localGenConfig, setLocalGenConfig] = useState<Partial<GenerationConfig>>({});
+  
+  // Custom presets stored in localStorage
+  const [customPresets, setCustomPresets] = useState<Array<{name: string, prompt: string}>>(() => {
+    try {
+      const saved = localStorage.getItem('customPromptPresets');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [showSavePreset, setShowSavePreset] = useState(false);
+  const [newPresetName, setNewPresetName] = useState('');
+  
   const panelRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const listScrollRef = useRef<HTMLDivElement | null>(null);
+  
+  // Save custom preset
+  const saveCustomPreset = () => {
+    if (!newPresetName.trim() || !modelPrompt) return;
+    const updated = [...customPresets, { name: newPresetName.trim(), prompt: modelPrompt }];
+    setCustomPresets(updated);
+    localStorage.setItem('customPromptPresets', JSON.stringify(updated));
+    setNewPresetName('');
+    setShowSavePreset(false);
+  };
+  
+  // Delete custom preset
+  const deleteCustomPreset = (index: number) => {
+    const updated = customPresets.filter((_, i) => i !== index);
+    setCustomPresets(updated);
+    localStorage.setItem('customPromptPresets', JSON.stringify(updated));
+  };
   
   // Track previous active model to detect changes
   const prevActiveModelId = useRef<string | undefined>(activeModel?.id);
@@ -161,7 +191,7 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
       {open && (
         <div ref={panelRef} className={cn(
           "absolute z-50 mt-2 bg-popover text-popover-foreground border rounded-lg shadow-lg transition-all",
-          settingsModelId ? "w-[520px]" : "w-[320px]"
+          settingsModelId ? "w-[680px]" : "w-[320px]"
         )}>
           <div className="flex">
             {/* Model list */}
@@ -242,9 +272,9 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
               const isActiveModel = m?.id === activeModel?.id;
               if (!m) return null;
               return (
-                <div className="flex-1 border-l dark:border-gray-700 max-h-[70vh] overflow-y-auto">
+                <div className="flex-1 border-l dark:border-gray-700 max-h-[70vh] overflow-y-auto" style={{ minWidth: '360px' }}>
                   <div className="p-4 text-[11px]">
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center justify-between mb-3">
                       <div className="font-semibold text-sm truncate flex-1" title={m.display_name || m.name}>{m.display_name || m.name}</div>
                       <button 
                         onClick={() => setSettingsModelId(null)}
@@ -254,11 +284,181 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                         ✕
                       </button>
                     </div>
+                    
+                    {/* System Prompts FIRST - most important */}
+                    {isActiveModel && (
+                      <div className="space-y-3 mb-4 pb-4 border-b dark:border-gray-700">
+                        <div className="text-xs font-semibold">📝 System Prompts</div>
+                        
+                        {/* Global System Prompt */}
+                        <div className="space-y-1.5 p-3 rounded-lg border dark:border-gray-600 bg-card">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[11px] font-medium flex items-center gap-1.5">
+                              🌍 Global <span className="text-muted-foreground font-normal">(all models)</span>
+                            </label>
+                            {globalPromptHasChanges && (
+                              <span className="text-[10px] text-orange-500 font-medium">• unsaved</span>
+                            )}
+                          </div>
+                          <textarea 
+                            className="w-full text-xs rounded-md border dark:border-gray-600 bg-input text-foreground p-2.5 resize-none h-20 focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" 
+                            placeholder="Base instructions for ALL models..." 
+                            value={globalPrompt || ''}
+                            onChange={(e) => onChangeGlobalPrompt?.(e.target.value)}
+                          />
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-muted-foreground">
+                              {(globalPrompt || '').length} chars
+                            </span>
+                            <Button
+                              size="sm"
+                              variant={globalPromptHasChanges ? "default" : "ghost"}
+                              onClick={() => onSaveGlobalPrompt?.()}
+                              disabled={!globalPromptHasChanges}
+                              className="h-6 text-[10px] px-2"
+                            >
+                              <Save size={12} className="mr-1" />
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        {/* Per-Model System Prompt */}
+                        <div className="space-y-2 p-3 rounded-lg border dark:border-gray-600 bg-card">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[11px] font-medium flex items-center gap-1.5">
+                              🎯 Model Prompt
+                            </label>
+                            {modelPromptHasChanges && (
+                              <span className="text-[10px] text-orange-500 font-medium">• changed</span>
+                            )}
+                          </div>
+                          
+                          {/* Built-in Presets */}
+                          <div className="space-y-1.5">
+                            <div className="text-[9px] text-muted-foreground">Built-in presets:</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                onClick={() => onChangeSystemPrompt?.('You are a senior software engineer. Write clean, efficient, well-documented code with best practices.')}
+                                className="px-2 py-1 text-[10px] rounded-md bg-accent hover:bg-accent/80 text-accent-foreground transition-colors"
+                              >
+                                💻 Coder
+                              </button>
+                              <button
+                                onClick={() => onChangeSystemPrompt?.('You are an expert analyst. Think step by step, consider multiple angles, and provide thorough analysis.')}
+                                className="px-2 py-1 text-[10px] rounded-md bg-accent hover:bg-accent/80 text-accent-foreground transition-colors"
+                              >
+                                🔍 Analyst
+                              </button>
+                              <button
+                                onClick={() => onChangeSystemPrompt?.('You are a creative writer. Use vivid language, engaging storytelling, and imaginative ideas.')}
+                                className="px-2 py-1 text-[10px] rounded-md bg-accent hover:bg-accent/80 text-accent-foreground transition-colors"
+                              >
+                                ✍️ Writer
+                              </button>
+                              <button
+                                onClick={() => onChangeSystemPrompt?.('Be concise. Answer in 1-3 sentences max. No fluff.')}
+                                className="px-2 py-1 text-[10px] rounded-md bg-accent hover:bg-accent/80 text-accent-foreground transition-colors"
+                              >
+                                ⚡ Brief
+                              </button>
+                              <button
+                                onClick={() => onChangeSystemPrompt?.('')}
+                                className="px-2 py-1 text-[10px] rounded-md bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors"
+                              >
+                                ✕ Clear
+                              </button>
+                            </div>
+                          </div>
+                          
+                          {/* Custom Presets */}
+                          {customPresets.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="text-[9px] text-muted-foreground">Your presets:</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {customPresets.map((preset, idx) => (
+                                  <div key={idx} className="group relative">
+                                    <button
+                                      onClick={() => onChangeSystemPrompt?.(preset.prompt)}
+                                      className="px-2 py-1 text-[10px] rounded-md bg-primary/10 hover:bg-primary/20 text-primary transition-colors"
+                                    >
+                                      ⭐ {preset.name}
+                                    </button>
+                                    <button
+                                      onClick={() => deleteCustomPreset(idx)}
+                                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[8px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                                      title="Delete preset"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Textarea */}
+                          <textarea 
+                            className="w-full text-xs rounded-md border dark:border-gray-600 bg-input text-foreground p-2.5 resize-none h-28 focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground" 
+                            placeholder="Custom instructions for this model..." 
+                            value={modelPrompt || ''}
+                            onChange={(e) => onChangeSystemPrompt?.(e.target.value)}
+                          />
+                          
+                          {/* Footer with char count and buttons */}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-muted-foreground">
+                              {(modelPrompt || '').length} chars
+                            </span>
+                            <div className="flex gap-1.5">
+                              {/* Save Model Prompt Button */}
+                              <Button
+                                size="sm"
+                                variant={modelPromptHasChanges ? "default" : "ghost"}
+                                onClick={() => onSaveModelPrompt?.()}
+                                disabled={!modelPromptHasChanges}
+                                className="h-6 text-[10px] px-2"
+                              >
+                                <Save size={12} className="mr-1" />
+                                Save
+                              </Button>
+                              {/* Save as Preset */}
+                              {showSavePreset ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={newPresetName}
+                                    onChange={(e) => setNewPresetName(e.target.value)}
+                                    placeholder="Preset name..."
+                                    className="h-6 w-24 text-[10px] px-2 rounded border dark:border-gray-600 bg-input text-foreground"
+                                    onKeyDown={(e) => e.key === 'Enter' && saveCustomPreset()}
+                                    autoFocus
+                                  />
+                                  <Button size="sm" variant="default" onClick={saveCustomPreset} disabled={!newPresetName.trim()} className="h-6 text-[10px] px-2">
+                                    Save
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => setShowSavePreset(false)} className="h-6 text-[10px] px-1">
+                                    ✕
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setShowSavePreset(true)}
+                                  disabled={!modelPrompt}
+                                  className="h-6 text-[10px] px-2"
+                                >
+                                  + Save Preset
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
                     <div className="space-y-3">
-                      <label className="flex items-center justify-between cursor-pointer">
-                        <span className="text-xs">Enable</span>
-                        <input type="checkbox" checked={m.enabled !== false} onChange={(e) => onUpdateModel?.(providerGroup!.id, m.id, { enabled: e.target.checked })} className="accent-primary" />
-                      </label>
                       <div className="grid grid-cols-2 gap-2 text-[10px]">
                         {m.supports_streaming && <span className="px-2 py-1 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-center">Streaming</span>}
                         {m.supports_vision && <span className="px-2 py-1 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-center">Vision</span>}
@@ -277,80 +477,125 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                         <Button size="sm" variant="outline" className="flex-1" onClick={() => { onManageProviders?.(); setOpen(false); }}>Advanced</Button>
                       </div>
                       {/* Generation settings - shown when it's the active model */}
-                      {displayGenConfig && isActiveModel && (
+                      {displayGenConfig && isActiveModel && (() => {
+                        // Use centralized max tokens calculation from useModelSettings
+                        const maxTokens = getMaxTokensForModel(m);
+                        
+                        // Preset configurations - synced with useModelSettings.ts
+                        const applyMaxPreset = () => {
+                          handleGenChange({
+                            temperature: 1.0,
+                            max_tokens: maxTokens,
+                            top_p: 1.0,
+                            frequency_penalty: 0,
+                            presence_penalty: 0,
+                            reasoning_effort: 'high',
+                            verbosity: 'high',
+                            thinking_budget: -1,
+                            include_thoughts: true,
+                            free_tool_calling: true,
+                          });
+                        };
+                        
+                        const applyBalancedPreset = () => {
+                          handleGenChange({
+                            temperature: 0.7,
+                            max_tokens: Math.floor(maxTokens / 2),
+                            top_p: 0.9,
+                            frequency_penalty: 0.3,
+                            presence_penalty: 0.3,
+                            reasoning_effort: 'medium',
+                            verbosity: 'medium',
+                            thinking_budget: 10000,
+                            include_thoughts: true,
+                            free_tool_calling: true,
+                          });
+                        };
+                        
+                        const applyMinPreset = () => {
+                          handleGenChange({
+                            temperature: 0.3,
+                            max_tokens: 1024,
+                            top_p: 0.5,
+                            frequency_penalty: 0.5,
+                            presence_penalty: 0.5,
+                            reasoning_effort: 'minimal',
+                            verbosity: 'low',
+                            thinking_budget: 1000,
+                            include_thoughts: false,
+                            free_tool_calling: false,
+                          });
+                        };
+                        
+                        // Detect current preset
+                        const getCurrentPreset = (): 'MAX' | 'Balanced' | 'MIN' | 'Custom' => {
+                          if (
+                            displayGenConfig.temperature === 1.0 &&
+                            displayGenConfig.max_tokens === maxTokens &&
+                            displayGenConfig.verbosity === 'high' &&
+                            displayGenConfig.reasoning_effort === 'high'
+                          ) return 'MAX';
+                          if (
+                            displayGenConfig.temperature === 0.7 &&
+                            Math.abs((displayGenConfig.max_tokens || 0) - Math.floor(maxTokens / 2)) < 100 &&
+                            displayGenConfig.verbosity === 'medium' &&
+                            displayGenConfig.reasoning_effort === 'medium'
+                          ) return 'Balanced';
+                          if (
+                            displayGenConfig.temperature === 0.3 &&
+                            displayGenConfig.max_tokens === 1024 &&
+                            displayGenConfig.verbosity === 'low' &&
+                            displayGenConfig.reasoning_effort === 'minimal'
+                          ) return 'MIN';
+                          return 'Custom';
+                        };
+                        const currentPreset = getCurrentPreset();
+                        
+                        return (
                         <div className="pt-3 border-t mt-2 space-y-3">
-                          <div className="text-xs font-semibold">Generation Settings</div>
+                          <div className="text-xs font-semibold flex items-center justify-between">
+                            <span>Generation Settings</span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                              currentPreset === 'MAX' ? 'bg-orange-500/20 text-orange-500' :
+                              currentPreset === 'Balanced' ? 'bg-green-500/20 text-green-500' :
+                              currentPreset === 'MIN' ? 'bg-blue-500/20 text-blue-500' :
+                              'bg-gray-500/20 text-gray-500'
+                            }`}>{currentPreset}</span>
+                          </div>
                           
                           {/* Quick Presets */}
                           <div className="flex items-center gap-1.5 pb-2 border-b border-gray-200 dark:border-gray-700">
                             <span className="text-[9px] text-muted-foreground">Quick:</span>
                             <button
-                              onClick={() => {
-                                const getMaxTokensLimit = () => {
-                                  if (m.max_output_tokens) return m.max_output_tokens;
-                                  if (m.provider === 'deepseek') return m.id === 'deepseek-reasoner' ? 65536 : 32768;
-                                  if (m.provider === 'openai') {
-                                    if (m.id?.startsWith('o1') || m.id?.startsWith('o3') || m.id?.startsWith('o4')) return 100000;
-                                    if (m.id?.startsWith('gpt-5')) return 100000;
-                                    if (m.id?.includes('gpt-4o')) return 16384;
-                                    return 4096;
-                                  }
-                                  if (m.provider === 'anthropic') return 8192;
-                                  if (m.provider === 'gemini') return 65536;
-                                  return 8192;
-                                };
-                                handleGenChange({
-                                  temperature: 1.0,
-                                  max_tokens: getMaxTokensLimit(),
-                                  top_p: 1.0,
-                                  frequency_penalty: 0,
-                                  presence_penalty: 0,
-                                  reasoning_effort: 'high',
-                                  verbosity: 'high',
-                                  thinking_budget: -1,
-                                  include_thoughts: true,
-                                });
-                              }}
-                              className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-gradient-to-r from-red-500 to-orange-500 text-white hover:from-red-600 hover:to-orange-600 shadow-sm"
-                              title="🔥 MAX: temp=1.0, max tokens, high reasoning"
+                              onClick={applyMaxPreset}
+                              className={`px-1.5 py-0.5 text-[9px] font-medium rounded shadow-sm transition-all ${
+                                currentPreset === 'MAX' 
+                                  ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white ring-2 ring-orange-400' 
+                                  : 'bg-gradient-to-r from-red-500 to-orange-500 text-white hover:from-red-600 hover:to-orange-600'
+                              }`}
+                              title={`🔥 MAX: temp=1.0, ${maxTokens.toLocaleString()} tokens, high reasoning`}
                             >
                               🔥 MAX
                             </button>
                             <button
-                              onClick={() => {
-                                handleGenChange({
-                                  temperature: 0.7,
-                                  max_tokens: 8192,
-                                  top_p: 0.95,
-                                  frequency_penalty: 0,
-                                  presence_penalty: 0,
-                                  reasoning_effort: 'medium',
-                                  verbosity: 'medium',
-                                  thinking_budget: -1,
-                                  include_thoughts: false,
-                                });
-                              }}
-                              className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-sm"
-                              title="⚖️ Balanced: temp=0.7, 8K tokens, medium"
+                              onClick={applyBalancedPreset}
+                              className={`px-1.5 py-0.5 text-[9px] font-medium rounded shadow-sm transition-all ${
+                                currentPreset === 'Balanced' 
+                                  ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white ring-2 ring-green-400' 
+                                  : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600'
+                              }`}
+                              title={`⚖️ Balanced: temp=0.7, ${Math.floor(maxTokens/2).toLocaleString()} tokens, medium`}
                             >
                               ⚖️ Balanced
                             </button>
                             <button
-                              onClick={() => {
-                                handleGenChange({
-                                  temperature: 0.1,
-                                  max_tokens: 1024,
-                                  top_p: 0.5,
-                                  frequency_penalty: 0.5,
-                                  presence_penalty: 0,
-                                  reasoning_effort: 'minimal',
-                                  verbosity: 'low',
-                                  thinking_budget: 0,
-                                  include_thoughts: false,
-                                });
-                              }}
-                              className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:from-blue-600 hover:to-cyan-600 shadow-sm"
-                              title="❄️ MIN: temp=0.1, 1K tokens, fast"
+                              onClick={applyMinPreset}
+                              className={`px-1.5 py-0.5 text-[9px] font-medium rounded shadow-sm transition-all ${
+                                currentPreset === 'MIN' 
+                                  ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white ring-2 ring-blue-400' 
+                                  : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:from-blue-600 hover:to-cyan-600'
+                              }`}
+                              title="❄️ MIN: temp=0.3, 1K tokens, minimal"
                             >
                               ❄️ MIN
                             </button>
@@ -361,31 +606,11 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                             <label className="flex justify-between text-[10px] font-medium"><span>Temperature</span><span>{displayGenConfig.temperature}</span></label>
                             <input type="range" min={0} max={2} step={0.1} value={displayGenConfig.temperature} onChange={(e)=>handleGenChange({ temperature: parseFloat(e.target.value) })} className="w-full" />
                           </div>
-                          {/* Max tokens */}
+                          {/* Max tokens - uses centralized maxTokens from above */}
                           <div className="space-y-1">
-                            {(() => {
-                              const getMaxTokensLimit = () => {
-                                if (m.max_output_tokens) return m.max_output_tokens;
-                                if (m.provider === 'deepseek') return m.id === 'deepseek-reasoner' ? 65536 : 32768;
-                                if (m.provider === 'openai') {
-                                  if (m.id?.startsWith('o1') || m.id?.startsWith('o3') || m.id?.startsWith('o4')) return 100000;
-                                  if (m.id?.startsWith('gpt-5')) return 100000;
-                                  if (m.id?.includes('gpt-4o')) return 16384;
-                                  return 4096;
-                                }
-                                if (m.provider === 'anthropic') return 8192;
-                                if (m.provider === 'gemini') return 65536;
-                                return 8192;
-                              };
-                              const maxLimit = getMaxTokensLimit();
-                              return (
-                                <>
-                                  <label className="flex justify-between text-[10px] font-medium"><span>Max Tokens</span><span>{displayGenConfig.max_tokens?.toLocaleString()}</span></label>
-                                  <input type="range" min={256} max={maxLimit} step={256} value={Math.min(displayGenConfig.max_tokens || 8192, maxLimit)} onChange={(e)=>handleGenChange({ max_tokens: parseInt(e.target.value) })} className="w-full" />
-                                  <div className="text-[9px] text-muted-foreground">Max: {maxLimit.toLocaleString()} tokens</div>
-                                </>
-                              );
-                            })()}
+                            <label className="flex justify-between text-[10px] font-medium"><span>Max Tokens</span><span>{displayGenConfig.max_tokens?.toLocaleString()}</span></label>
+                            <input type="range" min={256} max={maxTokens} step={256} value={Math.min(displayGenConfig.max_tokens || 8192, maxTokens)} onChange={(e)=>handleGenChange({ max_tokens: parseInt(e.target.value) })} className="w-full" />
+                            <div className="text-[9px] text-muted-foreground">Max: {maxTokens.toLocaleString()} tokens</div>
                           </div>
                           {/* Top P */}
                           <div className="space-y-1">
@@ -474,85 +699,9 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                               </span>
                             </label>
                           </div>
-                          {/* System Prompt Editor - OpenRouter style with Global + Per-Model */}
-                          <div className="space-y-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                            <div className="text-[10px] font-semibold flex items-center gap-1">
-                              📝 System Prompts
-                              <span className="text-muted-foreground font-normal">(OpenRouter style)</span>
-                            </div>
-                            
-                            {/* Global System Prompt */}
-                            <div className="space-y-1 p-2 rounded bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
-                              <div className="flex items-center justify-between">
-                                <label className="text-[10px] font-medium text-blue-700 dark:text-blue-300 flex items-center gap-1">
-                                  🌍 Global Prompt
-                                  <span className="text-[9px] text-muted-foreground font-normal">(all models)</span>
-                                </label>
-                                {globalPromptHasChanges && (
-                                  <span className="text-[9px] text-orange-500 font-medium">• unsaved</span>
-                                )}
-                              </div>
-                              <textarea 
-                                className="w-full text-[10px] rounded border border-blue-300 dark:border-blue-700 bg-white dark:bg-background p-2 resize-none h-16 focus:outline-none focus:ring-1 focus:ring-blue-500" 
-                                placeholder="Base instructions for ALL models. Example: 'You are a helpful AI assistant.'" 
-                                value={globalPrompt || ''}
-                                onChange={(e) => onChangeGlobalPrompt?.(e.target.value)}
-                              />
-                              <div className="flex items-center justify-between">
-                                <span className="text-[9px] text-muted-foreground">
-                                  {(globalPrompt || '').length} chars
-                                </span>
-                                <Button
-                                  size="sm"
-                                  variant={globalPromptHasChanges ? "default" : "outline"}
-                                  onClick={() => onSaveGlobalPrompt?.()}
-                                  disabled={!globalPromptHasChanges}
-                                  className="h-5 text-[9px] px-2"
-                                >
-                                  <Save size={10} className="mr-1" />
-                                  Save Global
-                                </Button>
-                              </div>
-                            </div>
-                            
-                            {/* Per-Model System Prompt */}
-                            <div className="space-y-1 p-2 rounded bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800">
-                              <div className="flex items-center justify-between">
-                                <label className="text-[10px] font-medium text-purple-700 dark:text-purple-300 flex items-center gap-1">
-                                  🎯 Model Prompt
-                                  <span className="text-[9px] text-muted-foreground font-normal">({m.display_name || m.name})</span>
-                                </label>
-                                {modelPromptHasChanges && (
-                                  <span className="text-[9px] text-orange-500 font-medium">• unsaved</span>
-                                )}
-                              </div>
-                              <textarea 
-                                className="w-full text-[10px] rounded border border-purple-300 dark:border-purple-700 bg-white dark:bg-background p-2 resize-none h-16 focus:outline-none focus:ring-1 focus:ring-purple-500" 
-                                placeholder="Additional instructions for THIS model. Adds to global prompt." 
-                                value={modelPrompt || ''}
-                                onChange={(e) => onChangeSystemPrompt?.(e.target.value)}
-                              />
-                              <div className="flex items-center justify-between">
-                                <span className="text-[9px] text-muted-foreground">
-                                  {(modelPrompt || '').length} chars • Auto-saves
-                                </span>
-                              </div>
-                            </div>
-                            
-                            {/* Combined Preview */}
-                            {(globalPrompt || modelPrompt) && (
-                              <div className="p-2 rounded bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
-                                <div className="text-[9px] text-muted-foreground mb-1 flex items-center gap-1">
-                                  📋 Final prompt preview ({((globalPrompt || '') + (modelPrompt || '')).length} chars)
-                                </div>
-                                <pre className="text-[9px] text-muted-foreground whitespace-pre-wrap max-h-16 overflow-auto">
-                                  {[globalPrompt, modelPrompt].filter(Boolean).join('\n---\n') || '(empty)'}
-                                </pre>
-                              </div>
-                            )}
-                          </div>
                         </div>
-                      )}
+                        );
+                      })()}
                       {/* Show hint for non-active models */}
                       {!isActiveModel && (
                         <div className="pt-3 border-t mt-2">

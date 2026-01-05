@@ -28,6 +28,7 @@ interface TopNavigationProps {
   // Per-model prompt props  
   modelPrompt?: string;
   modelPromptHasChanges?: boolean;
+  onSaveModelPrompt?: () => Promise<void>;  // NEW: explicit save for model prompt
   tokenUsage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; estimated_cost?: number } | null;
   generationConfig?: GenerationConfig; // Per-model generation config
   health?: { status: string } | null; // API health status
@@ -44,7 +45,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
   config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration, 
   systemPrompt, onChangeSystemPrompt, 
   globalPrompt, onChangeGlobalPrompt, onSaveGlobalPrompt, globalPromptHasChanges,
-  modelPrompt, modelPromptHasChanges,
+  modelPrompt, modelPromptHasChanges, onSaveModelPrompt,
   tokenUsage, generationConfig, onCyclePreset, currentPreset 
 }) => {
   const effectiveConfig = generationConfig || config.generation;
@@ -105,6 +106,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
           // Per-model prompt props
           modelPrompt={modelPrompt}
           modelPromptHasChanges={modelPromptHasChanges}
+          onSaveModelPrompt={onSaveModelPrompt}
         />
       </div>
       

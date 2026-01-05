@@ -20,7 +20,6 @@ interface ParallelResponse {
 }
 
 interface ParallelResponseViewProps {
-  userMessage: string;
   responses: ParallelResponse[];
   onClose?: () => void;
 }
@@ -37,13 +36,14 @@ const providerColors: Record<ModelProvider, { bg: string; text: string; gradient
   chatgpt_pro: { bg: 'bg-emerald-500/10', text: 'text-emerald-500', gradient: 'from-emerald-500/20 to-emerald-500/5' },
 };
 
-// Single response column component
+// Single response column component - shows only model's response
 const ResponseColumn: React.FC<{
   response: ParallelResponse;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
 }> = ({ response, isExpanded, onToggleExpand }) => {
   const [copied, setCopied] = useState(false);
+  // Always start collapsed - user can expand manually if needed
   const [showThinking, setShowThinking] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   
@@ -64,7 +64,7 @@ const ResponseColumn: React.FC<{
 
   return (
     <div className={cn(
-      "flex flex-col h-full rounded-lg border transition-all duration-300 overflow-hidden",
+      "flex flex-col rounded-lg border transition-all duration-300 overflow-hidden",
       "bg-card border-border",
       response.isThinking && "border-purple-500/50 shadow-lg shadow-purple-500/10",
       isExpanded && "col-span-full"
@@ -86,12 +86,12 @@ const ResponseColumn: React.FC<{
             )}
           </div>
           <div>
-            <div className="text-sm font-medium text-foreground truncate max-w-[150px]">
+            <span className="text-sm font-medium text-foreground truncate max-w-[120px] block">
               {response.model.display_name}
-            </div>
-            <div className={cn("text-xs uppercase", colors.text)}>
+            </span>
+            <span className={cn("text-xs uppercase", colors.text)}>
               {response.model.provider}
-            </div>
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -116,7 +116,7 @@ const ResponseColumn: React.FC<{
         </div>
       </div>
 
-      {/* Thinking section (collapsible) */}
+      {/* Thinking section (collapsible) - always starts collapsed */}
       {(response.thinkingContent || response.isThinking) && (
         <div className="border-b border-border">
           <button
@@ -129,13 +129,8 @@ const ResponseColumn: React.FC<{
           >
             <Brain size={12} className={response.isThinking ? "text-purple-500 animate-pulse" : "text-muted-foreground"} />
             <span className={response.isThinking ? "text-purple-500" : "text-muted-foreground"}>
-              {response.isThinking ? "Thinking..." : "View reasoning"}
+              {response.isThinking ? "Thinking..." : `View reasoning${response.meta?.thought_tokens ? ` (${response.meta.thought_tokens.toLocaleString()})` : ''}`}
             </span>
-            {response.meta?.thought_tokens && (
-              <span className="text-muted-foreground">
-                ({response.meta.thought_tokens.toLocaleString()} tokens)
-              </span>
-            )}
             <ChevronRight size={12} className={cn(
               "ml-auto transition-transform",
               showThinking && "rotate-90"
@@ -151,33 +146,27 @@ const ResponseColumn: React.FC<{
         </div>
       )}
 
-      {/* Main content */}
+      {/* Response content only - no user message */}
       <div 
         ref={contentRef}
-        className="flex-1 overflow-y-auto p-3 min-h-0"
+        className="flex-1 overflow-y-auto min-h-0 p-3"
       >
         {response.error ? (
-          <div className="text-destructive text-sm">
-            ⚠️ {response.error}
-          </div>
+          <div className="text-destructive text-sm">⚠️ {response.error}</div>
         ) : !response.content && (response.isStreaming || response.isThinking) ? (
-          <div className="flex items-center gap-2 text-muted-foreground">
+          <div className="flex items-center gap-2 text-muted-foreground py-1">
             <div className="flex space-x-1">
-              <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
-            <span className="text-sm">
-              {response.isThinking ? "Reasoning..." : "Generating..."}
-            </span>
+            <span className="text-xs">{response.isThinking ? "Thinking..." : "Writing..."}</span>
           </div>
         ) : (
-          <div className="prose prose-sm max-w-none text-foreground dark:prose-invert">
-            <p className="whitespace-pre-wrap m-0">
-              {response.content}
-              {response.isStreaming && <span className="animate-pulse">▊</span>}
-            </p>
-          </div>
+          <p className="text-sm text-foreground whitespace-pre-wrap break-words">
+            {response.content}
+            {response.isStreaming && <span className="animate-pulse">▊</span>}
+          </p>
         )}
       </div>
 
@@ -209,7 +198,6 @@ const ResponseColumn: React.FC<{
 };
 
 export const ParallelResponseView: React.FC<ParallelResponseViewProps> = ({
-  userMessage,
   responses,
   onClose,
 }) => {
@@ -221,40 +209,27 @@ export const ParallelResponseView: React.FC<ParallelResponseViewProps> = ({
                   : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4';
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* User message header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
-        <div className="flex items-center gap-3 overflow-hidden">
-          <div className="p-1.5 rounded-full bg-blue-600 text-white flex-shrink-0">
-            <Bot size={14} />
-          </div>
-          <div className="overflow-hidden">
-            <div className="text-xs text-muted-foreground">Your question:</div>
-            <div className="text-sm font-medium text-foreground truncate max-w-xl">
-              {userMessage}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground px-2 py-1 bg-muted rounded-full">
-            {responses.length} models
-          </span>
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded hover:bg-muted transition-colors"
-              title="Close comparison"
-            >
-              <X size={16} className="text-muted-foreground" />
-            </button>
-          )}
-        </div>
+    <div className="flex flex-col h-full">
+      {/* Header with model count */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card/50">
+        <span className="text-xs text-muted-foreground">
+          {responses.length} model{responses.length > 1 ? 's' : ''} responding
+        </span>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-muted transition-colors"
+            title="Close comparison"
+          >
+            <X size={14} className="text-muted-foreground" />
+          </button>
+        )}
       </div>
 
       {/* Responses grid */}
       <div className={cn(
-        "flex-1 overflow-y-auto p-4",
-        expandedIndex === null ? `grid ${gridCols} gap-4` : ""
+        "flex-1 overflow-y-auto p-3",
+        expandedIndex === null ? `grid ${gridCols} gap-3 auto-rows-fr` : ""
       )}>
         {expandedIndex !== null ? (
           <ResponseColumn
