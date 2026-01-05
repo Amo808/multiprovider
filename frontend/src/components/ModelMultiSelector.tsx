@@ -85,7 +85,7 @@ export const ModelMultiSelector: React.FC<ModelMultiSelectorProps> = ({
         disabled={disabled}
         className={cn(
           "w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all duration-200",
-          "bg-card border-border hover:border-primary/50",
+          "bg-secondary dark:bg-[#2f2f2f] border-border hover:border-primary/50 text-foreground",
           disabled && "opacity-50 cursor-not-allowed",
           isExpanded && "ring-2 ring-primary/20"
         )}
@@ -135,7 +135,7 @@ export const ModelMultiSelector: React.FC<ModelMultiSelectorProps> = ({
       {isExpanded && (
         <div className={cn(
           "absolute bottom-full left-0 right-0 mb-1 z-50",
-          "bg-card border border-border rounded-lg shadow-xl",
+          "bg-popover dark:bg-[#2f2f2f] text-popover-foreground border border-border rounded-lg shadow-xl",
           "max-h-80 overflow-hidden animate-in slide-in-from-bottom-2 duration-200"
         )}>
           {/* Search */}
@@ -145,7 +145,7 @@ export const ModelMultiSelector: React.FC<ModelMultiSelectorProps> = ({
               placeholder="Search models..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-3 py-1.5 text-sm bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+              className="w-full px-3 py-1.5 text-sm bg-background dark:bg-[#1a1a1a] text-foreground border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
 
@@ -173,7 +173,7 @@ export const ModelMultiSelector: React.FC<ModelMultiSelectorProps> = ({
                             "w-full flex items-center justify-between px-2 py-1.5 rounded text-sm transition-all",
                             selected
                               ? cn(colors.bg, colors.border, "border")
-                              : "hover:bg-muted"
+                              : "hover:bg-secondary dark:hover:bg-[#3a3a3a]"
                           )}
                         >
                           <div className="flex items-center gap-2 overflow-hidden">

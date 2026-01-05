@@ -194,7 +194,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
       
       {/* Usage panel in the header */}
       <div className="ml-auto flex items-center gap-2">
-        <TokenCounter usage={tokenUsage || null} model={selectedModel?.display_name} maxTokens={selectedModel?.max_output_tokens || selectedModel?.context_length} />
+        <TokenCounter usage={tokenUsage || null} model={selectedModel?.display_name} contextLength={selectedModel?.context_length} />
         <Button variant="ghost" size="sm" onClick={onSettingsClick} className="px-3 h-8 text-xs">Settings</Button>
         <Button variant="ghost" size="sm" onClick={onThemeToggle} className="h-8 w-8 p-0" title={theme}>{themeIcon(theme)}</Button>
         {userEmail && (

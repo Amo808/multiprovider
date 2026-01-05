@@ -12,14 +12,14 @@ interface TokenUsage {
 interface TokenCounterProps {
   usage: TokenUsage | null;
   model?: string;
-  maxTokens?: number;
+  contextLength?: number;  // context_length - для прогресса общего контекста
   className?: string;
 }
 
 const TokenCounter: React.FC<TokenCounterProps> = ({ 
   usage, 
   model, 
-  maxTokens,
+  contextLength,
   className = ""
 }) => {
   const [open, setOpen] = useState(false);
@@ -39,7 +39,9 @@ const TokenCounter: React.FC<TokenCounterProps> = ({
 
   if (!usage) return null;
   const { prompt_tokens, completion_tokens, total_tokens, estimated_cost } = usage;
-  const tokenPercentage = maxTokens ? (completion_tokens / maxTokens) * 100 : 0;
+  
+  // Используем context_length для общего прогресса (total_tokens vs context)
+  const contextPercentage = contextLength ? (total_tokens / contextLength) * 100 : 0;
   
   return (
     <div className={cn('relative', className)} ref={panelRef}>
@@ -84,17 +86,19 @@ const TokenCounter: React.FC<TokenCounterProps> = ({
               </div>
             )}
           </div>
-          {maxTokens && (
-            <div className="flex items-center gap-2 pt-1">
+          {/* Context usage - total tokens vs context_length */}
+          {contextLength && (
+            <div className="space-y-1 pt-1 border-t border-border">
+              <div className="flex items-center justify-between text-[9px] text-muted-foreground">
+                <span>Context Usage</span>
+                <span>{total_tokens.toLocaleString()} / {contextLength.toLocaleString()}</span>
+              </div>
               <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                 <div 
-                  className={`${tokenPercentage>90?'bg-red-500':tokenPercentage>70?'bg-yellow-500':'bg-green-500'} h-full transition-all`} 
-                  style={{width: `${Math.min(tokenPercentage,100)}%`}} 
+                  className={`${contextPercentage>90?'bg-red-500':contextPercentage>70?'bg-yellow-500':'bg-blue-500'} h-full transition-all`} 
+                  style={{width: `${Math.min(contextPercentage,100)}%`}} 
                 />
               </div>
-              <span className="text-muted-foreground min-w-[80px] text-right text-[10px]">
-                {completion_tokens.toLocaleString()} / {maxTokens.toLocaleString()}
-              </span>
             </div>
           )}
         </div>

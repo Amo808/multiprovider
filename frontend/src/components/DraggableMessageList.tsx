@@ -357,7 +357,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
         </div>
       )}
       
-      <div ref={containerRef} className="py-4" onDragOver={handleDrag}>
+      <div ref={containerRef} className="py-6 max-w-3xl mx-auto px-4" onDragOver={handleDrag}>
         {messages.map((message, index) => {
           const isLastMessage = index === messages.length - 1;
           const keyId = `${message.id}-v${updateVersion}-${isLastMessage && isThinking ? 'thinking' : 'done'}`;

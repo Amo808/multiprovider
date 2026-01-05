@@ -103,7 +103,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
       {/* Selected Model Display */}
       <button
         onClick={handleToggle}
-        className="flex items-center space-x-3 w-full p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-300 dark:hover:border-blue-600 transition-colors"
+        className="flex items-center space-x-3 w-full p-3 bg-secondary/50 dark:bg-[#2f2f2f] border border-border rounded-xl hover:bg-secondary dark:hover:bg-[#3a3a3a] transition-colors"
       >
         <div className="flex items-center space-x-2">
           {selectedModel ? (
@@ -113,11 +113,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
           )}
         </div>
         <div className="flex-1 text-left">
-          <div className="font-medium text-gray-900 dark:text-white">
+          <div className="font-medium text-foreground">
             {selectedModel?.display_name || selectedModel?.name || 'Select Model'}
           </div>
           {selectedModel && (
-            <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
+            <div className="flex items-center space-x-2 text-sm text-muted-foreground">
               <ProviderBadge provider={selectedModel.provider} />
               <span>•</span>
               <span>{selectedModel.context_length.toLocaleString()} tokens</span>
@@ -144,7 +144,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute top-full mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto">
+        <div className="absolute top-full mt-1 w-full bg-card dark:bg-[#2f2f2f] border border-border rounded-xl shadow-lg z-50 max-h-96 overflow-y-auto">
           {availableModels.length === 0 ? (
             <div className="p-6 text-center">
               <Bot size={32} className="mx-auto mb-3 text-gray-300 dark:text-gray-600" />
@@ -174,19 +174,19 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
                   if (!provider) return null;
 
                   return (
-                    <div key={providerId} className="border-b border-gray-100 dark:border-gray-700 last:border-b-0">
+                    <div key={providerId} className="border-b border-border last:border-b-0">
                       {/* Provider Header */}
-                      <div className="px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-600">
+                      <div className="px-4 py-2 bg-secondary/50 dark:bg-[#252525] border-b border-border">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
-                            <span className="font-medium text-gray-700 dark:text-gray-300 text-sm capitalize">
+                            <span className="font-medium text-foreground text-sm capitalize">
                               {provider.id}
                             </span>
                             <span className={`w-2 h-2 rounded-full ${
                               provider.connected ? 'bg-green-500' : 'bg-red-500'
                             }`} />
                           </div>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                          <span className="text-xs text-muted-foreground">
                             {providerModels.length} model{providerModels.length !== 1 ? 's' : ''}
                           </span>
                         </div>
@@ -197,15 +197,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
                         <button
                           key={model.id}
                           onClick={() => handleModelSelect(model)}
-                          className="w-full p-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors flex items-center justify-between group"
+                          className="w-full p-3 text-left hover:bg-secondary/50 dark:hover:bg-[#3a3a3a] transition-colors flex items-center justify-between group"
                         >
                           <div className="flex items-center space-x-3 flex-1">
                             <ModelIcon model={model} />
                             <div className="flex-1">
-                              <div className="font-medium text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                              <div className="font-medium text-foreground group-hover:text-primary">
                                 {model.display_name || model.name}
                               </div>
-                              <div className="flex items-center space-x-3 text-sm text-gray-500 dark:text-gray-400">
+                              <div className="flex items-center space-x-3 text-sm text-muted-foreground">
                                 <span>{model.context_length.toLocaleString()} tokens</span>
                                 <span className={`px-1.5 py-0.5 text-xs rounded ${
                                   model.type === 'chat' 
@@ -215,13 +215,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
                                   {model.type}
                                 </span>
                                 {model.supports_functions && (
-                                  <span className="text-xs text-purple-600 dark:text-purple-400">Functions</span>
+                                  <span className="text-xs text-purple-500">Functions</span>
                                 )}
                               </div>
                             </div>
                           </div>
                           {selectedModel?.id === model.id && (
-                            <Check size={16} className="text-blue-600 dark:text-blue-400" />
+                            <Check size={16} className="text-primary" />
                           )}
                         </button>
                       ))}
@@ -232,13 +232,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = memo(({
               
               {/* Manage Providers Button */}
               {onManageProviders && (
-                <div className="p-2 border-t border-gray-100 dark:border-gray-700">
+                <div className="p-2 border-t border-border">
                   <button
                     onClick={() => {
                       onManageProviders();
                       setIsOpen(false);
                     }}
-                    className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+                    className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm font-medium text-primary hover:bg-secondary/50 rounded-md transition-colors"
                   >
                     <Settings size={14} />
                     <span>Manage Providers</span>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Square, Bot, Layers, X, GitMerge, GitBranch, User, Trash2, Eye, EyeOff, RefreshCw, Copy, FolderOpen, ChevronDown, Plus, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { Send, Square, Bot, Layers, X, GitMerge, GitBranch, User, Trash2, Eye, EyeOff, RefreshCw, Copy, FolderOpen, ChevronDown, Plus, Check, AlertCircle, Loader2, ArrowUp, ArrowDown, Sparkles, GripVertical, Brain, Edit2 } from 'lucide-react';
 import { ModelInfo, GenerationConfig, Message } from '../types';
 import { Button } from './ui/button';
 import { ModelMultiSelector } from './ModelMultiSelector';
@@ -7,6 +7,57 @@ import { ParallelResponseView } from './ParallelResponseView';
 import { useParallelChat } from '../hooks/useParallelChat';
 import { cn } from '../lib/utils';
 import { parallelAPI, ParallelConversation, ParallelTurn } from '../services/parallelConversationsAPI';
+
+// Collapsible thinking section component
+const ThinkingSection: React.FC<{
+  content: string;
+  tokens?: number;
+  isStreaming?: boolean;
+}> = ({ content, tokens, isStreaming }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [showFull, setShowFull] = useState(false);
+  const isLong = content.length > 500;
+  const displayContent = showFull || !isLong ? content : content.substring(0, 500) + '...';
+
+  if (!content && !tokens) return null;
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={cn(
+          "flex items-center gap-1.5 text-[10px] transition-colors w-full",
+          isStreaming ? "text-purple-500" : "text-muted-foreground hover:text-foreground"
+        )}
+      >
+        <Brain className={cn("w-3 h-3", isStreaming && "animate-pulse")} />
+        <span>{isStreaming ? "Thinking..." : "Thought process"}</span>
+        {tokens && tokens > 0 && (
+          <span className="text-muted-foreground">({tokens.toLocaleString()})</span>
+        )}
+        <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", isOpen && "rotate-180")} />
+      </button>
+      
+      {isOpen && content && (
+        <div className="mt-1.5 pl-3 border-l-2 border-purple-500/30 max-h-32 overflow-y-auto">
+          <pre className="text-[10px] text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">
+            {displayContent}
+            {isStreaming && <span className="inline-block w-1 h-3 bg-purple-500 animate-pulse ml-0.5" />}
+          </pre>
+          {isLong && !isStreaming && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowFull(!showFull); }}
+              className="mt-1 text-[9px] text-primary hover:underline flex items-center gap-0.5"
+            >
+              {showFull ? <EyeOff className="w-2.5 h-2.5" /> : <Eye className="w-2.5 h-2.5" />}
+              {showFull ? 'Less' : 'More'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface ParallelChatInterfaceProps {
   availableModels: ModelInfo[];
@@ -28,12 +79,14 @@ interface ConversationTurn {
     content: string;
     enabled: boolean;
     dbId?: string; // Database ID for response
+    thinkingContent?: string; // Reasoning/thinking content
     meta?: {
       tokens_in?: number;
       tokens_out?: number;
       thought_tokens?: number;
       estimated_cost?: number;
       total_latency?: number;
+      reasoning_content?: string;
     };
   }>;
 }
@@ -78,9 +131,25 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Track regeneration state: which turn/response is being regenerated
   const [regeneratingInfo, setRegeneratingInfo] = useState<{turnId: string; responseIndex: number; dbId?: string} | null>(null);
   
+  // Drag & Drop state
+  const [draggedResponse, setDraggedResponse] = useState<{turnId: string; responseIndex: number} | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<{turnId: string; responseIndex: number} | null>(null);
+  
+  // Inline Edit state for user messages
+  const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
+  const [editingMessage, setEditingMessage] = useState('');
+  
+  // Custom context popup for smart regenerate
+  const [smartRegeneratePopup, setSmartRegeneratePopup] = useState<{
+    turnId: string;
+    responseIndex: number;
+    customContext: string;
+  } | null>(null);
+  
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const conversationListRef = useRef<HTMLDivElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const {
     responses,
@@ -113,6 +182,32 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Close smart regenerate popup when clicking outside or pressing Escape
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Don't close if clicking inside the popup
+      if (smartRegeneratePopup && !target.closest('[data-smart-regenerate-popup]')) {
+        // Check if clicked on the sparkles button itself
+        if (!target.closest('button')) {
+          setSmartRegeneratePopup(null);
+        }
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSmartRegeneratePopup(null);
+        cancelEditing();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [smartRegeneratePopup]);
 
   // Load saved conversations on mount
   useEffect(() => {
@@ -419,6 +514,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             model: r.model,
             content: r.content,
             enabled: true,
+            thinkingContent: r.thinkingContent,
             meta: r.meta,
           })),
         };
@@ -484,6 +580,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     const historyContext = history && history.length > 0 
       ? '\n\n[PREVIOUS CONVERSATION]:\n' + history.map(m => `${m.role}: ${m.content}`).join('\n\n') + '\n\n[END PREVIOUS CONVERSATION]\n'
       : '';
+    
+    // DEBUG: Log what's being sent
+    if (historyContext) {
+      console.log('[Send Message] Shared history context:');
+      console.log('------- CONTEXT START -------');
+      console.log(historyContext + message);
+      console.log('------- CONTEXT END -------');
+    }
     
     await sendParallelMessages(
       historyContext + message, 
@@ -557,6 +661,133 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     });
   };
 
+  // Move response up within the same turn
+  const moveResponseUp = (turnId: string, responseIndex: number) => {
+    if (responseIndex === 0) return;
+    setConversationHistory(prev => prev.map(turn => {
+      if (turn.id === turnId) {
+        const newResponses = [...turn.responses];
+        [newResponses[responseIndex - 1], newResponses[responseIndex]] = 
+          [newResponses[responseIndex], newResponses[responseIndex - 1]];
+        return { ...turn, responses: newResponses };
+      }
+      return turn;
+    }));
+  };
+
+  // Move response down within the same turn
+  const moveResponseDown = (turnId: string, responseIndex: number) => {
+    const turn = conversationHistory.find(t => t.id === turnId);
+    if (!turn || responseIndex >= turn.responses.length - 1) return;
+    setConversationHistory(prev => prev.map(t => {
+      if (t.id === turnId) {
+        const newResponses = [...t.responses];
+        [newResponses[responseIndex], newResponses[responseIndex + 1]] = 
+          [newResponses[responseIndex + 1], newResponses[responseIndex]];
+        return { ...t, responses: newResponses };
+      }
+      return t;
+    }));
+  };
+
+  // Move entire turn up
+  const moveTurnUp = (turnId: string) => {
+    const turnIndex = conversationHistory.findIndex(t => t.id === turnId);
+    if (turnIndex <= 0) return;
+    setConversationHistory(prev => {
+      const newHistory = [...prev];
+      [newHistory[turnIndex - 1], newHistory[turnIndex]] = 
+        [newHistory[turnIndex], newHistory[turnIndex - 1]];
+      return newHistory;
+    });
+  };
+
+  // Move entire turn down
+  const moveTurnDown = (turnId: string) => {
+    const turnIndex = conversationHistory.findIndex(t => t.id === turnId);
+    if (turnIndex < 0 || turnIndex >= conversationHistory.length - 1) return;
+    setConversationHistory(prev => {
+      const newHistory = [...prev];
+      [newHistory[turnIndex], newHistory[turnIndex + 1]] = 
+        [newHistory[turnIndex + 1], newHistory[turnIndex]];
+      return newHistory;
+    });
+  };
+
+  // Drag & Drop handlers
+  const handleDragStart = (turnId: string, responseIndex: number) => {
+    setDraggedResponse({ turnId, responseIndex });
+  };
+
+  const handleDragOver = (e: React.DragEvent, turnId: string, responseIndex: number) => {
+    e.preventDefault();
+    if (draggedResponse && (draggedResponse.turnId !== turnId || draggedResponse.responseIndex !== responseIndex)) {
+      setDragOverTarget({ turnId, responseIndex });
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverTarget(null);
+  };
+
+  const handleDrop = (targetTurnId: string, targetIndex: number) => {
+    if (!draggedResponse) return;
+    
+    const { turnId: sourceTurnId, responseIndex: sourceIndex } = draggedResponse;
+    
+    if (sourceTurnId === targetTurnId) {
+      // Same turn - reorder within turn
+      setConversationHistory(prev => prev.map(turn => {
+        if (turn.id === sourceTurnId) {
+          const newResponses = [...turn.responses];
+          const [movedResp] = newResponses.splice(sourceIndex, 1);
+          newResponses.splice(targetIndex, 0, movedResp);
+          return { ...turn, responses: newResponses };
+        }
+        return turn;
+      }));
+    } else {
+      // Different turns - move response between turns
+      setConversationHistory(prev => {
+        let movedResponse: typeof prev[0]['responses'][0] | null = null;
+        
+        // First, remove from source
+        const afterRemove = prev.map(turn => {
+          if (turn.id === sourceTurnId) {
+            movedResponse = turn.responses[sourceIndex];
+            return {
+              ...turn,
+              responses: turn.responses.filter((_, idx) => idx !== sourceIndex)
+            };
+          }
+          return turn;
+        }).filter(turn => turn.responses.length > 0);
+        
+        // Then, add to target
+        if (movedResponse) {
+          return afterRemove.map(turn => {
+            if (turn.id === targetTurnId) {
+              const newResponses = [...turn.responses];
+              newResponses.splice(targetIndex, 0, movedResponse!);
+              return { ...turn, responses: newResponses };
+            }
+            return turn;
+          });
+        }
+        
+        return afterRemove;
+      });
+    }
+    
+    setDraggedResponse(null);
+    setDragOverTarget(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedResponse(null);
+    setDragOverTarget(null);
+  };
+
   // Regenerate a specific model's response (with Supabase sync)
   const regenerateResponse = async (turnId: string, responseIndex: number) => {
     const turn = conversationHistory.find(t => t.id === turnId);
@@ -608,6 +839,182 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     await navigator.clipboard.writeText(content);
   };
 
+  // Start editing a user message
+  const startEditingMessage = (turnId: string, currentMessage: string) => {
+    setEditingTurnId(turnId);
+    setEditingMessage(currentMessage);
+    // Focus textarea after render
+    setTimeout(() => editTextareaRef.current?.focus(), 50);
+  };
+
+  // Cancel editing
+  const cancelEditing = () => {
+    setEditingTurnId(null);
+    setEditingMessage('');
+  };
+
+  // Save edited message and regenerate all responses
+  const saveEditedMessage = async (turnId: string) => {
+    const turn = conversationHistory.find(t => t.id === turnId);
+    if (!turn || !editingMessage.trim() || isLoading) return;
+
+    const newMessage = editingMessage.trim();
+    
+    // Update the message in history
+    setConversationHistory(prev => prev.map(t => {
+      if (t.id === turnId) {
+        return { ...t, userMessage: newMessage };
+      }
+      return t;
+    }));
+
+    // TODO: Update in Supabase if needed
+    
+    cancelEditing();
+    
+    // Optionally regenerate all responses for this turn with the new message
+    // This would require sending to all models again
+    // For now, just update the message - user can manually regenerate
+  };
+
+  // Save and regenerate all responses with edited message
+  const saveAndRegenerateAll = async (turnId: string) => {
+    const turn = conversationHistory.find(t => t.id === turnId);
+    if (!turn || !editingMessage.trim() || isLoading) return;
+
+    const newMessage = editingMessage.trim();
+    const modelsToRegenerate = turn.responses.map(r => r.model);
+    const enhancedPrompt = getEnhancedSystemPrompt();
+    
+    // Find history up to this turn (exclude this turn)
+    const turnIndex = conversationHistory.findIndex(t => t.id === turnId);
+    const historyBeforeTurn = conversationHistory.slice(0, turnIndex);
+    const historyContext = historyBeforeTurn.length > 0 
+      ? '\n\n[PREVIOUS CONVERSATION]:\n' + historyBeforeTurn.map(t => 
+          `user: ${t.userMessage}\n\nassistant: ${t.responses.filter(r => r.enabled).map(r => r.content).join('\n---\n')}`
+        ).join('\n\n') + '\n\n[END PREVIOUS CONVERSATION]\n'
+      : '';
+    
+    // Update the message
+    setConversationHistory(prev => prev.map(t => {
+      if (t.id === turnId) {
+        return { 
+          ...t, 
+          userMessage: newMessage,
+          responses: t.responses.map(r => ({
+            ...r,
+            content: '⏳ Regenerating with edited message...'
+          }))
+        };
+      }
+      return t;
+    }));
+
+    cancelEditing();
+    
+    // We need custom logic here - regenerate all responses in the turn
+    // For simplicity, we'll store the turn info and handle in useEffect
+    // Actually, let's just create a new "turn" after this one and delete this one
+    // OR we can use the existing regenerate flow with a special flag
+    
+    // Simple approach: Clear this turn's responses and send new request
+    setCurrentUserMessage(newMessage);
+    
+    // Remove this turn temporarily and add responses as they come
+    setConversationHistory(prev => prev.filter(t => t.id !== turnId));
+    
+    await sendParallelMessages(
+      historyContext + newMessage, 
+      modelsToRegenerate, 
+      generationConfig, 
+      enhancedPrompt
+    );
+  };
+
+  // Open smart regenerate popup
+  const openSmartRegeneratePopup = (turnId: string, responseIndex: number) => {
+    setSmartRegeneratePopup({ turnId, responseIndex, customContext: '' });
+  };
+
+  // Execute smart regenerate with custom context
+  const executeSmartRegenerate = async (customContext?: string) => {
+    if (!smartRegeneratePopup) return;
+    const { turnId, responseIndex } = smartRegeneratePopup;
+    
+    const turn = conversationHistory.find(t => t.id === turnId);
+    if (!turn || isLoading) return;
+    
+    const responseToRegenerate = turn.responses[responseIndex];
+    const modelToRegenerate = responseToRegenerate.model;
+    const enhancedPrompt = getEnhancedSystemPrompt();
+    
+    // Build FULL context from ALL enabled responses across ALL turns
+    const fullContext = conversationHistory.map(t => {
+      const enabledResponses = t.responses.filter((r, idx) => {
+        if (t.id === turnId && idx === responseIndex) return false;
+        return r.enabled;
+      });
+      
+      if (enabledResponses.length === 0 && t.id !== turnId) return null;
+      
+      const responsesText = enabledResponses.map(r => 
+        `[${r.model.display_name || r.model.name}]: ${r.content}`
+      ).join('\n\n---\n\n');
+      
+      return {
+        userMessage: t.userMessage,
+        responses: responsesText
+      };
+    }).filter(Boolean);
+    
+    let contextString = fullContext.length > 0
+      ? '\n\n[FULL CONVERSATION CONTEXT - All enabled responses]:\n' + 
+        fullContext.map(c => `USER: ${c!.userMessage}\n\nRESPONSES:\n${c!.responses}`).join('\n\n=====\n\n') +
+        '\n\n[END CONTEXT]\n'
+      : '';
+    
+    // Add custom context if provided
+    if (customContext && customContext.trim()) {
+      contextString += `\n\n[ADDITIONAL INSTRUCTIONS]:\n${customContext.trim()}\n\n`;
+    }
+    
+    contextString += 'Now respond to this specific message:';
+    
+    // DEBUG: Log what's being sent to the model
+    console.log('[Smart Regenerate] Full context being sent:');
+    console.log('------- CONTEXT START -------');
+    console.log(contextString + turn.userMessage);
+    console.log('------- CONTEXT END -------');
+    console.log('[Smart Regenerate] Enabled responses per turn:', fullContext.length);
+    
+    // Set regenerating info
+    setRegeneratingInfo({ turnId, responseIndex, dbId: responseToRegenerate.dbId });
+    
+    // Mark as regenerating
+    setConversationHistory(prev => prev.map(t => {
+      if (t.id === turnId) {
+        const newResponses = [...t.responses];
+        newResponses[responseIndex] = {
+          ...newResponses[responseIndex],
+          content: customContext?.trim() 
+            ? '✨ Smart regenerating with custom instructions...' 
+            : '✨ Smart regenerating with full context...',
+        };
+        return { ...t, responses: newResponses };
+      }
+      return t;
+    }));
+    
+    setSmartRegeneratePopup(null);
+    
+    await sendParallelMessages(
+      contextString + turn.userMessage, 
+      [modelToRegenerate], 
+      generationConfig, 
+      enhancedPrompt
+    );
+  };
+
   const canSend = inputValue.trim() && selectedModels.length > 0 && !isLoading;
 
   // Check if there's anything to show in chat area
@@ -616,7 +1023,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className={cn(
             "p-1.5 rounded",
@@ -650,7 +1057,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               }}
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-                "bg-muted text-muted-foreground hover:bg-muted/80 border border-border"
+                "bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border"
               )}
               title="Load saved conversation"
             >
@@ -664,13 +1071,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             
             {/* Dropdown menu */}
             {showConversationList && (
-              <div className="absolute right-0 top-full mt-1 w-72 bg-popover border border-border rounded-lg shadow-lg z-50 max-h-80 overflow-hidden flex flex-col">
+              <div className="absolute right-0 top-full mt-1 w-72 bg-popover text-popover-foreground border border-border rounded-lg shadow-lg z-50 max-h-80 overflow-hidden flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between p-2 border-b border-border">
                   <span className="text-xs font-medium text-muted-foreground">Saved Conversations</span>
                   <button
                     onClick={handleNewComparison}
-                    className="flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-muted text-primary"
+                    className="flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-secondary text-primary"
                   >
                     <Plus size={12} />
                     New
@@ -692,8 +1099,8 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                       <div
                         key={conv.id}
                         className={cn(
-                          "flex items-center justify-between px-3 py-2 hover:bg-muted/50 cursor-pointer group",
-                          conv.id === supabaseConversationId && "bg-muted"
+                          "flex items-center justify-between px-3 py-2 hover:bg-secondary/50 cursor-pointer group",
+                          conv.id === supabaseConversationId && "bg-secondary"
                         )}
                       >
                         <div 
@@ -846,24 +1253,103 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           /* Chat history and current responses */
           <div className="p-4 space-y-4">
             {/* Previous conversation history */}
-            {conversationHistory.map((turn) => (
-              <div key={turn.id} className="space-y-3 group/turn">
-                {/* User message bubble with delete button */}
+            {conversationHistory.map((turn, turnIndex) => (
+              <div key={turn.id} className="space-y-3 group/turn relative">
+                {/* Turn controls - move up/down */}
+                <div className="absolute -left-12 top-0 flex flex-col gap-1 opacity-0 group-hover/turn:opacity-100 transition-opacity">
+                  {turnIndex > 0 && (
+                    <button
+                      onClick={() => moveTurnUp(turn.id)}
+                      className="p-1 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground"
+                      title="Move turn up"
+                    >
+                      <ArrowUp size={12} />
+                    </button>
+                  )}
+                  {turnIndex < conversationHistory.length - 1 && (
+                    <button
+                      onClick={() => moveTurnDown(turn.id)}
+                      className="p-1 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground"
+                      title="Move turn down"
+                    >
+                      <ArrowDown size={12} />
+                    </button>
+                  )}
+                </div>
+                
+                {/* User message bubble - ChatGPT style with inline edit */}
                 <div className="flex justify-end">
                   <div className="flex items-start gap-2 max-w-[80%] relative group/user">
-                    {/* Delete turn button */}
-                    <button
-                      onClick={() => deleteTurn(turn.id)}
-                      className="opacity-0 group-hover/user:opacity-100 transition-opacity p-1.5 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive absolute -left-10 top-1"
-                      title="Delete this turn"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                    <div className="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2">
-                      <p className="text-sm whitespace-pre-wrap break-words">{turn.userMessage}</p>
+                    {/* Action buttons - left side */}
+                    <div className="opacity-0 group-hover/user:opacity-100 transition-opacity absolute -left-20 top-1 flex items-center gap-1">
+                      {/* Delete turn button */}
+                      <button
+                        onClick={() => deleteTurn(turn.id)}
+                        className="p-1.5 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive"
+                        title="Delete this turn"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      {/* Edit button */}
+                      {editingTurnId !== turn.id && (
+                        <button
+                          onClick={() => startEditingMessage(turn.id, turn.userMessage)}
+                          className="p-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground"
+                          title="Edit message"
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                      )}
                     </div>
-                    <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
-                      <User size={16} className="text-white" />
+                    
+                    {/* Message content - either text or edit textarea */}
+                    {editingTurnId === turn.id ? (
+                      <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground rounded-2xl rounded-br-md px-3 py-2 w-full">
+                        <textarea
+                          ref={editTextareaRef}
+                          value={editingMessage}
+                          onChange={(e) => setEditingMessage(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') cancelEditing();
+                            if (e.key === 'Enter' && e.ctrlKey) saveEditedMessage(turn.id);
+                          }}
+                          className="w-full text-sm bg-transparent resize-none focus:outline-none min-h-[60px] max-h-[200px]"
+                          placeholder="Edit your message..."
+                          rows={3}
+                        />
+                        <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-border/30">
+                          <button
+                            onClick={cancelEditing}
+                            className="px-2 py-1 text-xs rounded bg-muted hover:bg-muted/80 text-muted-foreground"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => saveEditedMessage(turn.id)}
+                            className="px-2 py-1 text-xs rounded bg-primary/10 hover:bg-primary/20 text-primary"
+                            title="Save (Ctrl+Enter)"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => saveAndRegenerateAll(turn.id)}
+                            className="px-2 py-1 text-xs rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-500 flex items-center gap-1"
+                            title="Save and regenerate all responses"
+                            disabled={isLoading}
+                          >
+                            <RefreshCw size={10} />
+                            Regenerate All
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground rounded-2xl rounded-br-md px-4 py-2">
+                        <p className="text-sm whitespace-pre-wrap break-words">{turn.userMessage}</p>
+                      </div>
+                    )}
+                    
+                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                      <User size={16} className="text-primary-foreground" />
                     </div>
                   </div>
                 </div>
@@ -880,13 +1366,44 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                       {turn.responses.map((resp, idx) => (
                         <div 
                           key={idx}
+                          draggable
+                          onDragStart={() => handleDragStart(turn.id, idx)}
+                          onDragOver={(e) => handleDragOver(e, turn.id, idx)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={() => handleDrop(turn.id, idx)}
+                          onDragEnd={handleDragEnd}
                           className={cn(
-                            "rounded-lg border px-3 py-2 group/resp relative transition-all max-h-[300px] overflow-hidden flex flex-col",
+                            "rounded-lg border px-3 py-2 group/resp relative transition-all max-h-[300px] overflow-hidden flex flex-col cursor-grab active:cursor-grabbing",
                             resp.enabled 
                               ? providerColors[resp.model.provider] || providerColors.ollama
                               : "bg-muted/30 border-border/50 opacity-60",
+                            draggedResponse?.turnId === turn.id && draggedResponse?.responseIndex === idx && "opacity-50 scale-95",
+                            dragOverTarget?.turnId === turn.id && dragOverTarget?.responseIndex === idx && "ring-2 ring-primary ring-offset-2",
                           )}
                         >
+                          {/* Drag handle & position controls */}
+                          <div className="absolute left-1 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 opacity-0 group-hover/resp:opacity-100 transition-opacity">
+                            <GripVertical size={10} className="text-muted-foreground cursor-grab" />
+                            {idx > 0 && (
+                              <button
+                                onClick={() => moveResponseUp(turn.id, idx)}
+                                className="p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground"
+                                title="Move left"
+                              >
+                                <ArrowUp size={10} className="rotate-[-90deg]" />
+                              </button>
+                            )}
+                            {idx < turn.responses.length - 1 && (
+                              <button
+                                onClick={() => moveResponseDown(turn.id, idx)}
+                                className="p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground"
+                                title="Move right"
+                              >
+                                <ArrowDown size={10} className="rotate-[-90deg]" />
+                              </button>
+                            )}
+                          </div>
+                          
                           {/* Response header with model name and action buttons */}
                           <div className="flex items-center justify-between mb-1">
                             <div className="text-xs font-medium flex items-center gap-1">
@@ -922,15 +1439,80 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                 {resp.enabled ? <EyeOff size={12} /> : <Eye size={12} />}
                               </button>
                               
-                              {/* Regenerate button */}
+                              {/* Simple Regenerate button */}
                               <button
                                 onClick={() => regenerateResponse(turn.id, idx)}
                                 className="p-1 rounded hover:bg-blue-500/20 text-muted-foreground hover:text-blue-500 transition-colors"
-                                title="Regenerate this response"
+                                title="Regenerate (uses context before this turn)"
                                 disabled={isLoading}
                               >
                                 <RefreshCw size={12} />
                               </button>
+                              
+                              {/* Smart Regenerate - uses ALL enabled responses */}
+                              <div className="relative">
+                                <button
+                                  onClick={() => openSmartRegeneratePopup(turn.id, idx)}
+                                  className="p-1 rounded hover:bg-purple-500/20 text-muted-foreground hover:text-purple-500 transition-colors"
+                                  title="✨ Smart regenerate (uses ALL enabled responses as context)"
+                                  disabled={isLoading}
+                                >
+                                  <Sparkles size={12} />
+                                </button>
+                                
+                                {/* Smart Regenerate Popup */}
+                                {smartRegeneratePopup?.turnId === turn.id && smartRegeneratePopup?.responseIndex === idx && (
+                                  <div 
+                                    data-smart-regenerate-popup
+                                    className="absolute right-0 top-full mt-1 w-72 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl z-50 p-3"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="text-xs font-medium flex items-center gap-1">
+                                        <Sparkles size={12} className="text-purple-500" />
+                                        Smart Regenerate
+                                      </span>
+                                      <button 
+                                        onClick={() => setSmartRegeneratePopup(null)}
+                                        className="p-0.5 rounded hover:bg-muted text-muted-foreground"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                    <p className="text-[10px] text-muted-foreground mb-2">
+                                      Add custom instructions (optional). All enabled responses will be used as context.
+                                    </p>
+                                    <textarea
+                                      value={smartRegeneratePopup.customContext}
+                                      onChange={(e) => setSmartRegeneratePopup(prev => prev ? {...prev, customContext: e.target.value} : null)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Escape') setSmartRegeneratePopup(null);
+                                        if (e.key === 'Enter' && e.ctrlKey) executeSmartRegenerate(smartRegeneratePopup.customContext);
+                                      }}
+                                      placeholder="e.g. Focus more on technical details, be more concise..."
+                                      className="w-full text-xs bg-secondary border border-border rounded-md p-2 resize-none focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+                                      rows={3}
+                                      autoFocus
+                                    />
+                                    <div className="flex items-center justify-end gap-2 mt-2">
+                                      <button
+                                        onClick={() => setSmartRegeneratePopup(null)}
+                                        className="px-2 py-1 text-xs rounded bg-muted hover:bg-muted/80 text-muted-foreground"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        onClick={() => executeSmartRegenerate(smartRegeneratePopup.customContext)}
+                                        className="px-2 py-1 text-xs rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-500 flex items-center gap-1"
+                                        disabled={isLoading}
+                                      >
+                                        <Sparkles size={10} />
+                                        {smartRegeneratePopup.customContext?.trim() ? 'Regenerate' : 'Quick Regenerate'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                               
                               {/* Delete response button */}
                               <button
@@ -942,6 +1524,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               </button>
                             </div>
                           </div>
+                          
+                          {/* Thinking/Reasoning section - collapsible */}
+                          {(resp.thinkingContent || (resp.meta?.thought_tokens && resp.meta.thought_tokens > 0)) && (
+                            <ThinkingSection 
+                              content={resp.thinkingContent || ''} 
+                              tokens={resp.meta?.thought_tokens}
+                            />
+                          )}
                           
                           {/* Response content - scrollable */}
                           <div className={cn(
@@ -979,14 +1569,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             {/* Current turn - streaming responses */}
             {responses.length > 0 && (
               <div className="space-y-3">
-                {/* Current user message */}
+                {/* Current user message - ChatGPT style */}
                 <div className="flex justify-end">
                   <div className="flex items-start gap-2 max-w-[80%]">
-                    <div className="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2">
+                    <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground rounded-2xl rounded-br-md px-4 py-2">
                       <p className="text-sm whitespace-pre-wrap break-words">{currentUserMessage}</p>
                     </div>
-                    <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
-                      <User size={16} className="text-white" />
+                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                      <User size={16} className="text-primary-foreground" />
                     </div>
                   </div>
                 </div>
@@ -1005,8 +1595,8 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         )}
       </div>
 
-      {/* Input area */}
-      <div className="border-t border-border bg-card p-4 flex-shrink-0 space-y-3">
+      {/* Input area - ChatGPT style */}
+      <div className="border-t border-border bg-background p-4 flex-shrink-0 space-y-3">
         {/* Model selector */}
         <ModelMultiSelector
           availableModels={availableModels}
@@ -1016,9 +1606,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           disabled={isLoading}
         />
 
-        {/* Input form */}
-        <form onSubmit={handleSubmit} className="flex gap-3">
-          <div className="flex-1 relative">
+        {/* Input form - ChatGPT style */}
+        <form onSubmit={handleSubmit} className="relative">
+          <div className="flex items-end gap-2 bg-secondary dark:bg-[#2f2f2f] rounded-2xl border border-border p-2">
             <textarea
               ref={textareaRef}
               value={inputValue}
@@ -1030,64 +1620,80 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   : `Send to ${selectedModels.length} model${selectedModels.length > 1 ? 's' : ''}...`
               }
               className={cn(
-                "w-full px-4 py-3 border rounded-lg resize-none",
-                "focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring",
-                "bg-background text-foreground placeholder:text-muted-foreground",
-                "border-border",
-                selectedModels.length > 0 && "border-purple-500/30"
+                "flex-1 px-3 py-2 resize-none bg-transparent text-foreground placeholder:text-muted-foreground",
+                "focus:outline-none border-0",
               )}
               rows={1}
-              style={{ minHeight: '48px', maxHeight: '120px' }}
+              style={{ minHeight: '40px', maxHeight: '120px' }}
               disabled={selectedModels.length === 0 || isLoading}
             />
-          </div>
 
-          <div className="flex gap-2">
-            {conversationHistory.length > 0 && !isLoading && (
-              <Button
-                type="button"
-                onClick={handleNewComparison}
-                variant="outline"
-                title="New conversation"
-              >
-                <Plus size={18} />
-              </Button>
-            )}
-            
-            {isLoading ? (
-              <Button
-                type="button"
-                onClick={cancelAll}
-                variant="destructive"
-                className="px-6"
-              >
-                <Square size={18} />
-                <span className="ml-2">Stop</span>
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                disabled={!canSend}
-                className={cn(
-                  "px-6",
-                  canSend && "bg-purple-600 hover:bg-purple-700"
-                )}
-              >
-                <Send size={18} />
-              </Button>
-            )}
+            <div className="flex items-center gap-1">
+              {conversationHistory.length > 0 && !isLoading && (
+                <Button
+                  type="button"
+                  onClick={handleNewComparison}
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 w-9 p-0 rounded-full"
+                  title="New conversation"
+                >
+                  <Plus size={18} />
+                </Button>
+              )}
+              
+              {isLoading ? (
+                <Button
+                  type="button"
+                  onClick={cancelAll}
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 w-9 p-0 rounded-full bg-destructive/10 hover:bg-destructive/20 text-destructive"
+                >
+                  <Square size={18} />
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  disabled={!canSend}
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    "h-9 w-9 p-0 rounded-full transition-colors",
+                    canSend 
+                      ? "bg-purple-600 hover:bg-purple-700 text-white" 
+                      : "text-muted-foreground"
+                  )}
+                >
+                  <Send size={18} />
+                </Button>
+              )}
+            </div>
           </div>
         </form>
 
         {/* Status bar */}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {selectedModels.length > 0 && (
               <span className="flex items-center gap-1">
                 <Layers size={12} />
                 {selectedModels.length} model{selectedModels.length > 1 ? 's' : ''}
               </span>
             )}
+            {/* Context stats */}
+            {conversationHistory.length > 0 && (() => {
+              const totalResponses = conversationHistory.reduce((acc, t) => acc + t.responses.length, 0);
+              const enabledResponses = conversationHistory.reduce((acc, t) => acc + t.responses.filter(r => r.enabled).length, 0);
+              return (
+                <span className="flex items-center gap-1">
+                  <Eye size={12} className={enabledResponses > 0 ? "text-green-500" : ""} />
+                  <span className={enabledResponses > 0 ? "text-green-500" : ""}>
+                    {enabledResponses}/{totalResponses} in context
+                  </span>
+                </span>
+              );
+            })()}
             {isLoading && (
               <span className="flex items-center gap-1 text-purple-500">
                 <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse" />
@@ -1095,7 +1701,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               </span>
             )}
           </div>
-          <div>
+          <div className="flex items-center gap-2">
+            {sharedHistoryMode && (
+              <span className="flex items-center gap-1 text-green-500">
+                <GitMerge size={12} />
+                Shared context
+              </span>
+            )}
             {responses.length > 0 && isLoading && (
               <span>
                 {responses.filter(r => !r.isStreaming && r.content).length}/{responses.length} complete

@@ -525,43 +525,56 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       <div className="flex-1 overflow-y-auto min-h-0">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center max-w-md mx-auto px-4">
-              <Bot size={64} className="mx-auto mb-4 text-muted-foreground" />
-              <h2 className="text-2xl font-bold text-foreground mb-2">
-                Welcome to MULTECH AI
-              </h2>
-              <p className="text-muted-foreground mb-6">
-                Start a conversation with your AI assistant. Choose a model and begin chatting!
-              </p>
-              {selectedModel && selectedProvider ? (
-                <div className="bg-secondary rounded-lg p-4">
-                  <div className="flex items-center justify-center space-x-2 text-sm">
-                    <span className="text-muted-foreground">Ready with</span>
-                    <span className="font-medium text-foreground">
-                      {selectedModel.display_name}
-                    </span>
-                    <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs rounded-full">
-                      {selectedProvider.toUpperCase()}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
-                  <p className="text-destructive text-sm">
-                    Please select a model to start chatting
-                  </p>
-                </div>
-              )}
+            <div className="text-center max-w-lg mx-auto px-6">
+              {/* Logo/Icon */}
+              <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
+                <Bot size={32} className="text-primary" />
+              </div>
               
-              {/* Drag & Drop hint */}
-              <div className="mt-6 p-4 border-2 border-dashed border-border/50 rounded-xl text-center">
-                <FileText className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground">
-                  Drop files here to upload for RAG search
+              <h1 className="text-3xl font-semibold text-foreground mb-3">
+                How can I help you today?
+              </h1>
+              
+              {selectedModel && selectedProvider ? (
+                <p className="text-muted-foreground mb-8">
+                  Using <span className="font-medium text-foreground">{selectedModel.display_name}</span>
                 </p>
-                <p className="text-xs text-muted-foreground/70 mt-1">
-                  PDF, TXT, DOCX, MD supported
+              ) : (
+                <p className="text-muted-foreground mb-8">
+                  Select a model to get started
                 </p>
+              )}
+
+              {/* Quick suggestions - ChatGPT style */}
+              <div className="grid grid-cols-2 gap-3 text-left">
+                <button 
+                  onClick={() => setInputValue("Explain quantum computing in simple terms")}
+                  className="p-4 rounded-xl border border-border hover:bg-secondary/50 transition-colors text-sm text-left"
+                >
+                  <span className="text-foreground font-medium">Explain quantum computing</span>
+                  <span className="text-muted-foreground block mt-1">in simple terms</span>
+                </button>
+                <button 
+                  onClick={() => setInputValue("Help me write a professional email")}
+                  className="p-4 rounded-xl border border-border hover:bg-secondary/50 transition-colors text-sm text-left"
+                >
+                  <span className="text-foreground font-medium">Help me write</span>
+                  <span className="text-muted-foreground block mt-1">a professional email</span>
+                </button>
+                <button 
+                  onClick={() => setInputValue("What are the best practices for React?")}
+                  className="p-4 rounded-xl border border-border hover:bg-secondary/50 transition-colors text-sm text-left"
+                >
+                  <span className="text-foreground font-medium">Best practices</span>
+                  <span className="text-muted-foreground block mt-1">for React development</span>
+                </button>
+                <button 
+                  onClick={() => setInputValue("Create a Python script that")}
+                  className="p-4 rounded-xl border border-border hover:bg-secondary/50 transition-colors text-sm text-left"
+                >
+                  <span className="text-foreground font-medium">Create a Python script</span>
+                  <span className="text-muted-foreground block mt-1">to automate tasks</span>
+                </button>
               </div>
             </div>
           </div>
@@ -594,8 +607,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
       )}
 
-      {/* Input Area */}
-      <div className="border-t border-border bg-card p-4 flex-shrink-0">
+      {/* Input Area - ChatGPT style */}
+      <div className="border-t border-border bg-gradient-to-t from-background to-transparent pt-4 pb-4 px-4 flex-shrink-0">
         {/* Connection Status and Recovery */}
         {connectionLost && isStreaming && (
           <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-md">
@@ -650,80 +663,96 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="flex space-x-3">
-          <div className="flex-1 relative">
-            <textarea
-              ref={textareaRef}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                selectedModel 
-                  ? "Type your message... (Press Enter to send, Shift+Enter for new line)"
-                  : "Select a model first..."
-              }
-              className="w-full px-4 py-3 border border-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring bg-background text-foreground placeholder:text-muted-foreground"
-              rows={1}
-              style={{ minHeight: '48px', maxHeight: '200px' }}
-              disabled={!selectedModel || isStreaming}
-            />
-          </div>
-          
-          <div className="flex space-x-2">
-            {/* Context Viewer */}
-            <ContextViewer
-              messages={messages}
-              currentInput={inputValue}
-              generationConfig={generationConfig}
-              systemPrompt={systemPrompt}
-            />
+        {/* ChatGPT-style input */}
+        <div className="max-w-3xl mx-auto w-full">
+          <form onSubmit={handleSubmit} className="relative">
+            <div className="relative flex items-end bg-secondary/50 border border-border rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all">
+              {/* Left buttons */}
+              <div className="flex items-center pl-3 pb-3 gap-1">
+                <Button
+                  type="button"
+                  onClick={() => setShowDocumentManager(true)}
+                  variant="ghost"
+                  size="sm"
+                  title="Attach files"
+                  className="h-8 w-8 p-0 rounded-lg hover:bg-secondary"
+                >
+                  <FileText size={18} className="text-muted-foreground" />
+                </Button>
+              </div>
+
+              {/* Textarea */}
+              <textarea
+                ref={textareaRef}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  selectedModel 
+                    ? "Message..."
+                    : "Select a model first..."
+                }
+                className="flex-1 bg-transparent border-0 resize-none focus:outline-none focus:ring-0 text-foreground placeholder:text-muted-foreground py-3 px-2 text-[15px] leading-6"
+                rows={1}
+                style={{ minHeight: '24px', maxHeight: '200px' }}
+                disabled={!selectedModel || isStreaming}
+              />
+
+              {/* Right buttons */}
+              <div className="flex items-center pr-2 pb-2 gap-1">
+                {/* Context Viewer */}
+                <ContextViewer
+                  messages={messages}
+                  currentInput={inputValue}
+                  generationConfig={generationConfig}
+                  systemPrompt={systemPrompt}
+                />
+                
+                {messages.length > 0 && (
+                  <Button
+                    type="button"
+                    onClick={handleClearHistory}
+                    disabled={isStreaming}
+                    variant="ghost"
+                    size="sm"
+                    title="Clear conversation"
+                    className="h-8 w-8 p-0 rounded-lg hover:bg-secondary"
+                  >
+                    <RefreshCw size={16} className="text-muted-foreground" />
+                  </Button>
+                )}
+                
+                {isStreaming ? (
+                  <Button
+                    type="button"
+                    onClick={() => stopStreaming(conversationId)}
+                    variant="ghost"
+                    size="sm"
+                    title="Stop"
+                    className="h-8 w-8 p-0 rounded-lg bg-destructive/10 hover:bg-destructive/20"
+                  >
+                    <Square size={16} className="text-destructive" />
+                  </Button>
+                ) : (
+                  <Button
+                    type="submit"
+                    disabled={!canSend}
+                    size="sm"
+                    title="Send"
+                    className="h-8 w-8 p-0 rounded-lg bg-foreground text-background hover:bg-foreground/90 disabled:opacity-30 disabled:bg-muted disabled:text-muted-foreground"
+                  >
+                    <Send size={16} />
+                  </Button>
+                )}
+              </div>
+            </div>
             
-            {/* Document Manager */}
-            <Button
-              type="button"
-              onClick={() => setShowDocumentManager(true)}
-              variant="ghost"
-              title="Manage documents for RAG"
-              className="hover:bg-secondary"
-            >
-              <FileText size={20} className="text-foreground" />
-            </Button>
-            
-            {messages.length > 0 && (
-              <Button
-                type="button"
-                onClick={handleClearHistory}
-                disabled={isStreaming}
-                variant="ghost"
-                title="Clear conversation"
-                className="hover:bg-secondary"
-              >
-                <RefreshCw size={20} className="text-foreground" />
-              </Button>
-            )}
-            
-            {isStreaming ? (
-              <Button
-                type="button"
-                onClick={() => stopStreaming(conversationId)}
-                variant="destructive"
-                title="Stop generation"
-                className="px-6"
-              >
-                <Square size={20} />
-                <span className="text-sm ml-2">Stop</span>
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                disabled={!canSend}
-                className="px-6 bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50"
-              >
-                <Send size={20} />
-              </Button>
-            )}
-          </div>
-        </form>
+            {/* Hint text */}
+            <p className="text-xs text-muted-foreground text-center mt-2">
+              Press Enter to send, Shift+Enter for new line
+            </p>
+          </form>
+        </div>
       </div>
       
       {/* Document Manager Modal */}

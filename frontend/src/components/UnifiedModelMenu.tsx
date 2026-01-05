@@ -180,17 +180,17 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
 
   return (
     <div className={cn('relative', className)}>
-      <Button ref={buttonRef} variant="outline" size="sm" onClick={() => setOpen(o => !o)} className="rounded-full px-3 text-xs font-medium flex items-center gap-2">
+      <Button ref={buttonRef} variant="ghost" size="sm" onClick={() => setOpen(o => !o)} className="rounded-xl px-3 py-2 text-sm font-medium flex items-center gap-2 bg-secondary/50 dark:bg-[#2f2f2f] hover:bg-secondary dark:hover:bg-[#3a3a3a] border-0 text-foreground">
         {activeModel?.supports_vision ? <Eye size={14} /> : activeModel?.supports_streaming ? <Zap size={14} /> : <Bot size={14} />}
-        <span className="truncate max-w-[160px]">{activeDisplay}</span>
+        <span className="truncate max-w-[200px] text-foreground">{activeDisplay}</span>
         {activeModel?.context_length && (
           <span className="hidden md:inline text-[10px] text-muted-foreground">{activeModel.context_length.toLocaleString()} tks</span>
         )}
-        <ChevronDown size={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown size={14} className={`transition-transform text-muted-foreground ${open ? 'rotate-180' : ''}`} />
       </Button>
       {open && (
         <div ref={panelRef} className={cn(
-          "absolute z-50 mt-2 bg-popover text-popover-foreground border rounded-lg shadow-lg transition-all",
+          "absolute z-50 mt-2 bg-card dark:bg-[#2f2f2f] text-card-foreground border border-border rounded-xl shadow-xl transition-all",
           settingsModelId ? "w-[680px]" : "w-[320px]"
         )}>
           <div className="flex">
@@ -272,7 +272,7 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
               const isActiveModel = m?.id === activeModel?.id;
               if (!m) return null;
               return (
-                <div className="flex-1 border-l dark:border-gray-700 max-h-[70vh] overflow-y-auto" style={{ minWidth: '360px' }}>
+                <div className="flex-1 border-l border-border max-h-[70vh] overflow-y-auto" style={{ minWidth: '360px' }}>
                   <div className="p-4 text-[11px]">
                     <div className="flex items-center justify-between mb-3">
                       <div className="font-semibold text-sm truncate flex-1" title={m.display_name || m.name}>{m.display_name || m.name}</div>
@@ -287,11 +287,11 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                     
                     {/* System Prompts FIRST - most important */}
                     {isActiveModel && (
-                      <div className="space-y-3 mb-4 pb-4 border-b dark:border-gray-700">
+                      <div className="space-y-3 mb-4 pb-4 border-b border-border">
                         <div className="text-xs font-semibold">📝 System Prompts</div>
                         
                         {/* Global System Prompt */}
-                        <div className="space-y-1.5 p-3 rounded-lg border dark:border-gray-600 bg-card">
+                        <div className="space-y-1.5 p-3 rounded-lg border border-border bg-secondary/30 dark:bg-[#252525]">
                           <div className="flex items-center justify-between">
                             <label className="text-[11px] font-medium flex items-center gap-1.5">
                               🌍 Global <span className="text-muted-foreground font-normal">(all models)</span>
