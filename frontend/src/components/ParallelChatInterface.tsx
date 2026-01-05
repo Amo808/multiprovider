@@ -131,9 +131,23 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Track regeneration state: which turn/response is being regenerated
   const [regeneratingInfo, setRegeneratingInfo] = useState<{turnId: string; responseIndex: number; dbId?: string} | null>(null);
   
-  // Drag & Drop state
+  // Drag & Drop state (desktop)
   const [draggedResponse, setDraggedResponse] = useState<{turnId: string; responseIndex: number} | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<{turnId: string; responseIndex: number} | null>(null);
+  
+  // Touch Drag & Drop state (mobile)
+  const [touchDragging, setTouchDragging] = useState<{
+    turnId: string;
+    responseIndex: number;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    element: HTMLElement | null;
+  } | null>(null);
+  const [touchDropTarget, setTouchDropTarget] = useState<{turnId: string; responseIndex: number} | null>(null);
+  const touchGhostRef = useRef<HTMLDivElement>(null);
+  const responseRefs = useRef<Map<string, HTMLElement>>(new Map());
   
   // Inline Edit state for user messages
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
@@ -788,6 +802,141 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     setDragOverTarget(null);
   };
 
+  // ==================== TOUCH DRAG & DROP (Mobile) ====================
+  
+  // Register response element ref for hit testing
+  const registerResponseRef = (turnId: string, idx: number, el: HTMLElement | null) => {
+    const key = `${turnId}-${idx}`;
+    if (el) {
+      responseRefs.current.set(key, el);
+    } else {
+      responseRefs.current.delete(key);
+    }
+  };
+
+  // Find which response element is under the touch point
+  const findDropTarget = (x: number, y: number): {turnId: string; responseIndex: number} | null => {
+    for (const [key, el] of responseRefs.current.entries()) {
+      const rect = el.getBoundingClientRect();
+      // Expand hit area slightly for easier dropping
+      const padding = 10;
+      if (
+        x >= rect.left - padding &&
+        x <= rect.right + padding &&
+        y >= rect.top - padding &&
+        y <= rect.bottom + padding
+      ) {
+        const [turnId, idx] = key.split('-');
+        return { turnId, responseIndex: parseInt(idx, 10) };
+      }
+    }
+    return null;
+  };
+
+  // Touch start - begin dragging
+  const handleTouchStart = (e: React.TouchEvent, turnId: string, responseIndex: number) => {
+    // Long press to start drag (300ms)
+    const touch = e.touches[0];
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    const element = e.currentTarget as HTMLElement;
+    
+    const longPressTimer = setTimeout(() => {
+      // Vibrate if supported
+      if (navigator.vibrate) navigator.vibrate(50);
+      
+      setTouchDragging({
+        turnId,
+        responseIndex,
+        startX,
+        startY,
+        currentX: startX,
+        currentY: startY,
+        element
+      });
+      
+      // Prevent scrolling while dragging
+      document.body.style.overflow = 'hidden';
+    }, 300);
+    
+    // Store timer to cancel on touchend/touchmove (short distance)
+    (element as any)._longPressTimer = longPressTimer;
+  };
+
+  // Touch move - update position and find drop target
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchDragging) {
+      // Cancel long press if moved too much
+      const element = e.currentTarget as HTMLElement;
+      const timer = (element as any)._longPressTimer;
+      if (timer) {
+        const touch = e.touches[0];
+        const startX = (element as any)._startX || touch.clientX;
+        const startY = (element as any)._startY || touch.clientY;
+        const dist = Math.sqrt(
+          Math.pow(touch.clientX - startX, 2) + 
+          Math.pow(touch.clientY - startY, 2)
+        );
+        if (dist > 10) {
+          clearTimeout(timer);
+          (element as any)._longPressTimer = null;
+        }
+      }
+      return;
+    }
+    
+    e.preventDefault();
+    const touch = e.touches[0];
+    
+    setTouchDragging(prev => prev ? {
+      ...prev,
+      currentX: touch.clientX,
+      currentY: touch.clientY
+    } : null);
+    
+    // Find drop target
+    const target = findDropTarget(touch.clientX, touch.clientY);
+    if (target && (target.turnId !== touchDragging.turnId || target.responseIndex !== touchDragging.responseIndex)) {
+      setTouchDropTarget(target);
+    } else {
+      setTouchDropTarget(null);
+    }
+  };
+
+  // Touch end - drop or cancel
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    // Clear long press timer
+    const element = e.currentTarget as HTMLElement;
+    const timer = (element as any)._longPressTimer;
+    if (timer) {
+      clearTimeout(timer);
+      (element as any)._longPressTimer = null;
+    }
+    
+    if (!touchDragging) return;
+    
+    // Restore scrolling
+    document.body.style.overflow = '';
+    
+    // Perform drop if we have a target
+    if (touchDropTarget) {
+      handleDrop(touchDropTarget.turnId, touchDropTarget.responseIndex);
+    }
+    
+    setTouchDragging(null);
+    setTouchDropTarget(null);
+  };
+
+  // Touch cancel
+  const handleTouchCancel = () => {
+    const timer = (document as any)._longPressTimer;
+    if (timer) clearTimeout(timer);
+    
+    document.body.style.overflow = '';
+    setTouchDragging(null);
+    setTouchDropTarget(null);
+  };
+
   // Regenerate a specific model's response (with Supabase sync)
   const regenerateResponse = async (turnId: string, responseIndex: number) => {
     const turn = conversationHistory.find(t => t.id === turnId);
@@ -1021,21 +1170,21 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const hasContent = conversationHistory.length > 0 || responses.length > 0;
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full h-[100dvh] bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background flex-shrink-0">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 border-b border-border bg-background flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className={cn(
-            "p-1.5 rounded",
+            "p-1 sm:p-1.5 rounded",
             sharedHistoryMode ? "bg-green-500/20" : "bg-purple-500/20"
           )}>
             {sharedHistoryMode ? (
-              <GitMerge size={18} className="text-green-500" />
+              <GitMerge size={16} className="text-green-500 sm:w-[18px] sm:h-[18px]" />
             ) : (
-              <Layers size={18} className="text-purple-500" />
+              <Layers size={16} className="text-purple-500 sm:w-[18px] sm:h-[18px]" />
             )}
           </div>
-          <div>
+          <div className="hidden sm:block">
             <h2 className="text-sm font-semibold text-foreground">
               {sharedHistoryMode ? 'Brainstorm Mode' : 'Parallel Model Comparison'}
             </h2>
@@ -1045,9 +1194,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 : 'Compare responses side-by-side'}
             </p>
           </div>
+          {/* Compact title for mobile */}
+          <span className="text-xs font-medium text-foreground sm:hidden">
+            {sharedHistoryMode ? 'Brainstorm' : 'Compare'}
+          </span>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
           {/* Conversation selector dropdown */}
           <div className="relative" ref={conversationListRef}>
             <button
@@ -1056,13 +1209,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 if (!showConversationList) loadSavedConversations();
               }}
               className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                "flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
                 "bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border"
               )}
               title="Load saved conversation"
             >
               <FolderOpen size={14} />
-              <span className="max-w-[100px] truncate">{conversationTitle}</span>
+              <span className="max-w-[60px] sm:max-w-[100px] truncate hidden sm:inline">{conversationTitle}</span>
               <ChevronDown size={14} className={cn(
                 "transition-transform",
                 showConversationList && "rotate-180"
@@ -1147,7 +1300,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           <button
             onClick={() => setSharedHistoryMode(!sharedHistoryMode)}
             className={cn(
-              "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border",
+              "flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all border",
               sharedHistoryMode 
                 ? "bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/50 shadow-sm shadow-green-500/20"
                 : "bg-muted text-muted-foreground hover:bg-muted/80 border-border hover:border-green-500/30"
@@ -1157,16 +1310,16 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               : "Click to enable shared memory - models will see previous responses"}
           >
             {sharedHistoryMode ? <GitMerge size={14} /> : <GitBranch size={14} />}
-            <span>{sharedHistoryMode ? '🧠 Shared ON' : '💡 Enable Shared Memory'}</span>
+            <span className="hidden sm:inline">{sharedHistoryMode ? '🧠 Shared ON' : '💡 Enable Shared'}</span>
           </button>
           
           {onClose && (
             <button
               onClick={onClose}
-              className="p-2 rounded-lg hover:bg-muted transition-colors"
+              className="p-1.5 sm:p-2 rounded-lg hover:bg-muted transition-colors"
               title="Close parallel chat"
             >
-              <X size={18} className="text-muted-foreground" />
+              <X size={16} className="text-muted-foreground sm:w-[18px] sm:h-[18px]" />
             </button>
           )}
         </div>
@@ -1206,7 +1359,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       )}
 
       {/* Main chat area - scrollable */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0 ios-scroll">
         {!hasContent ? (
           /* Empty state */
           <div className="flex items-center justify-center h-full">
@@ -1366,105 +1519,126 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                       {turn.responses.map((resp, idx) => (
                         <div 
                           key={idx}
-                          draggable
+                          ref={(el) => registerResponseRef(turn.id, idx, el)}
+                          draggable={typeof window !== 'undefined' && window.innerWidth >= 768}
                           onDragStart={() => handleDragStart(turn.id, idx)}
                           onDragOver={(e) => handleDragOver(e, turn.id, idx)}
                           onDragLeave={handleDragLeave}
                           onDrop={() => handleDrop(turn.id, idx)}
                           onDragEnd={handleDragEnd}
+                          // Touch events for mobile drag & drop
+                          onTouchStart={(e) => handleTouchStart(e, turn.id, idx)}
+                          onTouchMove={handleTouchMove}
+                          onTouchEnd={handleTouchEnd}
+                          onTouchCancel={handleTouchCancel}
                           className={cn(
-                            "rounded-lg border px-3 py-2 group/resp relative transition-all max-h-[300px] overflow-hidden flex flex-col cursor-grab active:cursor-grabbing",
+                            "rounded-lg border px-3 py-2 group/resp relative transition-all max-h-[250px] sm:max-h-[300px] overflow-hidden flex flex-col",
+                            "md:cursor-grab md:active:cursor-grabbing",
                             resp.enabled 
                               ? providerColors[resp.model.provider] || providerColors.ollama
                               : "bg-muted/30 border-border/50 opacity-60",
+                            // Desktop drag states
                             draggedResponse?.turnId === turn.id && draggedResponse?.responseIndex === idx && "opacity-50 scale-95",
                             dragOverTarget?.turnId === turn.id && dragOverTarget?.responseIndex === idx && "ring-2 ring-primary ring-offset-2",
+                            // Touch drag states
+                            touchDragging?.turnId === turn.id && touchDragging?.responseIndex === idx && "opacity-50 scale-95 z-50",
+                            touchDropTarget?.turnId === turn.id && touchDropTarget?.responseIndex === idx && "ring-2 ring-primary ring-offset-2 bg-primary/10",
                           )}
                         >
-                          {/* Drag handle & position controls */}
-                          <div className="absolute left-1 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 opacity-0 group-hover/resp:opacity-100 transition-opacity">
-                            <GripVertical size={10} className="text-muted-foreground cursor-grab" />
+                          {/* Drag handle (desktop) & position controls - always visible on mobile */}
+                          <div className={cn(
+                            "absolute left-1 top-1/2 -translate-y-1/2 flex flex-col gap-1",
+                            "opacity-100 sm:opacity-0 sm:group-hover/resp:opacity-100 transition-opacity"
+                          )}>
+                            {/* Drag handle - larger touch target, hidden on mobile */}
+                            <div className="hidden md:flex p-1 cursor-grab">
+                              <GripVertical size={14} className="text-muted-foreground" />
+                            </div>
+                            {/* Move buttons - always show on mobile, hover on desktop */}
                             {idx > 0 && (
                               <button
                                 onClick={() => moveResponseUp(turn.id, idx)}
-                                className="p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground"
+                                className="p-1.5 sm:p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground touch-manipulation"
                                 title="Move left"
                               >
-                                <ArrowUp size={10} className="rotate-[-90deg]" />
+                                <ArrowUp size={14} className="sm:w-[10px] sm:h-[10px] rotate-[-90deg]" />
                               </button>
                             )}
                             {idx < turn.responses.length - 1 && (
                               <button
                                 onClick={() => moveResponseDown(turn.id, idx)}
-                                className="p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground"
+                                className="p-1.5 sm:p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground touch-manipulation"
                                 title="Move right"
                               >
-                                <ArrowDown size={10} className="rotate-[-90deg]" />
+                                <ArrowDown size={14} className="sm:w-[10px] sm:h-[10px] rotate-[-90deg]" />
                               </button>
                             )}
                           </div>
                           
                           {/* Response header with model name and action buttons */}
                           <div className="flex items-center justify-between mb-1">
-                            <div className="text-xs font-medium flex items-center gap-1">
+                            <div className="text-xs font-medium flex items-center gap-1 pl-6 sm:pl-0">
                               <Bot size={12} />
                               <span className={cn(!resp.enabled && "line-through")}>{resp.model.display_name}</span>
                               {!resp.enabled && (
-                                <span className="text-[10px] text-muted-foreground ml-1">(hidden)</span>
+                                <span className="text-[10px] text-muted-foreground ml-1">(off)</span>
                               )}
                             </div>
                             
-                            {/* Action buttons - visible on hover */}
-                            <div className="flex items-center gap-0.5 opacity-0 group-hover/resp:opacity-100 transition-opacity">
+                            {/* Action buttons - always visible on mobile, hover on desktop */}
+                            <div className={cn(
+                              "flex items-center gap-0.5 transition-opacity",
+                              "opacity-100 sm:opacity-0 sm:group-hover/resp:opacity-100"
+                            )}>
                               {/* Copy button */}
                               <button
                                 onClick={() => copyResponse(resp.content)}
-                                className="p-1 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground transition-colors"
+                                className="p-1.5 sm:p-1 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground transition-colors touch-manipulation"
                                 title="Copy response"
                               >
-                                <Copy size={12} />
+                                <Copy size={14} className="sm:w-3 sm:h-3" />
                               </button>
                               
                               {/* Toggle visibility button */}
                               <button
                                 onClick={() => toggleResponseEnabled(turn.id, idx)}
                                 className={cn(
-                                  "p-1 rounded transition-colors",
+                                  "p-1.5 sm:p-1 rounded transition-colors touch-manipulation",
                                   resp.enabled 
                                     ? "hover:bg-background/50 text-muted-foreground hover:text-foreground"
                                     : "hover:bg-green-500/20 text-green-500"
                                 )}
                                 title={resp.enabled ? "Hide from context" : "Include in context"}
                               >
-                                {resp.enabled ? <EyeOff size={12} /> : <Eye size={12} />}
+                                {resp.enabled ? <EyeOff size={14} className="sm:w-3 sm:h-3" /> : <Eye size={14} className="sm:w-3 sm:h-3" />}
                               </button>
                               
                               {/* Simple Regenerate button */}
                               <button
                                 onClick={() => regenerateResponse(turn.id, idx)}
-                                className="p-1 rounded hover:bg-blue-500/20 text-muted-foreground hover:text-blue-500 transition-colors"
-                                title="Regenerate (uses context before this turn)"
+                                className="p-1.5 sm:p-1 rounded hover:bg-blue-500/20 text-muted-foreground hover:text-blue-500 transition-colors touch-manipulation"
+                                title="Regenerate"
                                 disabled={isLoading}
                               >
-                                <RefreshCw size={12} />
+                                <RefreshCw size={14} className="sm:w-3 sm:h-3" />
                               </button>
                               
-                              {/* Smart Regenerate - uses ALL enabled responses */}
+                              {/* Smart Regenerate */}
                               <div className="relative">
                                 <button
                                   onClick={() => openSmartRegeneratePopup(turn.id, idx)}
-                                  className="p-1 rounded hover:bg-purple-500/20 text-muted-foreground hover:text-purple-500 transition-colors"
-                                  title="✨ Smart regenerate (uses ALL enabled responses as context)"
+                                  className="p-1.5 sm:p-1 rounded hover:bg-purple-500/20 text-muted-foreground hover:text-purple-500 transition-colors touch-manipulation"
+                                  title="✨ Smart regenerate"
                                   disabled={isLoading}
                                 >
-                                  <Sparkles size={12} />
+                                  <Sparkles size={14} className="sm:w-3 sm:h-3" />
                                 </button>
                                 
                                 {/* Smart Regenerate Popup */}
                                 {smartRegeneratePopup?.turnId === turn.id && smartRegeneratePopup?.responseIndex === idx && (
                                   <div 
                                     data-smart-regenerate-popup
-                                    className="absolute right-0 top-full mt-1 w-72 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl z-50 p-3"
+                                    className="fixed sm:absolute inset-4 sm:inset-auto sm:right-0 sm:top-full sm:mt-1 sm:w-72 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl z-50 p-3 flex flex-col"
                                     onClick={(e) => e.stopPropagation()}
                                   >
                                     <div className="flex items-center justify-between mb-2">
@@ -1474,13 +1648,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                       </span>
                                       <button 
                                         onClick={() => setSmartRegeneratePopup(null)}
-                                        className="p-0.5 rounded hover:bg-muted text-muted-foreground"
+                                        className="p-1 rounded hover:bg-muted text-muted-foreground"
                                       >
-                                        <X size={12} />
+                                        <X size={16} />
                                       </button>
                                     </div>
                                     <p className="text-[10px] text-muted-foreground mb-2">
-                                      Add custom instructions (optional). All enabled responses will be used as context.
+                                      Add custom instructions (optional).
                                     </p>
                                     <textarea
                                       value={smartRegeneratePopup.customContext}
@@ -1489,25 +1663,25 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                         if (e.key === 'Escape') setSmartRegeneratePopup(null);
                                         if (e.key === 'Enter' && e.ctrlKey) executeSmartRegenerate(smartRegeneratePopup.customContext);
                                       }}
-                                      placeholder="e.g. Focus more on technical details, be more concise..."
-                                      className="w-full text-xs bg-secondary border border-border rounded-md p-2 resize-none focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+                                      placeholder="e.g. Be more concise..."
+                                      className="flex-1 sm:flex-none w-full text-base sm:text-xs bg-secondary border border-border rounded-md p-2 resize-none focus:outline-none focus:ring-1 focus:ring-purple-500/50"
                                       rows={3}
                                       autoFocus
                                     />
-                                    <div className="flex items-center justify-end gap-2 mt-2">
+                                    <div className="flex items-center justify-end gap-2 mt-3 sm:mt-2">
                                       <button
                                         onClick={() => setSmartRegeneratePopup(null)}
-                                        className="px-2 py-1 text-xs rounded bg-muted hover:bg-muted/80 text-muted-foreground"
+                                        className="px-3 py-2 sm:px-2 sm:py-1 text-sm sm:text-xs rounded bg-muted hover:bg-muted/80 text-muted-foreground"
                                       >
                                         Cancel
                                       </button>
                                       <button
                                         onClick={() => executeSmartRegenerate(smartRegeneratePopup.customContext)}
-                                        className="px-2 py-1 text-xs rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-500 flex items-center gap-1"
+                                        className="px-3 py-2 sm:px-2 sm:py-1 text-sm sm:text-xs rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-500 flex items-center gap-1"
                                         disabled={isLoading}
                                       >
-                                        <Sparkles size={10} />
-                                        {smartRegeneratePopup.customContext?.trim() ? 'Regenerate' : 'Quick Regenerate'}
+                                        <Sparkles size={12} />
+                                        Go
                                       </button>
                                     </div>
                                   </div>
@@ -1517,10 +1691,10 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               {/* Delete response button */}
                               <button
                                 onClick={() => deleteResponse(turn.id, idx)}
-                                className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                                title="Delete this response"
+                                className="p-1.5 sm:p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors touch-manipulation"
+                                title="Delete"
                               >
-                                <Trash2 size={12} />
+                                <Trash2 size={14} className="sm:w-3 sm:h-3" />
                               </button>
                             </div>
                           </div>
@@ -1596,7 +1770,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       </div>
 
       {/* Input area - ChatGPT style */}
-      <div className="border-t border-border bg-background p-4 flex-shrink-0 space-y-3">
+      <div className="border-t border-border bg-background p-2 sm:p-4 flex-shrink-0 space-y-2 sm:space-y-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
         {/* Model selector */}
         <ModelMultiSelector
           availableModels={availableModels}
@@ -1616,12 +1790,12 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               onKeyDown={handleKeyDown}
               placeholder={
                 selectedModels.length === 0
-                  ? "Select at least one model to start..."
+                  ? "Select models..."
                   : `Send to ${selectedModels.length} model${selectedModels.length > 1 ? 's' : ''}...`
               }
               className={cn(
-                "flex-1 px-3 py-2 resize-none bg-transparent text-foreground placeholder:text-muted-foreground",
-                "focus:outline-none border-0",
+                "flex-1 px-2 sm:px-3 py-2 resize-none bg-transparent text-foreground placeholder:text-muted-foreground",
+                "focus:outline-none border-0 text-base", // text-base = 16px prevents iOS zoom
               )}
               rows={1}
               style={{ minHeight: '40px', maxHeight: '120px' }}
@@ -1673,23 +1847,24 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         </form>
 
         {/* Status bar */}
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <div className="flex items-center gap-3">
+        {/* Status bar - compact on mobile */}
+        <div className="flex items-center justify-between text-[10px] sm:text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 sm:gap-3">
             {selectedModels.length > 0 && (
               <span className="flex items-center gap-1">
-                <Layers size={12} />
-                {selectedModels.length} model{selectedModels.length > 1 ? 's' : ''}
+                <Layers size={10} className="sm:w-3 sm:h-3" />
+                {selectedModels.length}
               </span>
             )}
-            {/* Context stats */}
+            {/* Context stats - simplified on mobile */}
             {conversationHistory.length > 0 && (() => {
               const totalResponses = conversationHistory.reduce((acc, t) => acc + t.responses.length, 0);
               const enabledResponses = conversationHistory.reduce((acc, t) => acc + t.responses.filter(r => r.enabled).length, 0);
               return (
                 <span className="flex items-center gap-1">
-                  <Eye size={12} className={enabledResponses > 0 ? "text-green-500" : ""} />
+                  <Eye size={10} className={cn("sm:w-3 sm:h-3", enabledResponses > 0 && "text-green-500")} />
                   <span className={enabledResponses > 0 ? "text-green-500" : ""}>
-                    {enabledResponses}/{totalResponses} in context
+                    {enabledResponses}/{totalResponses}
                   </span>
                 </span>
               );
@@ -1697,25 +1872,44 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             {isLoading && (
               <span className="flex items-center gap-1 text-purple-500">
                 <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse" />
-                Generating...
+                <span className="hidden sm:inline">Generating...</span>
               </span>
             )}
           </div>
           <div className="flex items-center gap-2">
             {sharedHistoryMode && (
               <span className="flex items-center gap-1 text-green-500">
-                <GitMerge size={12} />
-                Shared context
+                <GitMerge size={10} className="sm:w-3 sm:h-3" />
+                <span className="hidden sm:inline">Shared</span>
               </span>
             )}
             {responses.length > 0 && isLoading && (
               <span>
-                {responses.filter(r => !r.isStreaming && r.content).length}/{responses.length} complete
+                {responses.filter(r => !r.isStreaming && r.content).length}/{responses.length}
               </span>
             )}
           </div>
         </div>
       </div>
+      
+      {/* Touch drag ghost overlay */}
+      {touchDragging && (
+        <div 
+          ref={touchGhostRef}
+          className="fixed pointer-events-none z-[100] bg-primary/20 border-2 border-primary rounded-lg px-3 py-2 shadow-xl backdrop-blur-sm"
+          style={{
+            left: touchDragging.currentX - 50,
+            top: touchDragging.currentY - 30,
+            minWidth: '100px',
+            transform: 'translate(0, 0)',
+          }}
+        >
+          <div className="flex items-center gap-2 text-xs font-medium text-primary">
+            <GripVertical size={14} />
+            <span>Moving...</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

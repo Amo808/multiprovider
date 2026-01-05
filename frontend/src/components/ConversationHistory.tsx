@@ -67,9 +67,9 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({
   };
 
   return (
-    <div className="w-80 h-full bg-background border-r border-border flex flex-col">
+    <div className="w-full sm:w-64 md:w-72 lg:w-80 h-full bg-background border-r border-border flex flex-col max-w-[85vw] sm:max-w-none">
       {/* Header */}
-      <div className="p-4 border-b border-border">
+      <div className="p-3 sm:p-4 border-b border-border">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-foreground">
             Conversations

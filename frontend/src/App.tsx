@@ -14,7 +14,6 @@ import { useConversationsContext } from './contexts/ConversationsContext';
 import { TopNavigation } from './components/TopNavigation';
 import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider } from './components/ToastProvider';
-import { PresetPrompts } from './components/PresetPrompts';
 import { ParallelChatInterface } from './components/ParallelChatInterface';
 import { ParallelConversationHistory } from './components/ParallelConversationHistory';
 import { apiClient } from './services/api';
@@ -50,7 +49,8 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [showCommand, setShowCommand] = useState(false);
-  const [showHistory, setShowHistory] = useState(true);
+  // On mobile, hide history by default
+  const [showHistory, setShowHistory] = useState(() => window.innerWidth >= 768);
   const { health } = useHealth();
   const { usage: tokenUsage, update: updateTokenUsage } = useTokenUsage();
 
@@ -727,7 +727,7 @@ interface GoogleCredentialResponse {
 
   // ========================= Main UI =========================
   return (
-    <div className="h-screen bg-background text-foreground flex flex-col overflow-hidden">
+    <div className="h-screen h-[100dvh] bg-background text-foreground flex flex-col overflow-hidden">
       <ToastProvider />
       <TopNavigation
         config={config}
@@ -766,19 +766,19 @@ interface GoogleCredentialResponse {
         onCyclePreset={cyclePreset}
         currentPreset={currentPreset}
       />
-      <div className="flex items-center gap-2 px-4 py-1 text-xs border-b border-border bg-background">
-        <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium">{showHistory ? 'Hide' : 'Show'} History</button>
+      <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-1 text-xs border-b border-border bg-background overflow-x-auto">
+        <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium flex-shrink-0">{showHistory ? '✕' : '☰'} <span className="hidden sm:inline">{showHistory ? 'Hide' : 'Show'}</span></button>
         {/* Chat mode toggle */}
-        <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
+        <div className="flex items-center gap-0.5 sm:gap-1 bg-muted rounded-lg p-0.5 flex-shrink-0">
           <button
             onClick={() => setChatMode('single')}
-            className={`px-2 py-1 rounded font-medium transition-colors ${chatMode === 'single' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            className={`px-2 py-1 rounded font-medium transition-colors text-xs sm:text-sm ${chatMode === 'single' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
           >
             Single
           </button>
           <button
             onClick={() => setChatMode('parallel')}
-            className={`px-2 py-1 rounded font-medium transition-colors ${chatMode === 'parallel' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400 shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            className={`px-2 py-1 rounded font-medium transition-colors text-xs sm:text-sm ${chatMode === 'parallel' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400 shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
           >
             Compare
           </button>
@@ -786,35 +786,66 @@ interface GoogleCredentialResponse {
         
         <span className="ml-auto"></span>
         
-        {/* Status indicators */}
-        {globalPromptLoading && <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 animate-pulse text-[10px]">Loading global prompt...</span>}
-        {globalPromptError && <span className="px-2 py-1 rounded-full bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 text-[10px]">⚠️ Prompt error</span>}
-        {globalPromptHasChanges && !globalPromptLoading && <span className="px-2 py-1 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 text-[10px]">🌍 Global unsaved</span>}
-        {modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 animate-pulse text-[10px]">Loading settings...</span>}
-        {modelSettingsHasChanges && !modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 text-[10px]">🎯 Model unsaved</span>}
+        {/* Status indicators - hidden on mobile */}
+        <div className="hidden sm:flex items-center gap-1 flex-shrink-0">
+          {globalPromptLoading && <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 animate-pulse text-[10px]">Loading global prompt...</span>}
+          {globalPromptError && <span className="px-2 py-1 rounded-full bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 text-[10px]">⚠️ Prompt error</span>}
+          {globalPromptHasChanges && !globalPromptLoading && <span className="px-2 py-1 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 text-[10px]">🌍 Global unsaved</span>}
+          {modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 animate-pulse text-[10px]">Loading settings...</span>}
+          {modelSettingsHasChanges && !modelSettingsLoading && <span className="px-2 py-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 text-[10px]">🎯 Model unsaved</span>}
+        </div>
       </div>
       <main className="flex-1 flex min-h-0 overflow-hidden">
+        {/* Sidebar - overlay on mobile, inline on desktop */}
         {showHistory && chatMode === 'single' && (
-          <ConversationHistory
-            conversations={conversations}
-            currentConversationId={currentConversationId}
-            onNewConversation={handleNewConversation}
-            onSelectConversation={handleSelectConversation}
-            onRenameConversation={handleRenameConversation}
-            onDeleteConversation={handleDeleteConversation}
-          />
+          <>
+            {/* Mobile overlay backdrop */}
+            <div 
+              className="fixed inset-0 bg-black/50 z-40 sm:hidden" 
+              onClick={() => setShowHistory(false)}
+            />
+            <div className="fixed sm:relative left-0 top-0 h-full z-50 sm:z-auto">
+              <ConversationHistory
+                conversations={conversations}
+                currentConversationId={currentConversationId}
+                onNewConversation={handleNewConversation}
+                onSelectConversation={(id) => {
+                  handleSelectConversation(id);
+                  // Auto-hide on mobile after selection
+                  if (window.innerWidth < 640) setShowHistory(false);
+                }}
+                onRenameConversation={handleRenameConversation}
+                onDeleteConversation={handleDeleteConversation}
+              />
+            </div>
+          </>
         )}
         {showHistory && chatMode === 'parallel' && (
-          <ParallelConversationHistory
-            currentConversationId={currentParallelConversationId}
-            onNewConversation={() => setCurrentParallelConversationId(null)}
-            onSelectConversation={(id) => setCurrentParallelConversationId(id)}
-            onConversationDeleted={(id) => {
-              if (id === currentParallelConversationId) {
-                setCurrentParallelConversationId(null);
-              }
-            }}
-          />
+          <>
+            {/* Mobile overlay backdrop */}
+            <div 
+              className="fixed inset-0 bg-black/50 z-40 sm:hidden" 
+              onClick={() => setShowHistory(false)}
+            />
+            <div className="fixed sm:relative left-0 top-0 h-full z-50 sm:z-auto">
+              <ParallelConversationHistory
+                currentConversationId={currentParallelConversationId}
+                onNewConversation={() => {
+                  setCurrentParallelConversationId(null);
+                  if (window.innerWidth < 640) setShowHistory(false);
+                }}
+                onSelectConversation={(id) => {
+                  setCurrentParallelConversationId(id);
+                  if (window.innerWidth < 640) setShowHistory(false);
+                }}
+                onConversationDeleted={(id) => {
+                  if (id === currentParallelConversationId) {
+                    setCurrentParallelConversationId(null);
+                  }
+                }}
+              />
+            </div>
+          </>
         )}
         <div className="flex-1 flex flex-col min-h-0">
           {chatMode === 'parallel' ? (
@@ -827,20 +858,17 @@ interface GoogleCredentialResponse {
               onConversationChange={setCurrentParallelConversationId}
             />
           ) : currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
-            <>
-              <ChatInterface
-                selectedModel={selectedModel}
-                selectedProvider={selectedProvider}
-                generationConfig={effectiveGenerationConfig}
-                conversationId={currentConversationId}
-                onMessageSent={handleUpdateConversationTitle}
-                onTokenUsageUpdate={updateTokenUsage}
-                systemPrompt={combinedSystemPrompt}
-                onConfigChange={updateModelSettings}
-                onBranchFrom={handleBranchFromMessage}
-              />
-              <div className="px-4 pb-3"><PresetPrompts onInsert={(t: string) => { const ev = new CustomEvent('insert-preset', { detail: t }); window.dispatchEvent(ev); }} /></div>
-            </>
+            <ChatInterface
+              selectedModel={selectedModel}
+              selectedProvider={selectedProvider}
+              generationConfig={effectiveGenerationConfig}
+              conversationId={currentConversationId}
+              onMessageSent={handleUpdateConversationTitle}
+              onTokenUsageUpdate={updateTokenUsage}
+              systemPrompt={combinedSystemPrompt}
+              onConfigChange={updateModelSettings}
+              onBranchFrom={handleBranchFromMessage}
+            />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">

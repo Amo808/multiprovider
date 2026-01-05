@@ -148,7 +148,7 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
   }, [activeModel?.id, settingsModelId]);
 
   useEffect(() => {
-    const close = (e: MouseEvent) => { 
+    const close = (e: MouseEvent | TouchEvent) => { 
       // Don't close if clicking the toggle button (let onClick handle toggle)
       if (buttonRef.current && buttonRef.current.contains(e.target as Node)) {
         return;
@@ -161,7 +161,11 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
       } 
     };
     window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
+    window.addEventListener('touchstart', close, { passive: true });
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('touchstart', close);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -180,25 +184,35 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
 
   return (
     <div className={cn('relative', className)}>
-      <Button ref={buttonRef} variant="ghost" size="sm" onClick={() => setOpen(o => !o)} className="rounded-xl px-3 py-2 text-sm font-medium flex items-center gap-2 bg-secondary/50 dark:bg-[#2f2f2f] hover:bg-secondary dark:hover:bg-[#3a3a3a] border-0 text-foreground">
+      <Button ref={buttonRef} variant="ghost" size="sm" onClick={() => setOpen(o => !o)} className="rounded-xl px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium flex items-center gap-1 sm:gap-2 bg-secondary/50 dark:bg-[#2f2f2f] hover:bg-secondary dark:hover:bg-[#3a3a3a] border-0 text-foreground max-w-[140px] sm:max-w-[200px]">
         {activeModel?.supports_vision ? <Eye size={14} /> : activeModel?.supports_streaming ? <Zap size={14} /> : <Bot size={14} />}
-        <span className="truncate max-w-[200px] text-foreground">{activeDisplay}</span>
-        {activeModel?.context_length && (
-          <span className="hidden md:inline text-[10px] text-muted-foreground">{activeModel.context_length.toLocaleString()} tks</span>
-        )}
-        <ChevronDown size={14} className={`transition-transform text-muted-foreground ${open ? 'rotate-180' : ''}`} />
+        <span className="truncate text-foreground">{activeDisplay}</span>
+        <ChevronDown size={14} className={`transition-transform text-muted-foreground flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
       </Button>
       {open && (
-        <div ref={panelRef} className={cn(
-          "absolute z-50 mt-2 bg-card dark:bg-[#2f2f2f] text-card-foreground border border-border rounded-xl shadow-xl transition-all",
-          settingsModelId ? "w-[680px]" : "w-[320px]"
-        )}>
-          <div className="flex">
-            {/* Model list */}
-            <div ref={listScrollRef} className={cn(
-              "max-h-[70vh] overflow-y-auto divide-y dark:divide-gray-700",
-              settingsModelId ? "w-[320px]" : "w-full"
-            )}>
+        <>
+          {/* Mobile overlay backdrop */}
+          <div className="fixed inset-0 bg-black/50 z-40 sm:hidden" onClick={() => setOpen(false)} />
+          
+          <div ref={panelRef} className={cn(
+            "z-50 bg-card dark:bg-[#2f2f2f] text-card-foreground border border-border shadow-xl transition-all",
+            // Mobile: fixed bottom sheet style
+            "fixed inset-x-0 bottom-0 rounded-t-2xl max-h-[80vh] sm:max-h-none",
+            // Desktop: absolute dropdown
+            "sm:absolute sm:inset-auto sm:mt-2 sm:rounded-xl sm:left-0",
+            settingsModelId ? "sm:w-[680px]" : "sm:w-[320px]"
+          )}>
+            {/* Mobile drag handle */}
+            <div className="sm:hidden flex justify-center py-2">
+              <div className="w-10 h-1 bg-muted-foreground/30 rounded-full" />
+            </div>
+            
+            <div className="flex flex-col sm:flex-row relative">
+              {/* Model list - hidden on mobile when settings open */}
+              <div ref={listScrollRef} className={cn(
+                "max-h-[50vh] sm:max-h-[70vh] overflow-y-auto divide-y dark:divide-gray-700 ios-scroll",
+                settingsModelId ? "hidden sm:block sm:w-[320px]" : "w-full"
+              )}>
               {loading && (
                 <div className="p-6 text-center text-sm text-muted-foreground">Loading models...</div>
               )}
@@ -239,21 +253,26 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                           </div>
                           <CapabilityBadges m={m} />
                         </div>
-                        {/* Settings button - appears on hover, opens settings panel */}
+                        {/* Settings button - appears on hover (desktop) or always visible (mobile) */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             setSettingsModelId(prev => prev === m.id ? null : m.id);
                           }}
+                          onTouchEnd={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setSettingsModelId(prev => prev === m.id ? null : m.id);
+                          }}
                           className={cn(
-                            'p-1.5 rounded hover:bg-background/50 transition-all flex-shrink-0',
+                            'p-2 sm:p-1.5 rounded hover:bg-background/50 transition-all flex-shrink-0 touch-manipulation',
                             settingsModelId === m.id 
                               ? 'opacity-100 text-primary' 
-                              : 'opacity-0 group-hover/model:opacity-70 hover:!opacity-100'
+                              : 'opacity-100 sm:opacity-0 sm:group-hover/model:opacity-70 sm:hover:!opacity-100'
                           )}
                           title={`Settings for ${m.display_name || m.name}`}
                         >
-                          <Settings size={14} />
+                          <Settings size={16} className="sm:w-[14px] sm:h-[14px]" />
                         </button>
                       </div>
                     ))}
@@ -272,13 +291,22 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
               const isActiveModel = m?.id === activeModel?.id;
               if (!m) return null;
               return (
-                <div className="flex-1 border-l border-border max-h-[70vh] overflow-y-auto" style={{ minWidth: '360px' }}>
-                  <div className="p-4 text-[11px]">
+                <div className="w-full sm:flex-1 sm:border-l border-border max-h-[70vh] overflow-y-auto ios-scroll bg-popover">
+                  <div className="p-3 sm:p-4 text-[11px]">
+                    {/* Back button on mobile */}
                     <div className="flex items-center justify-between mb-3">
-                      <div className="font-semibold text-sm truncate flex-1" title={m.display_name || m.name}>{m.display_name || m.name}</div>
                       <button 
                         onClick={() => setSettingsModelId(null)}
-                        className="text-muted-foreground hover:text-foreground p-1"
+                        onTouchEnd={(e) => { e.preventDefault(); setSettingsModelId(null); }}
+                        className="sm:hidden text-muted-foreground hover:text-foreground p-1 touch-manipulation flex items-center gap-1 text-xs"
+                      >
+                        ← Back
+                      </button>
+                      <div className="font-semibold text-sm truncate flex-1 text-center sm:text-left" title={m.display_name || m.name}>{m.display_name || m.name}</div>
+                      <button 
+                        onClick={() => setSettingsModelId(null)}
+                        onTouchEnd={(e) => { e.preventDefault(); setSettingsModelId(null); }}
+                        className="hidden sm:block text-muted-foreground hover:text-foreground p-1 touch-manipulation"
                         title="Close settings"
                       >
                         ✕
@@ -722,6 +750,7 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
             </div>
           )}
         </div>
+        </>
       )}
     </div>
   );

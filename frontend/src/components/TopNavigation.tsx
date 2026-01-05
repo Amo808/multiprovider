@@ -82,12 +82,12 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
   };
 
   return (
-    <header className="flex items-center h-14 px-4 gap-3 bg-background border-b border-border flex-shrink-0">
+    <header className="flex items-center h-12 sm:h-14 px-2 sm:px-4 gap-2 sm:gap-3 bg-background border-b border-border flex-shrink-0">
       <div className="flex items-center">
-        <Logo width={100} height={14} className="text-foreground" />
+        <Logo width={80} height={12} className="text-foreground sm:w-[100px] sm:h-[14px]" />
       </div>
       {/* Unified model & provider menu inline - all settings are here */}
-      <div className="ml-2">
+      <div className="ml-1 sm:ml-2">
         <UnifiedModelMenu 
           config={config} 
           activeModel={selectedModel} 
@@ -193,17 +193,22 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
       </div>
       
       {/* Usage panel in the header */}
-      <div className="ml-auto flex items-center gap-2">
-        <TokenCounter usage={tokenUsage || null} model={selectedModel?.display_name} contextLength={selectedModel?.context_length} />
-        <Button variant="ghost" size="sm" onClick={onSettingsClick} className="px-3 h-8 text-xs">Settings</Button>
+      <div className="ml-auto flex items-center gap-1 sm:gap-2">
+        <div className="hidden sm:block">
+          <TokenCounter usage={tokenUsage || null} model={selectedModel?.display_name} contextLength={selectedModel?.context_length} />
+        </div>
+        <Button variant="ghost" size="sm" onClick={onSettingsClick} className="px-2 sm:px-3 h-8 text-xs hidden sm:flex">Settings</Button>
         <Button variant="ghost" size="sm" onClick={onThemeToggle} className="h-8 w-8 p-0" title={theme}>{themeIcon(theme)}</Button>
         {userEmail && (
-          <div className="flex items-center gap-2">
-            <Avatar className="h-8 w-8"><AvatarFallback>{userEmail.slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
-            <span className="text-xs text-muted-foreground hidden sm:inline">{userEmail}</span>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <Avatar className="h-7 w-7 sm:h-8 sm:w-8"><AvatarFallback>{userEmail.slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
+            <span className="text-xs text-muted-foreground hidden lg:inline">{userEmail}</span>
           </div>
         )}
-        <Button variant="destructive" size="sm" onClick={onLogout} className="h-8 px-3 text-xs flex items-center gap-1"><LogOut size={14}/>Logout</Button>
+        <Button variant="destructive" size="sm" onClick={onLogout} className="h-7 sm:h-8 px-2 sm:px-3 text-xs flex items-center gap-1">
+          <LogOut size={14}/>
+          <span className="hidden sm:inline">Logout</span>
+        </Button>
       </div>
     </header>
   );

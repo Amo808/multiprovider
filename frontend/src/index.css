@@ -5,16 +5,44 @@
 @layer base {
   html {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* iOS Safari fix for 100vh */
+    height: -webkit-fill-available;
   }
   
   html, body, #root {
     height: 100%;
+    /* iOS fix: use dvh (dynamic viewport height) with fallback */
+    min-height: 100vh;
+    min-height: 100dvh;
+    min-height: -webkit-fill-available;
     overflow: hidden;
+    /* Prevent iOS overscroll bounce */
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
   }
   
   body {
     margin: 0;
     padding: 0;
+    /* Safe area padding for iPhone notch/home indicator */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    /* Prevent text size adjustment on orientation change */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  
+  /* Prevent iOS zoom on input focus - minimum 16px */
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+  
+  @media screen and (min-width: 768px) {
+    input, textarea, select {
+      font-size: inherit !important;
+    }
   }
   
   :root {
@@ -137,6 +165,47 @@
   /* Smooth transitions */
   .transition-base {
     @apply transition-all duration-200 ease-in-out;
+  }
+  
+  /* iOS-safe scrollable areas */
+  .ios-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  
+  /* Mobile-friendly touch targets */
+  @media (max-width: 768px) {
+    .touch-target {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+  
+  /* Touch manipulation for faster touch response */
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+  
+  /* Better tap highlight */
+  button, a, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  /* Hide elements on mobile */
+  @media (max-width: 640px) {
+    .hide-mobile {
+      display: none !important;
+    }
+  }
+  
+  /* Show only on mobile */
+  .show-mobile {
+    display: none;
+  }
+  @media (max-width: 640px) {
+    .show-mobile {
+      display: block;
+    }
   }
 }
 

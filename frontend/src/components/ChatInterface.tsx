@@ -522,7 +522,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       )}
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0 ios-scroll">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-lg mx-auto px-6">
@@ -608,7 +608,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       )}
 
       {/* Input Area - ChatGPT style */}
-      <div className="border-t border-border bg-gradient-to-t from-background to-transparent pt-4 pb-4 px-4 flex-shrink-0">
+      <div className="border-t border-border bg-gradient-to-t from-background to-transparent pt-4 pb-4 px-3 sm:px-4 flex-shrink-0" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
         {/* Connection Status and Recovery */}
         {connectionLost && isStreaming && (
           <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-md">
@@ -692,7 +692,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     ? "Message..."
                     : "Select a model first..."
                 }
-                className="flex-1 bg-transparent border-0 resize-none focus:outline-none focus:ring-0 text-foreground placeholder:text-muted-foreground py-3 px-2 text-[15px] leading-6"
+                className="flex-1 bg-transparent border-0 resize-none focus:outline-none focus:ring-0 text-foreground placeholder:text-muted-foreground py-3 px-2 text-base leading-6"
                 rows={1}
                 style={{ minHeight: '24px', maxHeight: '200px' }}
                 disabled={!selectedModel || isStreaming}
