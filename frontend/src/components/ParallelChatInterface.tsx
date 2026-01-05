@@ -1170,7 +1170,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const hasContent = conversationHistory.length > 0 || responses.length > 0;
 
   return (
-    <div className="flex flex-col h-full h-[100dvh] bg-background">
+    <div className="flex flex-col h-full min-h-0 bg-background overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 border-b border-border bg-background flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -1328,22 +1328,22 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       {/* Save status bar */}
       {(isSaving || saveError || supabaseConversationId) && (
         <div className={cn(
-          "px-4 py-1.5 text-xs flex items-center gap-2 border-b",
+          "px-3 sm:px-4 py-1.5 text-[10px] sm:text-xs flex items-center gap-2 border-b flex-shrink-0",
           saveError ? "bg-destructive/10 border-destructive/20 text-destructive" : "bg-muted/50 border-border"
         )}>
           {isSaving && (
             <>
-              <Loader2 size={12} className="animate-spin" />
+              <Loader2 size={12} className="animate-spin flex-shrink-0" />
               <span>Saving...</span>
             </>
           )}
           {saveError && (
             <>
-              <AlertCircle size={12} />
-              <span>{saveError}</span>
+              <AlertCircle size={12} className="flex-shrink-0" />
+              <span className="truncate">{saveError}</span>
               <button 
                 onClick={() => setSaveError(null)}
-                className="ml-auto hover:text-foreground"
+                className="ml-auto hover:text-foreground flex-shrink-0"
               >
                 <X size={12} />
               </button>

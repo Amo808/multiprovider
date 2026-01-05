@@ -611,29 +611,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       <div className="border-t border-border bg-gradient-to-t from-background to-transparent pt-4 pb-4 px-3 sm:px-4 flex-shrink-0" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
         {/* Connection Status and Recovery */}
         {connectionLost && isStreaming && (
-          <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-md">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <AlertCircle size={16} className="text-yellow-500" />
-                <div>
+          <div className="mb-3 p-2.5 sm:p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-lg max-w-3xl mx-auto">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="flex items-start sm:items-center gap-2">
+                <AlertCircle size={16} className="text-yellow-500 flex-shrink-0 mt-0.5 sm:mt-0" />
+                <div className="min-w-0">
                   {/* Check if this is a reasoning model or deep research */}
                   {(deepResearchStage?.includes('reasoning') || deepResearchStage?.includes('GPT-5') || deepResearchStage?.includes('thinking')) ? (
                     <>
-                      <p className="text-sm font-medium text-yellow-600 dark:text-yellow-300">Deep Reasoning in Progress</p>
-                      <p className="text-xs text-yellow-600/80 dark:text-yellow-400/80">
-                        The model is performing complex reasoning. This can take several minutes.
+                      <p className="text-xs sm:text-sm font-medium text-yellow-600 dark:text-yellow-300">Deep Reasoning in Progress</p>
+                      <p className="text-[10px] sm:text-xs text-yellow-600/80 dark:text-yellow-400/80">
+                        Complex reasoning - may take several minutes.
                         {lastHeartbeat && (
-                          <span> Processing for: {Math.round((Date.now() - lastHeartbeat) / 1000)}s</span>
+                          <span> ({Math.round((Date.now() - lastHeartbeat) / 1000)}s)</span>
                         )}
                       </p>
                     </>
                   ) : (
                     <>
-                      <p className="text-sm font-medium text-yellow-600 dark:text-yellow-300">Connection Issue</p>
-                      <p className="text-xs text-yellow-600/80 dark:text-yellow-400/80">
-                        No response from server for over a minute. The model might still be processing.
+                      <p className="text-xs sm:text-sm font-medium text-yellow-600 dark:text-yellow-300">Connection Issue</p>
+                      <p className="text-[10px] sm:text-xs text-yellow-600/80 dark:text-yellow-400/80">
+                        No response for a while.
                         {lastHeartbeat && (
-                          <span> Last activity: {Math.round((Date.now() - lastHeartbeat) / 1000)}s ago</span>
+                          <span> ({Math.round((Date.now() - lastHeartbeat) / 1000)}s ago)</span>
                         )}
                       </p>
                     </>
@@ -645,9 +645,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <button
                   type="button"
                   onClick={() => recoverStuckRequest(conversationId)}
-                  className="px-3 py-1 text-xs bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors"
+                  className="px-3 py-1.5 text-xs bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors flex-shrink-0 self-end sm:self-auto"
                 >
-                  Retry Connection
+                  Retry
                 </button>
               )}
             </div>
@@ -655,10 +655,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
 
         {error && (
-          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-md">
-            <div className="flex items-center space-x-2">
-              <AlertCircle size={16} className="text-red-500" />
-              <p className="text-sm text-red-600 dark:text-red-300">{error}</p>
+          <div className="mb-3 p-2.5 sm:p-3 bg-red-500/20 border border-red-500/50 rounded-lg max-w-3xl mx-auto">
+            <div className="flex items-start gap-2">
+              <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs sm:text-sm text-red-600 dark:text-red-300 break-words overflow-hidden">{error}</p>
             </div>
           </div>
         )}

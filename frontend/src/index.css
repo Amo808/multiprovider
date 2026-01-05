@@ -207,6 +207,19 @@
       display: block;
     }
   }
+  
+  /* Mobile error/status blocks - prevent overflow */
+  @media (max-width: 640px) {
+    .mobile-status-block {
+      max-width: calc(100vw - 2rem);
+      overflow-x: hidden;
+    }
+  }
+  
+  /* Mobile flex-shrink helper */
+  .mobile-no-shrink {
+    flex-shrink: 0;
+  }
 }
 
 @layer base {

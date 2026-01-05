@@ -766,19 +766,27 @@ interface GoogleCredentialResponse {
         onCyclePreset={cyclePreset}
         currentPreset={currentPreset}
       />
-      <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-1 text-xs border-b border-border bg-background overflow-x-auto">
-        <button onClick={() => setShowHistory(h => !h)} className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium flex-shrink-0">{showHistory ? '✕' : '☰'} <span className="hidden sm:inline">{showHistory ? 'Hide' : 'Show'}</span></button>
+      <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-1.5 text-xs border-b border-border bg-background flex-shrink-0">
+        {/* History toggle - always visible, especially on mobile */}
+        <button 
+          onClick={() => setShowHistory(h => !h)} 
+          className="px-2.5 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium flex-shrink-0 flex items-center gap-1.5 min-h-[36px] touch-manipulation"
+        >
+          <span className="text-base">{showHistory ? '✕' : '☰'}</span>
+          <span className="hidden sm:inline text-xs">{showHistory ? 'Hide' : 'History'}</span>
+        </button>
+        
         {/* Chat mode toggle */}
         <div className="flex items-center gap-0.5 sm:gap-1 bg-muted rounded-lg p-0.5 flex-shrink-0">
           <button
             onClick={() => setChatMode('single')}
-            className={`px-2 py-1 rounded font-medium transition-colors text-xs sm:text-sm ${chatMode === 'single' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            className={`px-2 py-1.5 rounded font-medium transition-colors text-xs sm:text-sm min-h-[32px] ${chatMode === 'single' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
           >
             Single
           </button>
           <button
             onClick={() => setChatMode('parallel')}
-            className={`px-2 py-1 rounded font-medium transition-colors text-xs sm:text-sm ${chatMode === 'parallel' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400 shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            className={`px-2 py-1.5 rounded font-medium transition-colors text-xs sm:text-sm min-h-[32px] ${chatMode === 'parallel' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400 shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
           >
             Compare
           </button>
