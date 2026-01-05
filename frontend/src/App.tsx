@@ -801,10 +801,10 @@ interface GoogleCredentialResponse {
           <>
             {/* Mobile overlay backdrop */}
             <div 
-              className="fixed inset-0 bg-black/50 z-40 sm:hidden" 
+              className="fixed inset-0 bg-black/50 z-40 sm:hidden animate-in fade-in duration-200" 
               onClick={() => setShowHistory(false)}
             />
-            <div className="fixed sm:relative left-0 top-0 h-full z-50 sm:z-auto">
+            <div className="fixed sm:relative left-0 top-0 h-full z-50 sm:z-auto animate-in slide-in-from-left duration-200 sm:animate-none">
               <ConversationHistory
                 conversations={conversations}
                 currentConversationId={currentConversationId}
@@ -824,10 +824,10 @@ interface GoogleCredentialResponse {
           <>
             {/* Mobile overlay backdrop */}
             <div 
-              className="fixed inset-0 bg-black/50 z-40 sm:hidden" 
+              className="fixed inset-0 bg-black/50 z-40 sm:hidden animate-in fade-in duration-200" 
               onClick={() => setShowHistory(false)}
             />
-            <div className="fixed sm:relative left-0 top-0 h-full z-50 sm:z-auto">
+            <div className="fixed sm:relative left-0 top-0 h-full z-50 sm:z-auto animate-in slide-in-from-left duration-200 sm:animate-none">
               <ParallelConversationHistory
                 currentConversationId={currentParallelConversationId}
                 onNewConversation={() => {
@@ -847,7 +847,7 @@ interface GoogleCredentialResponse {
             </div>
           </>
         )}
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className={`flex-1 flex flex-col min-h-0 ${showHistory ? 'hidden md:flex' : ''}`}>
           {chatMode === 'parallel' ? (
             <ParallelChatInterface
               availableModels={allAvailableModels}

@@ -72,9 +72,9 @@ export const ParallelConversationHistory: React.FC<ParallelConversationHistoryPr
   };
 
   return (
-    <div className="w-full sm:w-64 md:w-72 lg:w-80 h-full bg-background border-r border-border flex flex-col max-w-[85vw] sm:max-w-none">
+    <div className="w-[280px] sm:w-64 md:w-72 lg:w-80 h-full bg-background border-r border-border flex flex-col">
       {/* Header */}
-      <div className="p-3 sm:p-4 border-b border-border">
+      <div className="p-3 border-b border-border">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <Layers size={18} className="text-purple-500" />
