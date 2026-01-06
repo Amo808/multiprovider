@@ -1,6 +1,6 @@
 {
-  "activeProvider": "deepseek",
-  "activeModel": "deepseek-chat",
+  "activeProvider": "openai",
+  "activeModel": "gpt-5.2",
   "providers": {
     "deepseek": {
       "id": "deepseek",

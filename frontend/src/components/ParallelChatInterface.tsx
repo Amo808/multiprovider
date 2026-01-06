@@ -1,12 +1,103 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Square, Bot, Layers, X, GitMerge, GitBranch, User, Trash2, Eye, EyeOff, RefreshCw, Copy, FolderOpen, ChevronDown, Plus, Check, AlertCircle, Loader2, ArrowUp, ArrowDown, Sparkles, GripVertical, Brain, Edit2, Maximize2 } from 'lucide-react';
+import { Send, Square, Bot, Layers, X, GitMerge, GitBranch, User, Trash2, Eye, EyeOff, RefreshCw, Copy, FolderOpen, ChevronDown, Plus, Check, AlertCircle, Loader2, ArrowUp, ArrowDown, Sparkles, GripVertical, Brain, Edit2, Maximize2, Settings } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { ModelInfo, GenerationConfig, Message } from '../types';
 import { Button } from './ui/button';
-import { ModelMultiSelector } from './ModelMultiSelector';
 import { ParallelResponseView } from './ParallelResponseView';
 import { useParallelChat } from '../hooks/useParallelChat';
 import { cn } from '../lib/utils';
 import { parallelAPI, ParallelConversation, ParallelTurn } from '../services/parallelConversationsAPI';
+import { apiClient } from '../services/api';
+import { getModelMaxOutputTokens, getModelDefaultTokens } from '../utils/modelLimits';
+
+// Code block component for syntax highlighting
+const CodeBlock: React.FC<{ language?: string; children: string }> = ({ language, children }) => {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(children);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div className="relative group my-2 rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#2d2d2d] text-[10px] text-gray-400">
+        <span>{language || 'code'}</span>
+        <button onClick={handleCopy} className="flex items-center gap-1 hover:text-white transition-colors">
+          {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+          <span>{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
+      <SyntaxHighlighter
+        style={oneDark}
+        language={language || 'text'}
+        PreTag="div"
+        customStyle={{ margin: 0, padding: '0.75rem', fontSize: '12px', lineHeight: '1.5' }}
+      >
+        {children}
+      </SyntaxHighlighter>
+    </div>
+  );
+};
+
+// Markdown content renderer
+const MarkdownContent: React.FC<{ content: string; className?: string }> = ({ content, className }) => {
+  // Filter out Gemini reasoning mode messages and other garbage prefixes
+  const cleanContent = content
+    .replace(/^\s*\(Reasoning mode enabled.*?\)\s*/gi, '')
+    .replace(/^\s*\(Note: Reasoning mode.*?\)\s*/gi, '')
+    .replace(/^\s*\[Reasoning mode enabled.*?\]\s*/gi, '')
+    .replace(/^\s*Note:\s*Reasoning mode.*?\n*/gi, '')
+    .replace(/^\s*\*\*Note:\*\*\s*Reasoning mode.*?\n*/gi, '')
+    .replace(/^0\s+/, '') // Remove leading "0 " that sometimes appears from GPT
+    .replace(/^0\n/, '') // Remove leading "0\n"
+    .replace(/^\s*0\s*$/, '') // Remove if content is just "0"
+    .trim();
+  
+  return (
+    <div className={cn(
+      "prose prose-sm max-w-none dark:prose-invert",
+      "prose-p:leading-relaxed prose-p:my-1.5",
+      "prose-headings:mt-3 prose-headings:mb-1.5 prose-headings:font-semibold",
+      "prose-h1:text-lg prose-h2:text-base prose-h3:text-sm",
+      "prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5",
+      "prose-pre:my-0 prose-pre:p-0 prose-pre:bg-transparent",
+      "prose-blockquote:border-l-2 prose-blockquote:border-foreground/20 prose-blockquote:pl-3 prose-blockquote:italic prose-blockquote:text-foreground/70",
+      "prose-strong:text-foreground prose-strong:font-semibold",
+      "prose-code:text-[13px] prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded",
+      className
+    )}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code({ node, className, children, ...props }) {
+            const match = /language-(\w+)/.exec(className || '');
+            const isInline = !match && !String(children).includes('\n');
+            if (isInline) {
+              return <code className="px-1 py-0.5 rounded bg-white/10 text-[13px] font-mono" {...props}>{children}</code>;
+            }
+            return <CodeBlock language={match?.[1]}>{String(children).replace(/\n$/, '')}</CodeBlock>;
+          },
+          pre({ children }) { return <>{children}</>; },
+          p({ children }) { return <p className="text-[15px] leading-[1.7] my-1.5">{children}</p>; },
+          ul({ children }) { return <ul className="list-disc pl-5 space-y-0.5 my-1.5">{children}</ul>; },
+          ol({ children }) { return <ol className="list-decimal pl-5 space-y-0.5 my-1.5">{children}</ol>; },
+          li({ children }) { return <li className="text-[15px] leading-[1.6]">{children}</li>; },
+          a({ href, children }) { return <a href={href} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">{children}</a>; },
+          blockquote({ children }) { return <blockquote className="border-l-2 border-foreground/20 pl-3 my-2 italic text-foreground/70">{children}</blockquote>; },
+          hr() { return <hr className="my-3 border-foreground/10" />; },
+          table({ children }) { return <table className="w-full text-sm border-collapse my-2">{children}</table>; },
+          th({ children }) { return <th className="border border-foreground/20 px-2 py-1 bg-foreground/5 text-left font-medium">{children}</th>; },
+          td({ children }) { return <td className="border border-foreground/20 px-2 py-1">{children}</td>; },
+        }}
+      >
+        {cleanContent}
+      </ReactMarkdown>
+    </div>
+  );
+};
 
 // Collapsible thinking section component
 const ThinkingSection: React.FC<{
@@ -66,6 +157,9 @@ interface ParallelChatInterfaceProps {
   onClose?: () => void;
   initialConversationId?: string | null;
   onConversationChange?: (conversationId: string | null) => void;
+  // External control of selected models (for integration with top header selector)
+  selectedModels?: ModelInfo[];
+  onSelectedModelsChange?: (models: ModelInfo[]) => void;
 }
 
 // Conversation turn for history
@@ -91,27 +185,58 @@ interface ConversationTurn {
   }>;
 }
 
-// Provider colors for history display
+// Provider colors for history display - modern 2026 glassmorphism style
 const providerColors: Record<string, string> = {
-  openai: 'bg-green-500/10 border-green-500/30 text-green-600',
-  anthropic: 'bg-orange-500/10 border-orange-500/30 text-orange-600',
-  gemini: 'bg-blue-500/10 border-blue-500/30 text-blue-600',
-  deepseek: 'bg-purple-500/10 border-purple-500/30 text-purple-600',
-  ollama: 'bg-gray-500/10 border-gray-500/30 text-gray-600',
-  groq: 'bg-red-500/10 border-red-500/30 text-red-600',
-  mistral: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-600',
-  chatgpt_pro: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600',
+  openai: 'bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-white/[0.08] dark:to-white/[0.02] border-white/10 backdrop-blur-sm',
+  anthropic: 'bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-white/[0.08] dark:to-white/[0.02] border-white/10 backdrop-blur-sm',
+  gemini: 'bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-white/[0.08] dark:to-white/[0.02] border-white/10 backdrop-blur-sm',
+  deepseek: 'bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-white/[0.08] dark:to-white/[0.02] border-white/10 backdrop-blur-sm',
+  ollama: 'bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-white/[0.08] dark:to-white/[0.02] border-white/10 backdrop-blur-sm',
+  groq: 'bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-white/[0.08] dark:to-white/[0.02] border-white/10 backdrop-blur-sm',
+  mistral: 'bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-white/[0.08] dark:to-white/[0.02] border-white/10 backdrop-blur-sm',
+  chatgpt_pro: 'bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-white/[0.08] dark:to-white/[0.02] border-white/10 backdrop-blur-sm',
+};
+
+// Provider accent colors - vibrant but subtle glow accents
+const providerAccentColors: Record<string, string> = {
+  openai: 'text-emerald-400',
+  anthropic: 'text-amber-400',
+  gemini: 'text-sky-400',
+  deepseek: 'text-violet-400',
+  ollama: 'text-slate-400',
+  groq: 'text-rose-400',
+  mistral: 'text-orange-400',
+  chatgpt_pro: 'text-teal-400',
+};
+
+// Provider glow colors for hover/active states
+const providerGlowColors: Record<string, string> = {
+  openai: 'hover:shadow-emerald-500/10 hover:border-emerald-500/20',
+  anthropic: 'hover:shadow-amber-500/10 hover:border-amber-500/20',
+  gemini: 'hover:shadow-sky-500/10 hover:border-sky-500/20',
+  deepseek: 'hover:shadow-violet-500/10 hover:border-violet-500/20',
+  ollama: 'hover:shadow-slate-500/10 hover:border-slate-500/20',
+  groq: 'hover:shadow-rose-500/10 hover:border-rose-500/20',
+  mistral: 'hover:shadow-orange-500/10 hover:border-orange-500/20',
+  chatgpt_pro: 'hover:shadow-teal-500/10 hover:border-teal-500/20',
 };
 
 export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
-  availableModels,
+  availableModels: _availableModels, // Available models list (selection now handled by global menu)
   generationConfig,
   systemPrompt,
   onClose,
   initialConversationId,
   onConversationChange,
+  selectedModels: externalSelectedModels,
+  onSelectedModelsChange,
 }) => {
-  const [selectedModels, setSelectedModels] = useState<ModelInfo[]>([]);
+  // Use external or internal state for selected models
+  const [internalSelectedModels, setInternalSelectedModels] = useState<ModelInfo[]>([]);
+  const selectedModels = externalSelectedModels ?? internalSelectedModels;
+  // Note: Model selection is now handled via global menu, keep this for potential future use
+  void (onSelectedModelsChange ?? setInternalSelectedModels);
+  
   const [inputValue, setInputValue] = useState('');
   const [currentUserMessage, setCurrentUserMessage] = useState('');
   
@@ -167,6 +292,39 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     responseIndex: number;
     customContext: string;
   } | null>(null);
+  
+  // Per-model settings popup
+  const [modelSettingsPopup, setModelSettingsPopup] = useState<{
+    model: ModelInfo;
+    settings: {
+      systemPrompt: string;
+      temperature: number;
+      maxTokens: number;
+      topP: number;
+      topK?: number;
+      frequencyPenalty: number;
+      presencePenalty: number;
+      thinkingBudget?: number;
+      reasoningEffort?: 'minimal' | 'medium' | 'high';
+      streaming: boolean;
+      stopSequences: string[];
+    };
+  } | null>(null);
+  
+  // Per-model settings storage (model.id -> settings)
+  const [perModelSettings, setPerModelSettings] = useState<Record<string, {
+    systemPrompt: string;
+    temperature: number;
+    maxTokens: number;
+    topP: number;
+    topK?: number;
+    frequencyPenalty: number;
+    presencePenalty: number;
+    thinkingBudget?: number;
+    reasoningEffort?: 'minimal' | 'medium' | 'high';
+    streaming: boolean;
+    stopSequences: string[];
+  }>>({});
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -615,7 +773,8 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       historyContext + message, 
       selectedModels, 
       generationConfig, 
-      enhancedPrompt
+      enhancedPrompt,
+      perModelSettings
     );
   };
 
@@ -662,6 +821,111 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       deleteTurnFromSupabase(turn.dbId);
     }
     setConversationHistory(prev => prev.filter(t => t.id !== turnId));
+  };
+
+  // State for loading model settings
+  const [isLoadingModelSettings, setIsLoadingModelSettings] = useState(false);
+
+  // Open model settings popup - load from backend API
+  const openModelSettings = async (model: ModelInfo) => {
+    setIsLoadingModelSettings(true);
+    
+    // Get model-specific limits
+    const modelMaxTokens = getModelMaxOutputTokens(model);
+    const modelDefaultTokens = getModelDefaultTokens(model);
+    
+    // First show popup with smart defaults
+    setModelSettingsPopup({
+      model,
+      settings: {
+        systemPrompt: systemPrompt || '',
+        temperature: generationConfig.temperature ?? 0.7,
+        maxTokens: Math.min(generationConfig.max_tokens ?? modelDefaultTokens, modelMaxTokens),
+        topP: generationConfig.top_p ?? 0.95,
+        topK: generationConfig.top_k,
+        frequencyPenalty: generationConfig.frequency_penalty ?? 0,
+        presencePenalty: generationConfig.presence_penalty ?? 0,
+        thinkingBudget: generationConfig.thinking_budget,
+        reasoningEffort: generationConfig.reasoning_effort,
+        streaming: generationConfig.stream !== false, // Default true
+        stopSequences: [],
+      }
+    });
+    
+    // Then load real settings from backend
+    try {
+      const result = await apiClient.getModelSettings(model.provider, model.id);
+      if (result.settings) {
+        setModelSettingsPopup(prev => prev ? {
+          ...prev,
+          settings: {
+            systemPrompt: result.settings.system_prompt || systemPrompt || '',
+            temperature: result.settings.temperature ?? generationConfig.temperature ?? 0.7,
+            maxTokens: Math.min(
+              result.settings.max_tokens ?? generationConfig.max_tokens ?? modelDefaultTokens, 
+              modelMaxTokens
+            ),
+            topP: result.settings.top_p ?? generationConfig.top_p ?? 0.95,
+            topK: result.settings.top_k ?? generationConfig.top_k,
+            frequencyPenalty: result.settings.frequency_penalty ?? 0,
+            presencePenalty: result.settings.presence_penalty ?? 0,
+            thinkingBudget: result.settings.thinking_budget ?? generationConfig.thinking_budget,
+            reasoningEffort: result.settings.reasoning_effort ?? generationConfig.reasoning_effort,
+            streaming: result.settings.stream !== false,
+            stopSequences: result.settings.stop_sequences || [],
+          }
+        } : null);
+      }
+    } catch (error) {
+      console.warn('Failed to load model settings from backend:', error);
+      // Keep defaults on error
+    } finally {
+      setIsLoadingModelSettings(false);
+    }
+  };
+
+  // Save model settings - save to backend API
+  const saveModelSettings = async () => {
+    if (!modelSettingsPopup) return;
+    
+    const settings = modelSettingsPopup.settings;
+    const model = modelSettingsPopup.model;
+    
+    // Validate maxTokens against model limit
+    const modelMaxTokens = getModelMaxOutputTokens(model);
+    const validatedMaxTokens = Math.min(settings.maxTokens, modelMaxTokens);
+    
+    // Convert to backend format
+    const backendSettings: Partial<GenerationConfig> & { system_prompt?: string } = {
+      temperature: settings.temperature,
+      max_tokens: validatedMaxTokens,
+      top_p: settings.topP,
+      top_k: settings.topK,
+      frequency_penalty: settings.frequencyPenalty,
+      presence_penalty: settings.presencePenalty,
+      thinking_budget: settings.thinkingBudget,
+      reasoning_effort: settings.reasoningEffort,
+      stream: settings.streaming,
+      stop_sequences: settings.stopSequences.length > 0 ? settings.stopSequences : undefined,
+      system_prompt: settings.systemPrompt || undefined,
+    };
+    
+    try {
+      await apiClient.updateModelSettings(model.provider, model.id, backendSettings);
+      console.log('[ParallelChat] Model settings saved to backend:', model.id);
+      
+      // Also update local cache
+      const modelKey = `${model.provider}-${model.id}`;
+      setPerModelSettings(prev => ({
+        ...prev,
+        [modelKey]: { ...settings, maxTokens: validatedMaxTokens }
+      }));
+    } catch (error) {
+      console.error('Failed to save model settings:', error);
+      setSaveError('Failed to save model settings');
+    }
+    
+    setModelSettingsPopup(null);
   };
 
   // Delete a specific response from a turn (with Supabase sync)
@@ -1002,7 +1266,8 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       historyContext + turn.userMessage, 
       [modelToRegenerate], 
       generationConfig, 
-      enhancedPrompt
+      enhancedPrompt,
+      perModelSettings
     );
   };
 
@@ -1099,7 +1364,8 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       historyContext + newMessage, 
       modelsToRegenerate, 
       generationConfig, 
-      enhancedPrompt
+      enhancedPrompt,
+      perModelSettings
     );
   };
 
@@ -1183,7 +1449,8 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       contextString + turn.userMessage, 
       [modelToRegenerate], 
       generationConfig, 
-      enhancedPrompt
+      enhancedPrompt,
+      perModelSettings
     );
   };
 
@@ -1381,8 +1648,55 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         </div>
       )}
 
-      {/* Main chat area - scrollable */}
-      <div className="flex-1 overflow-y-auto min-h-0 ios-scroll">
+      {/* Selected Models Bar - показывает выбранные модели с настройками */}
+      {selectedModels.length > 0 && (
+        <div className="px-3 sm:px-4 py-2 border-b border-border bg-background/50 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider mr-1">
+              Models:
+            </span>
+            {selectedModels.map((model) => (
+              <div
+                key={model.id}
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-medium transition-all",
+                  "bg-secondary/50 border-border hover:border-primary/30"
+                )}
+              >
+                <Bot size={12} className={providerAccentColors[model.provider] || 'text-foreground/60'} />
+                <span className={cn(
+                  "max-w-[80px] sm:max-w-[120px] truncate",
+                  providerAccentColors[model.provider]
+                )}>
+                  {model.display_name}
+                </span>
+                {/* Settings gear */}
+                <button
+                  onClick={() => openModelSettings(model)}
+                  className="p-1 rounded hover:bg-white/10 text-foreground/40 hover:text-foreground transition-all"
+                  title={`Settings for ${model.display_name}`}
+                >
+                  <Settings size={12} />
+                </button>
+              </div>
+            ))}
+            {selectedModels.length === 0 && (
+              <span className="text-xs text-muted-foreground italic">
+                Select models from the top menu ↑
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Main chat area - scrollable with improved Mac scrolling */}
+      <div 
+        className="flex-1 overflow-y-auto min-h-0 scroll-container"
+        style={{ 
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain'
+        }}
+      >
         {!hasContent ? (
           /* Empty state */
           <div className="flex items-center justify-center h-full">
@@ -1519,13 +1833,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                         </div>
                       </div>
                     ) : (
-                      <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground rounded-2xl rounded-br-md px-4 py-2">
-                        <p className="text-sm whitespace-pre-wrap break-words">{turn.userMessage}</p>
+                      <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground rounded-2xl rounded-br-sm px-4 py-3 shadow-sm">
+                        <p className="text-[15px] whitespace-pre-wrap break-words leading-relaxed">{turn.userMessage}</p>
                       </div>
                     )}
                     
-                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                      <User size={16} className="text-primary-foreground" />
+                    <div className="w-9 h-9 rounded-full bg-muted-foreground/60 dark:bg-zinc-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <User size={16} className="text-white dark:text-zinc-200" />
                     </div>
                   </div>
                 </div>
@@ -1534,7 +1848,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 <div className="flex justify-start">
                   <div className="max-w-full w-full">
                     <div className={cn(
-                      "grid gap-2",
+                      "grid gap-3 items-start", // items-start prevents stretching
                       turn.responses.length <= 2 ? "grid-cols-1 md:grid-cols-2" 
                         : turn.responses.length === 3 ? "grid-cols-1 md:grid-cols-3"
                         : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
@@ -1556,21 +1870,23 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                           onTouchCancel={handleTouchCancel}
                           style={{ touchAction: 'pan-y pinch-zoom' }}
                           className={cn(
-                            "rounded-lg border px-3 py-2 group/resp relative transition-all overflow-hidden flex flex-col select-none",
-                            // Last turn gets more space, others are compact
-                            turnIndex === conversationHistory.length - 1 
-                              ? "max-h-[400px] sm:max-h-[500px]" 
-                              : "max-h-[200px] sm:max-h-[250px]",
+                            "rounded-2xl border px-4 py-4 group/resp relative transition-all duration-300 overflow-hidden flex flex-col select-none shadow-lg",
+                            // Cards size based on content, earlier turns get max-height
+                            turnIndex !== conversationHistory.length - 1 && "max-h-[200px]",
                             "md:cursor-grab md:active:cursor-grabbing",
                             resp.enabled 
-                              ? providerColors[resp.model.provider] || providerColors.ollama
-                              : "bg-muted/30 border-border/50 opacity-60",
+                              ? cn(
+                                  providerColors[resp.model.provider] || providerColors.ollama,
+                                  providerGlowColors[resp.model.provider] || providerGlowColors.ollama,
+                                  "hover:shadow-xl hover:scale-[1.01]"
+                                )
+                              : "bg-muted/20 border-border/30 opacity-50 grayscale-[30%]",
                             // Desktop drag states
                             draggedResponse?.turnId === turn.id && draggedResponse?.responseIndex === idx && "opacity-50 scale-95",
-                            dragOverTarget?.turnId === turn.id && dragOverTarget?.responseIndex === idx && "ring-2 ring-primary ring-offset-2",
+                            dragOverTarget?.turnId === turn.id && dragOverTarget?.responseIndex === idx && "ring-2 ring-primary/50 ring-offset-2 ring-offset-background",
                             // Touch drag states
                             touchDragging?.turnId === turn.id && touchDragging?.responseIndex === idx && "opacity-50 scale-95 z-50",
-                            touchDropTarget?.turnId === turn.id && touchDropTarget?.responseIndex === idx && "ring-2 ring-primary ring-offset-2 bg-primary/10",
+                            touchDropTarget?.turnId === turn.id && touchDropTarget?.responseIndex === idx && "ring-2 ring-primary/50 ring-offset-2 bg-primary/5",
                           )}
                         >
                           {/* Drag handle (desktop) & position controls - always visible on mobile */}
@@ -1579,45 +1895,63 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                             "opacity-100 sm:opacity-0 sm:group-hover/resp:opacity-100 transition-opacity"
                           )}>
                             {/* Drag handle - larger touch target, hidden on mobile */}
-                            <div className="hidden md:flex p-1 cursor-grab">
-                              <GripVertical size={14} className="text-muted-foreground" />
+                            <div className="hidden md:flex p-1.5 cursor-grab">
+                              <GripVertical size={16} className="text-muted-foreground" />
                             </div>
-                            {/* Move buttons - always show on mobile, hover on desktop */}
+                            {/* Move buttons - always show, larger for touch */}
                             {idx > 0 && (
                               <button
                                 onClick={() => moveResponseUp(turn.id, idx)}
-                                className="p-1.5 sm:p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground touch-manipulation"
+                                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground touch-manipulation"
                                 title="Move left"
                               >
-                                <ArrowUp size={14} className="sm:w-[10px] sm:h-[10px] rotate-[-90deg]" />
+                                <ArrowUp size={16} className="rotate-[-90deg]" />
                               </button>
                             )}
                             {idx < turn.responses.length - 1 && (
                               <button
                                 onClick={() => moveResponseDown(turn.id, idx)}
-                                className="p-1.5 sm:p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground touch-manipulation"
+                                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground touch-manipulation"
                                 title="Move right"
                               >
-                                <ArrowDown size={14} className="sm:w-[10px] sm:h-[10px] rotate-[-90deg]" />
+                                <ArrowDown size={16} className="rotate-[-90deg]" />
                               </button>
                             )}
                           </div>
                           
                           {/* Response header with model name and action buttons */}
-                          <div className="flex items-center justify-between mb-1">
-                            <div className="text-xs font-medium flex items-center gap-1 pl-6 sm:pl-0">
-                              <Bot size={12} />
-                              <span className={cn(!resp.enabled && "line-through")}>{resp.model.display_name}</span>
-                              {!resp.enabled && (
-                                <span className="text-[10px] text-muted-foreground ml-1">(off)</span>
-                              )}
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2 pl-6 sm:pl-0">
+                              <div className={cn(
+                                "w-7 h-7 rounded-lg flex items-center justify-center",
+                                "bg-gradient-to-br from-white/10 to-white/5"
+                              )}>
+                                <Bot size={14} className={providerAccentColors[resp.model.provider] || 'text-foreground/60'} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className={cn(
+                                  "text-sm font-semibold tracking-tight",
+                                  !resp.enabled && "line-through opacity-50",
+                                  providerAccentColors[resp.model.provider]
+                                )}>
+                                  {resp.model.display_name}
+                                </span>
+                                <span className="text-[10px] text-foreground/40 uppercase tracking-wider">
+                                  {resp.model.provider}
+                                </span>
+                              </div>
+                              {/* Settings gear icon */}
+                              <button
+                                onClick={() => openModelSettings(resp.model)}
+                                className="p-1.5 rounded-lg hover:bg-white/10 dark:hover:bg-white/10 text-foreground/50 hover:text-foreground transition-all touch-manipulation ml-1"
+                                title={`Settings for ${resp.model.display_name}`}
+                              >
+                                <Settings size={14} />
+                              </button>
                             </div>
                             
-                            {/* Action buttons - always visible on mobile, hover on desktop */}
-                            <div className={cn(
-                              "flex items-center gap-0.5 transition-opacity",
-                              "opacity-100 sm:opacity-0 sm:group-hover/resp:opacity-100"
-                            )}>
+                            {/* Action buttons - modern pill style */}
+                            <div className="flex items-center gap-0.5 bg-black/5 dark:bg-white/5 rounded-full p-0.5">
                               {/* Expand button */}
                               <button
                                 onClick={() => setExpandedResponse({
@@ -1626,54 +1960,54 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                   content: resp.content,
                                   model: resp.model
                                 })}
-                                className="p-1.5 sm:p-1 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground transition-colors touch-manipulation"
-                                title="Expand response"
+                                className="p-2 rounded-full hover:bg-white/10 dark:hover:bg-white/10 text-foreground/60 hover:text-foreground transition-all touch-manipulation"
+                                title="Expand"
                               >
-                                <Maximize2 size={14} className="sm:w-3 sm:h-3" />
+                                <Maximize2 size={15} />
                               </button>
                               
                               {/* Copy button */}
                               <button
                                 onClick={() => copyResponse(resp.content)}
-                                className="p-1.5 sm:p-1 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground transition-colors touch-manipulation"
-                                title="Copy response"
+                                className="p-2 rounded-full hover:bg-white/10 dark:hover:bg-white/10 text-foreground/60 hover:text-foreground transition-all touch-manipulation"
+                                title="Copy"
                               >
-                                <Copy size={14} className="sm:w-3 sm:h-3" />
+                                <Copy size={15} />
                               </button>
                               
                               {/* Toggle visibility button */}
                               <button
                                 onClick={() => toggleResponseEnabled(turn.id, idx)}
                                 className={cn(
-                                  "p-1.5 sm:p-1 rounded transition-colors touch-manipulation",
+                                  "p-2 rounded-full transition-all touch-manipulation",
                                   resp.enabled 
-                                    ? "hover:bg-background/50 text-muted-foreground hover:text-foreground"
-                                    : "hover:bg-green-500/20 text-green-500"
+                                    ? "hover:bg-white/10 text-foreground/60 hover:text-foreground"
+                                    : "bg-emerald-500/20 text-emerald-400"
                                 )}
-                                title={resp.enabled ? "Hide from context" : "Include in context"}
+                                title={resp.enabled ? "Hide" : "Show"}
                               >
-                                {resp.enabled ? <EyeOff size={14} className="sm:w-3 sm:h-3" /> : <Eye size={14} className="sm:w-3 sm:h-3" />}
+                                {resp.enabled ? <EyeOff size={15} /> : <Eye size={15} />}
                               </button>
                               
-                              {/* Simple Regenerate button */}
+                              {/* Regenerate button */}
                               <button
                                 onClick={() => regenerateResponse(turn.id, idx)}
-                                className="p-1.5 sm:p-1 rounded hover:bg-blue-500/20 text-muted-foreground hover:text-blue-500 transition-colors touch-manipulation"
+                                className="p-2 rounded-full hover:bg-sky-500/20 text-foreground/60 hover:text-sky-400 transition-all touch-manipulation"
                                 title="Regenerate"
                                 disabled={isLoading}
                               >
-                                <RefreshCw size={14} className="sm:w-3 sm:h-3" />
+                                <RefreshCw size={15} />
                               </button>
                               
                               {/* Smart Regenerate */}
                               <div className="relative">
                                 <button
                                   onClick={() => openSmartRegeneratePopup(turn.id, idx)}
-                                  className="p-1.5 sm:p-1 rounded hover:bg-purple-500/20 text-muted-foreground hover:text-purple-500 transition-colors touch-manipulation"
-                                  title="✨ Smart regenerate"
+                                  className="p-2 rounded-full hover:bg-violet-500/20 text-foreground/60 hover:text-violet-400 transition-all touch-manipulation"
+                                  title="Smart regenerate"
                                   disabled={isLoading}
                                 >
-                                  <Sparkles size={14} className="sm:w-3 sm:h-3" />
+                                  <Sparkles size={16} />
                                 </button>
                                 
                                 {/* Smart Regenerate Popup */}
@@ -1733,10 +2067,10 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               {/* Delete response button */}
                               <button
                                 onClick={() => deleteResponse(turn.id, idx)}
-                                className="p-1.5 sm:p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors touch-manipulation"
+                                className="p-2 rounded-full hover:bg-rose-500/20 text-foreground/60 hover:text-rose-400 transition-all touch-manipulation"
                                 title="Delete"
                               >
-                                <Trash2 size={14} className="sm:w-3 sm:h-3" />
+                                <Trash2 size={15} />
                               </button>
                             </div>
                           </div>
@@ -1749,31 +2083,42 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                             />
                           )}
                           
-                          {/* Response content - scrollable with contained overscroll */}
+                          {/* Response content with Markdown - click to expand, last turn fully visible, others scrollable */}
                           <div 
+                            onClick={() => setExpandedResponse({
+                              turnId: turn.id,
+                              responseIndex: idx,
+                              content: resp.content,
+                              model: resp.model
+                            })}
                             className={cn(
-                              "text-sm whitespace-pre-wrap break-words flex-1 overflow-y-auto min-h-0",
-                              resp.enabled ? "text-foreground" : "text-muted-foreground"
+                              "flex-1 min-h-0 cursor-pointer hover:bg-white/[0.02] rounded-lg transition-colors -mx-1 px-1",
+                              resp.enabled ? "text-foreground/90" : "text-foreground/40",
+                              // Only add scroll to earlier turns
+                              turnIndex !== conversationHistory.length - 1 && "overflow-y-auto"
                             )}
-                            style={{ overscrollBehavior: 'contain' }}
+                            style={{ 
+                              overscrollBehavior: 'contain',
+                              WebkitOverflowScrolling: 'touch'
+                            }}
                           >
-                            {resp.content}
+                            <MarkdownContent content={resp.content} />
                           </div>
                           
-                          {/* Meta info footer - always at bottom */}
+                          {/* Meta info footer - modern pill style */}
                           {resp.meta && (
-                            <div className="flex items-center gap-2 mt-2 pt-1 border-t border-border/30 text-[10px] text-muted-foreground flex-shrink-0">
+                            <div className="flex items-center gap-2 mt-3 pt-2 border-t border-white/5 text-[11px] text-foreground/40 flex-shrink-0">
                               {resp.meta.tokens_out !== undefined && (
-                                <span className="text-green-500">↓{resp.meta.tokens_out}</span>
+                                <span className="text-emerald-400/70">↓{resp.meta.tokens_out}</span>
                               )}
                               {resp.meta.thought_tokens !== undefined && resp.meta.thought_tokens > 0 && (
-                                <span className="text-purple-500">🧠{resp.meta.thought_tokens}</span>
+                                <span className="text-violet-400/70">🧠{resp.meta.thought_tokens}</span>
                               )}
                               {resp.meta.estimated_cost !== undefined && resp.meta.estimated_cost !== null && (
-                                <span className="text-yellow-500">${resp.meta.estimated_cost.toFixed(4)}</span>
+                                <span className="text-amber-400/70">${resp.meta.estimated_cost.toFixed(4)}</span>
                               )}
                               {resp.meta.total_latency !== undefined && (
-                                <span>{resp.meta.total_latency.toFixed(1)}s</span>
+                                <span className="text-foreground/30">{resp.meta.total_latency.toFixed(1)}s</span>
                               )}
                             </div>
                           )}
@@ -1791,11 +2136,11 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 {/* Current user message - ChatGPT style */}
                 <div className="flex justify-end">
                   <div className="flex items-start gap-2 max-w-[80%]">
-                    <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground rounded-2xl rounded-br-md px-4 py-2">
-                      <p className="text-sm whitespace-pre-wrap break-words">{currentUserMessage}</p>
+                    <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground rounded-2xl rounded-br-sm px-4 py-3 shadow-sm">
+                      <p className="text-[15px] whitespace-pre-wrap break-words leading-relaxed">{currentUserMessage}</p>
                     </div>
-                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                      <User size={16} className="text-primary-foreground" />
+                    <div className="w-9 h-9 rounded-full bg-muted-foreground/60 dark:bg-zinc-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <User size={16} className="text-white dark:text-zinc-200" />
                     </div>
                   </div>
                 </div>
@@ -1814,20 +2159,11 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         )}
       </div>
 
-      {/* Input area - ChatGPT style */}
-      <div className="border-t border-border bg-background p-2 sm:p-4 flex-shrink-0 space-y-2 sm:space-y-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
-        {/* Model selector */}
-        <ModelMultiSelector
-          availableModels={availableModels}
-          selectedModels={selectedModels}
-          onSelectionChange={setSelectedModels}
-          maxSelections={4}
-          disabled={isLoading}
-        />
-
-        {/* Input form - ChatGPT style */}
+      {/* Input area - Modern 2026 style */}
+      <div className="border-t border-white/5 bg-gradient-to-t from-background to-background/80 backdrop-blur-xl p-3 sm:p-4 flex-shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        {/* Input form */}
         <form onSubmit={handleSubmit} className="relative">
-          <div className="flex items-end gap-2 bg-secondary dark:bg-[#2f2f2f] rounded-2xl border border-border p-2">
+          <div className="flex items-end gap-2 bg-white/5 dark:bg-white/[0.03] rounded-2xl border border-white/10 p-2 shadow-xl backdrop-blur-sm">
             <textarea
               ref={textareaRef}
               value={inputValue}
@@ -1835,26 +2171,26 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               onKeyDown={handleKeyDown}
               placeholder={
                 selectedModels.length === 0
-                  ? "Select models..."
-                  : `Send to ${selectedModels.length} model${selectedModels.length > 1 ? 's' : ''}...`
+                  ? "Select models above..."
+                  : `Message ${selectedModels.length} model${selectedModels.length > 1 ? 's' : ''}...`
               }
               className={cn(
-                "flex-1 px-2 sm:px-3 py-2 resize-none bg-transparent text-foreground placeholder:text-muted-foreground",
-                "focus:outline-none border-0 text-base", // text-base = 16px prevents iOS zoom
+                "flex-1 px-3 py-2.5 resize-none bg-transparent text-foreground placeholder:text-foreground/30",
+                "focus:outline-none border-0 text-[16px] leading-relaxed", // 16px prevents iOS zoom
               )}
               rows={1}
-              style={{ minHeight: '40px', maxHeight: '120px' }}
+              style={{ minHeight: '44px', maxHeight: '140px' }}
               disabled={selectedModels.length === 0 || isLoading}
             />
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               {conversationHistory.length > 0 && !isLoading && (
                 <Button
                   type="button"
                   onClick={handleNewComparison}
                   variant="ghost"
                   size="sm"
-                  className="h-9 w-9 p-0 rounded-full"
+                  className="h-10 w-10 p-0 rounded-full hover:bg-white/10"
                   title="New conversation"
                 >
                   <Plus size={18} />
@@ -1867,7 +2203,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   onClick={cancelAll}
                   variant="ghost"
                   size="sm"
-                  className="h-9 w-9 p-0 rounded-full bg-destructive/10 hover:bg-destructive/20 text-destructive"
+                  className="h-10 w-10 p-0 rounded-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-400"
                 >
                   <Square size={18} />
                 </Button>
@@ -1878,10 +2214,10 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   variant="ghost"
                   size="sm"
                   className={cn(
-                    "h-9 w-9 p-0 rounded-full transition-colors",
+                    "h-10 w-10 p-0 rounded-full transition-all duration-300",
                     canSend 
-                      ? "bg-purple-600 hover:bg-purple-700 text-white" 
-                      : "text-muted-foreground"
+                      ? "bg-gradient-to-br from-violet-500 to-purple-600 hover:from-violet-400 hover:to-purple-500 text-white shadow-lg shadow-violet-500/25" 
+                      : "text-foreground/30"
                   )}
                 >
                   <Send size={18} />
@@ -1929,7 +2265,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               </span>
             )}
             {responses.length > 0 && isLoading && (
-              <span>
+              <span className="text-foreground/40">
                 {responses.filter(r => !r.isStreaming && r.content).length}/{responses.length}
               </span>
             )}
@@ -1937,23 +2273,32 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         </div>
       </div>
       
-      {/* Expanded Response Modal */}
+      {/* Expanded Response Modal - Modern fullscreen */}
       {expandedResponse && (
         <div 
-          className="fixed inset-0 z-[200] bg-background/95 backdrop-blur-sm flex flex-col animate-in fade-in duration-200"
+          className="fixed inset-0 z-[200] bg-background/98 backdrop-blur-xl flex flex-col animate-in fade-in zoom-in-95 duration-300"
           onClick={() => setExpandedResponse(null)}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <Bot size={18} />
-              <span className="font-medium">{expandedResponse.model.display_name}</span>
-              <span className={cn(
-                "px-2 py-0.5 text-xs rounded-full",
-                providerColors[expandedResponse.model.provider] || providerColors.ollama
+          <div className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5 flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center",
+                "bg-gradient-to-br from-white/10 to-white/5"
               )}>
-                {expandedResponse.model.provider}
-              </span>
+                <Bot size={20} className={providerAccentColors[expandedResponse.model.provider] || 'text-foreground/60'} />
+              </div>
+              <div>
+                <span className={cn(
+                  "font-semibold text-lg",
+                  providerAccentColors[expandedResponse.model.provider]
+                )}>
+                  {expandedResponse.model.display_name}
+                </span>
+                <p className="text-xs text-foreground/40 uppercase tracking-wider">
+                  {expandedResponse.model.provider}
+                </p>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -1961,29 +2306,30 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   e.stopPropagation();
                   copyResponse(expandedResponse.content);
                 }}
-                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-foreground/60 hover:text-foreground transition-all"
                 title="Copy"
               >
                 <Copy size={18} />
               </button>
               <button
                 onClick={() => setExpandedResponse(null)}
-                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-foreground/60 hover:text-foreground transition-all"
               >
                 <X size={18} />
               </button>
             </div>
           </div>
           
-          {/* Content - scrollable */}
+          {/* Content - scrollable with Markdown */}
           <div 
-            className="flex-1 overflow-y-auto p-4 sm:p-6"
+            className="flex-1 overflow-y-auto p-4 sm:p-8 scroll-container"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="max-w-4xl mx-auto">
-              <pre className="whitespace-pre-wrap break-words text-sm text-foreground font-sans leading-relaxed">
-                {expandedResponse.content}
-              </pre>
+              <MarkdownContent 
+                content={expandedResponse.content} 
+                className="text-[16px] leading-[1.9]"
+              />
             </div>
           </div>
         </div>
@@ -1993,17 +2339,472 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       {touchDragging && (
         <div 
           ref={touchGhostRef}
-          className="fixed pointer-events-none z-[100] bg-primary/20 border-2 border-primary rounded-lg px-3 py-2 shadow-xl backdrop-blur-sm"
+          className="fixed pointer-events-none z-[100] bg-gradient-to-br from-violet-500/30 to-purple-500/30 border border-violet-400/50 rounded-xl px-4 py-3 shadow-2xl backdrop-blur-md"
           style={{
             left: touchDragging.currentX - 50,
             top: touchDragging.currentY - 30,
-            minWidth: '100px',
+            minWidth: '120px',
             transform: 'translate(0, 0)',
           }}
         >
-          <div className="flex items-center gap-2 text-xs font-medium text-primary">
-            <GripVertical size={14} />
+          <div className="flex items-center gap-2 text-sm font-medium text-white">
+            <GripVertical size={16} />
             <span>Moving...</span>
+          </div>
+        </div>
+      )}
+      
+      {/* Model Settings Popup */}
+      {modelSettingsPopup && (
+        <div 
+          className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setModelSettingsPopup(null)}
+        >
+          <div 
+            className="bg-background border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-9 h-9 rounded-lg flex items-center justify-center",
+                  "bg-gradient-to-br from-white/10 to-white/5"
+                )}>
+                  <Settings size={18} className={providerAccentColors[modelSettingsPopup.model.provider] || 'text-foreground/60'} />
+                </div>
+                <div>
+                  <span className={cn(
+                    "font-semibold",
+                    providerAccentColors[modelSettingsPopup.model.provider]
+                  )}>
+                    {modelSettingsPopup.model.display_name}
+                  </span>
+                  <p className="text-[10px] text-foreground/40 uppercase tracking-wider">
+                    Model Settings
+                    {isLoadingModelSettings && <Loader2 size={10} className="inline ml-1 animate-spin" />}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setModelSettingsPopup(null)}
+                className="p-2 rounded-full hover:bg-white/10 text-foreground/60 hover:text-foreground transition-all"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            {/* Quick Presets */}
+            <div className="flex items-center gap-2 p-3 border-b border-border bg-secondary/20 flex-shrink-0">
+              <span className="text-xs text-foreground/50">Quick:</span>
+              <button
+                onClick={() => setModelSettingsPopup(prev => prev ? {
+                  ...prev,
+                  settings: { 
+                    ...prev.settings, 
+                    temperature: 1.0, 
+                    maxTokens: 32768,
+                    topP: 1.0,
+                    frequencyPenalty: 0,
+                    presencePenalty: 0,
+                    reasoningEffort: 'high',
+                    thinkingBudget: -1,
+                  }
+                } : null)}
+                className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-gradient-to-r from-red-500 to-orange-500 text-white hover:opacity-90 transition-all"
+              >
+                🔥 MAX
+              </button>
+              <button
+                onClick={() => setModelSettingsPopup(prev => prev ? {
+                  ...prev,
+                  settings: { 
+                    ...prev.settings, 
+                    temperature: 0.7, 
+                    maxTokens: 8192,
+                    topP: 0.95,
+                    frequencyPenalty: 0,
+                    presencePenalty: 0,
+                    reasoningEffort: 'medium',
+                    thinkingBudget: -1,
+                  }
+                } : null)}
+                className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:opacity-90 transition-all"
+              >
+                ⚖️ Balanced
+              </button>
+              <button
+                onClick={() => setModelSettingsPopup(prev => prev ? {
+                  ...prev,
+                  settings: { 
+                    ...prev.settings, 
+                    temperature: 0.1, 
+                    maxTokens: 1024,
+                    topP: 0.5,
+                    frequencyPenalty: 0.5,
+                    presencePenalty: 0,
+                    reasoningEffort: 'minimal',
+                    thinkingBudget: 0,
+                  }
+                } : null)}
+                className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:opacity-90 transition-all"
+              >
+                ❄️ MIN
+              </button>
+            </div>
+            
+            {/* Content - scrollable */}
+            <div className="p-4 space-y-5 overflow-y-auto flex-1">
+              {/* System Prompt */}
+              <div>
+                <label className="block text-sm font-medium text-foreground/80 mb-2">
+                  System Prompt
+                </label>
+                <textarea
+                  value={modelSettingsPopup.settings.systemPrompt}
+                  onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                    ...prev,
+                    settings: { ...prev.settings, systemPrompt: e.target.value }
+                  } : null)}
+                  placeholder="Enter custom system prompt for this model..."
+                  className="w-full h-24 px-3 py-2 text-sm bg-secondary/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                />
+                <p className="text-[10px] text-foreground/40 mt-1">
+                  Leave empty to use global system prompt
+                </p>
+              </div>
+              
+              {/* Temperature */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-foreground/80">Temperature</label>
+                  <span className="text-xs text-foreground/60 font-mono bg-secondary/50 px-2 py-0.5 rounded">
+                    {modelSettingsPopup.settings.temperature.toFixed(2)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  value={modelSettingsPopup.settings.temperature}
+                  onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                    ...prev,
+                    settings: { ...prev.settings, temperature: parseFloat(e.target.value) }
+                  } : null)}
+                  className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                />
+                <div className="flex justify-between text-[10px] text-foreground/40 mt-1">
+                  <span>Precise (0)</span>
+                  <span>Creative (2)</span>
+                </div>
+              </div>
+              
+              {/* Max Tokens */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-foreground/80">Max Tokens</label>
+                  <span className="text-xs text-foreground/60 font-mono bg-secondary/50 px-2 py-0.5 rounded">
+                    {modelSettingsPopup.settings.maxTokens.toLocaleString()}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="256"
+                  max={getModelMaxOutputTokens(modelSettingsPopup.model)}
+                  step="256"
+                  value={Math.min(modelSettingsPopup.settings.maxTokens, getModelMaxOutputTokens(modelSettingsPopup.model))}
+                  onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                    ...prev,
+                    settings: { ...prev.settings, maxTokens: parseInt(e.target.value) }
+                  } : null)}
+                  className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                />
+                <div className="flex items-center justify-between text-[10px] text-foreground/40 mt-1">
+                  <span>Model limit: {getModelMaxOutputTokens(modelSettingsPopup.model).toLocaleString()}</span>
+                  <span>Default: {getModelDefaultTokens(modelSettingsPopup.model).toLocaleString()}</span>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => setModelSettingsPopup(prev => prev ? {
+                      ...prev,
+                      settings: { ...prev.settings, maxTokens: getModelDefaultTokens(modelSettingsPopup.model) }
+                    } : null)}
+                    className="px-2 py-1 text-[10px] rounded border border-green-500/30 hover:bg-green-500/10 text-green-400"
+                  >
+                    Default
+                  </button>
+                  <button
+                    onClick={() => setModelSettingsPopup(prev => prev ? {
+                      ...prev,
+                      settings: { ...prev.settings, maxTokens: 4096 }
+                    } : null)}
+                    className="px-2 py-1 text-[10px] rounded border border-border hover:bg-secondary/50 text-foreground/60"
+                  >
+                    4K
+                  </button>
+                  <button
+                    onClick={() => setModelSettingsPopup(prev => prev ? {
+                      ...prev,
+                      settings: { ...prev.settings, maxTokens: 8192 }
+                    } : null)}
+                    className="px-2 py-1 text-[10px] rounded border border-border hover:bg-secondary/50 text-foreground/60"
+                  >
+                    8K
+                  </button>
+                  <button
+                    onClick={() => setModelSettingsPopup(prev => prev ? {
+                      ...prev,
+                      settings: { ...prev.settings, maxTokens: 16384 }
+                    } : null)}
+                    className="px-2 py-1 text-[10px] rounded border border-border hover:bg-secondary/50 text-foreground/60"
+                  >
+                    16K
+                  </button>
+                  <button
+                    onClick={() => setModelSettingsPopup(prev => prev ? {
+                      ...prev,
+                      settings: { ...prev.settings, maxTokens: getModelMaxOutputTokens(modelSettingsPopup.model) }
+                    } : null)}
+                    className="px-2 py-1 text-[10px] rounded border border-blue-500/30 hover:bg-blue-500/10 text-blue-400"
+                  >
+                    MAX
+                  </button>
+                </div>
+              </div>
+              
+              {/* Top P */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-foreground/80">Top P</label>
+                  <span className="text-xs text-foreground/60 font-mono bg-secondary/50 px-2 py-0.5 rounded">
+                    {modelSettingsPopup.settings.topP.toFixed(2)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={modelSettingsPopup.settings.topP}
+                  onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                    ...prev,
+                    settings: { ...prev.settings, topP: parseFloat(e.target.value) }
+                  } : null)}
+                  className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                />
+                <p className="text-[10px] text-foreground/40 mt-1">Nucleus sampling - controls diversity</p>
+              </div>
+              
+              {/* Frequency & Presence Penalty */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-medium text-foreground/80">Freq. Penalty</label>
+                    <span className="text-[10px] text-foreground/60 font-mono">
+                      {modelSettingsPopup.settings.frequencyPenalty.toFixed(1)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="-2"
+                    max="2"
+                    step="0.1"
+                    value={modelSettingsPopup.settings.frequencyPenalty}
+                    onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                      ...prev,
+                      settings: { ...prev.settings, frequencyPenalty: parseFloat(e.target.value) }
+                    } : null)}
+                    className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-medium text-foreground/80">Pres. Penalty</label>
+                    <span className="text-[10px] text-foreground/60 font-mono">
+                      {modelSettingsPopup.settings.presencePenalty.toFixed(1)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="-2"
+                    max="2"
+                    step="0.1"
+                    value={modelSettingsPopup.settings.presencePenalty}
+                    onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                      ...prev,
+                      settings: { ...prev.settings, presencePenalty: parseFloat(e.target.value) }
+                    } : null)}
+                    className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                  />
+                </div>
+              </div>
+              
+              {/* Provider-specific: Reasoning Effort (OpenAI) */}
+              {modelSettingsPopup.model.provider === 'openai' && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-foreground/80">Reasoning Effort</label>
+                    <select
+                      value={modelSettingsPopup.settings.reasoningEffort || ''}
+                      onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                        ...prev,
+                        settings: { 
+                          ...prev.settings, 
+                          reasoningEffort: (e.target.value as 'minimal' | 'medium' | 'high') || undefined 
+                        }
+                      } : null)}
+                      className="text-xs bg-secondary border border-border rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">default</option>
+                      <option value="minimal">minimal (fast)</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high (deep)</option>
+                    </select>
+                  </div>
+                  <p className="text-[10px] text-foreground/40">Controls reasoning depth for GPT-5/o-series</p>
+                </div>
+              )}
+              
+              {/* Provider-specific: Thinking Budget (Gemini/DeepSeek) */}
+              {(modelSettingsPopup.model.provider === 'gemini' || modelSettingsPopup.model.provider === 'deepseek') && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-foreground/80">Thinking Budget</label>
+                    <span className="text-xs text-foreground/60 font-mono bg-secondary/50 px-2 py-0.5 rounded">
+                      {modelSettingsPopup.settings.thinkingBudget === undefined || modelSettingsPopup.settings.thinkingBudget === -1 
+                        ? 'auto' 
+                        : modelSettingsPopup.settings.thinkingBudget === 0 
+                          ? 'off' 
+                          : modelSettingsPopup.settings.thinkingBudget.toLocaleString()}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="-1"
+                    max="24576"
+                    step="1"
+                    value={modelSettingsPopup.settings.thinkingBudget ?? -1}
+                    onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                      ...prev,
+                      settings: { ...prev.settings, thinkingBudget: parseInt(e.target.value) }
+                    } : null)}
+                    className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-violet-500"
+                  />
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => setModelSettingsPopup(prev => prev ? {
+                        ...prev,
+                        settings: { ...prev.settings, thinkingBudget: -1 }
+                      } : null)}
+                      className="px-2 py-1 text-[10px] rounded border border-violet-500/30 hover:bg-violet-500/10 text-violet-400"
+                    >
+                      Auto (-1)
+                    </button>
+                    <button
+                      onClick={() => setModelSettingsPopup(prev => prev ? {
+                        ...prev,
+                        settings: { ...prev.settings, thinkingBudget: 0 }
+                      } : null)}
+                      className="px-2 py-1 text-[10px] rounded border border-border hover:bg-secondary/50 text-foreground/60"
+                    >
+                      Off (0)
+                    </button>
+                    <button
+                      onClick={() => setModelSettingsPopup(prev => prev ? {
+                        ...prev,
+                        settings: { ...prev.settings, thinkingBudget: 8192 }
+                      } : null)}
+                      className="px-2 py-1 text-[10px] rounded border border-border hover:bg-secondary/50 text-foreground/60"
+                    >
+                      8K
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-foreground/40 mt-1">-1 = dynamic, 0 = off, &gt;0 = fixed thinking tokens</p>
+                </div>
+              )}
+              
+              {/* Streaming Toggle */}
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <label className="text-sm font-medium text-foreground/80">Streaming</label>
+                  <p className="text-[10px] text-foreground/40">Enable real-time response streaming</p>
+                </div>
+                <button
+                  onClick={() => setModelSettingsPopup(prev => prev ? {
+                    ...prev,
+                    settings: { ...prev.settings, streaming: !prev.settings.streaming }
+                  } : null)}
+                  className={cn(
+                    "relative w-11 h-6 rounded-full transition-colors",
+                    modelSettingsPopup.settings.streaming 
+                      ? "bg-primary" 
+                      : "bg-secondary"
+                  )}
+                >
+                  <span className={cn(
+                    "absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                    modelSettingsPopup.settings.streaming 
+                      ? "translate-x-6" 
+                      : "translate-x-1"
+                  )} />
+                </button>
+              </div>
+              
+              {/* Stop Sequences */}
+              <div>
+                <label className="block text-sm font-medium text-foreground/80 mb-2">
+                  Stop Sequences
+                </label>
+                <textarea
+                  value={modelSettingsPopup.settings.stopSequences.join('\n')}
+                  onChange={(e) => setModelSettingsPopup(prev => prev ? {
+                    ...prev,
+                    settings: { 
+                      ...prev.settings, 
+                      stopSequences: e.target.value.split('\n').filter(s => s.trim()) 
+                    }
+                  } : null)}
+                  placeholder="One sequence per line (optional)&#10;e.g.&#10;---&#10;END"
+                  className="w-full h-16 px-3 py-2 text-xs bg-secondary/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none font-mono"
+                />
+                <p className="text-[10px] text-foreground/40 mt-1">
+                  Tokens where the API will stop generating (each line = one sequence)
+                </p>
+              </div>
+              
+              {/* Model Info */}
+              <div className="mt-4 pt-3 border-t border-border/50">
+                <div className="flex items-center justify-between text-[10px] text-foreground/40">
+                  <span>Model Max Output:</span>
+                  <span className="font-mono text-foreground/60">
+                    {getModelMaxOutputTokens(modelSettingsPopup.model).toLocaleString()} tokens
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-foreground/40 mt-1">
+                  <span>Context Length:</span>
+                  <span className="font-mono text-foreground/60">
+                    {(modelSettingsPopup.model.context_length || 0).toLocaleString()} tokens
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-border bg-secondary/30 flex-shrink-0">
+              <button
+                onClick={() => setModelSettingsPopup(null)}
+                className="px-4 py-2 text-sm rounded-lg hover:bg-secondary text-foreground/60 hover:text-foreground transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveModelSettings}
+                className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-all font-medium"
+              >
+                Save Settings
+              </button>
+            </div>
           </div>
         </div>
       )}

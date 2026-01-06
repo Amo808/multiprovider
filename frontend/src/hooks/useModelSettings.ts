@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { GenerationConfig, ModelProvider, ModelInfo } from '../types';
 import { apiClient } from '../services/api';
+import { largeStorage } from '../lib/largeStorage';
+import { settingsSync, SettingsSyncEvent } from '../utils/settingsSync';
 
 export interface ModelSettings extends Partial<GenerationConfig> {
   system_prompt?: string;
@@ -99,7 +101,7 @@ export function useModelSettings(
     return getMaxDefaultSettings(model);
   }, [model]);
   
-  // Load settings from localStorage (fast) and then from backend (authoritative)
+  // Load settings from storage (fast) and then from backend (authoritative)
   const loadSettings = useCallback(async () => {
     if (!provider || !modelId) {
       setSettings(getMaxDefaults());
@@ -109,24 +111,23 @@ export function useModelSettings(
     const storageKey = getStorageKey(provider, modelId);
     const maxDefaults = getMaxDefaults();
     
-    // FIRST: Immediately load from localStorage for instant UI update
+    // FIRST: Immediately load from storage for instant UI update
     if (storageKey) {
       try {
-        const cached = localStorage.getItem(storageKey);
+        const cached = await largeStorage.getJSON<ModelSettings>(storageKey);
         if (cached) {
-          const parsed = JSON.parse(cached);
-          console.log(`[useModelSettings] Instant load from localStorage for ${provider}:${modelId}:`, parsed);
+          console.log(`[useModelSettings] Instant load from storage for ${provider}:${modelId}:`, cached);
           // Merge with MAX defaults - existing saved values take priority
-          setSettings({ ...maxDefaults, ...parsed });
+          setSettings({ ...maxDefaults, ...cached });
         } else {
           // No cache - use MAX defaults for new models
           console.log(`[useModelSettings] No cache found, applying MAX defaults for ${provider}:${modelId}`);
           setSettings(maxDefaults);
-          // Save MAX defaults to localStorage immediately
-          localStorage.setItem(storageKey, JSON.stringify(maxDefaults));
+          // Save MAX defaults to storage immediately
+          await largeStorage.setJSON(storageKey, maxDefaults);
         }
       } catch (cacheError) {
-        console.warn('[useModelSettings] Failed to load from localStorage:', cacheError);
+        console.warn('[useModelSettings] Failed to load from storage:', cacheError);
         setSettings(maxDefaults);
       }
     } else {
@@ -155,9 +156,9 @@ export function useModelSettings(
       
       setSettings(mergedSettings);
       
-      // Update localStorage cache
+      // Update storage cache
       if (storageKey) {
-        localStorage.setItem(storageKey, JSON.stringify(mergedSettings));
+        await largeStorage.setJSON(storageKey, mergedSettings);
       }
       
       // If backend was empty, save MAX defaults to backend
@@ -167,8 +168,8 @@ export function useModelSettings(
       }
     } catch (e) {
       console.error('[useModelSettings] Failed to load from backend:', e);
-      // We already loaded from localStorage above, so just log the error
-      // The localStorage values will be used as fallback
+      // We already loaded from storage above, so just log the error
+      // The storage values will be used as fallback
       setError(e instanceof Error ? e.message : 'Failed to load settings');
     } finally {
       setLoading(false);
@@ -199,13 +200,11 @@ export function useModelSettings(
     setSettings(prev => {
       const updated = { ...prev, ...patch };
       
-      // Save to localStorage immediately
+      // Save to storage immediately (uses IndexedDB for large data)
       if (storageKey) {
-        try {
-          localStorage.setItem(storageKey, JSON.stringify(updated));
-        } catch (e) {
-          console.warn('[useModelSettings] Failed to save to localStorage:', e);
-        }
+        largeStorage.setJSON(storageKey, updated).catch(e => {
+          console.warn('[useModelSettings] Failed to save to storage:', e);
+        });
       }
       
       // Queue for backend save (debounced)
@@ -246,7 +245,7 @@ export function useModelSettings(
     
     const storageKey = getStorageKey(provider, modelId);
     if (storageKey) {
-      localStorage.setItem(storageKey, JSON.stringify(maxDefaults));
+      largeStorage.setJSON(storageKey, maxDefaults).catch(console.error);
     }
     
     // Also save to backend
@@ -284,7 +283,7 @@ export function useModelSettings(
     
     const storageKey = getStorageKey(provider, modelId);
     if (storageKey) {
-      localStorage.setItem(storageKey, JSON.stringify(balancedSettings));
+      largeStorage.setJSON(storageKey, balancedSettings).catch(console.error);
     }
     
     if (provider && modelId) {
@@ -315,7 +314,7 @@ export function useModelSettings(
     
     const storageKey = getStorageKey(provider, modelId);
     if (storageKey) {
-      localStorage.setItem(storageKey, JSON.stringify(minSettings));
+      largeStorage.setJSON(storageKey, minSettings).catch(console.error);
     }
     
     if (provider && modelId) {
@@ -411,6 +410,26 @@ export function useModelSettings(
       loadSettings();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  
+  // Subscribe to settings sync events (bi-directional sync between Single and Compare modes)
+  useEffect(() => {
+    if (!provider || !modelId) return;
+    
+    const handleSyncEvent = (event: SettingsSyncEvent) => {
+      // Only reload if this event is for our current model
+      if (event.provider === provider && event.modelId === modelId) {
+        console.log(`[useModelSettings] Received sync event for ${provider}:${modelId}, reloading settings`);
+        // Reload settings from backend to get the latest values
+        loadSettings();
+      }
+    };
+    
+    const unsubscribe = settingsSync.subscribe(handleSyncEvent);
+    
+    return () => {
+      unsubscribe();
+    };
+  }, [provider, modelId, loadSettings]);
   
   // Cleanup debounce timer on unmount
   useEffect(() => {

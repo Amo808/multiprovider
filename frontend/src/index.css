@@ -98,8 +98,8 @@
 @layer components {
   /* Scrollbar - thin and subtle like ChatGPT */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
@@ -107,12 +107,44 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: hsl(var(--muted-foreground) / 0.3);
-    border-radius: 4px;
+    background: hsl(var(--foreground) / 0.15);
+    border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground) / 0.5);
+    background: hsl(var(--foreground) / 0.25);
+  }
+  
+  /* Mac/Safari scroll improvements */
+  * {
+    scroll-behavior: smooth;
+  }
+  
+  /* Better scroll containment for nested scrollers */
+  .scroll-container {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    scroll-behavior: smooth;
+    /* Smooth momentum scrolling on Mac */
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--foreground) / 0.15) transparent;
+  }
+  
+  /* Hide scrollbar but keep functionality (modern approach) */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Fix for Mac trackpad momentum scrolling */
+  @supports (-webkit-touch-callout: none) {
+    .scroll-container {
+      -webkit-overflow-scrolling: touch;
+    }
   }
 
   /* Prose styling for markdown */

@@ -35,6 +35,8 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [chatMode, setChatMode] = useState<ChatMode>('single');
   const [currentParallelConversationId, setCurrentParallelConversationId] = useState<string | null>(null);
+  // Selected models for parallel chat mode
+  const [selectedModelsForParallel, setSelectedModelsForParallel] = useState<ModelInfo[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>(() => {
     // Load theme from localStorage or default to 'auto'
     try {
@@ -765,6 +767,10 @@ interface GoogleCredentialResponse {
         onApplyMaxPreset={applyMaxPreset}
         onCyclePreset={cyclePreset}
         currentPreset={currentPreset}
+        // Multi-select for parallel/compare mode
+        chatMode={chatMode}
+        selectedModelsForParallel={selectedModelsForParallel}
+        onSelectedModelsForParallelChange={setSelectedModelsForParallel}
       />
       <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-1.5 text-xs border-b border-border bg-background flex-shrink-0">
         {/* History toggle - always visible, especially on mobile */}
@@ -864,6 +870,8 @@ interface GoogleCredentialResponse {
               onClose={() => setChatMode('single')}
               initialConversationId={currentParallelConversationId}
               onConversationChange={setCurrentParallelConversationId}
+              selectedModels={selectedModelsForParallel}
+              onSelectedModelsChange={setSelectedModelsForParallel}
             />
           ) : currentConversationId && conversations.some(c => c.id === currentConversationId) ? (
             <ChatInterface

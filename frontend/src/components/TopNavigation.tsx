@@ -35,6 +35,10 @@ interface TopNavigationProps {
   onApplyMaxPreset?: () => void; // Apply MAX preset to all settings
   onCyclePreset?: () => void; // Cycle through presets: MAX → Balanced → MIN
   currentPreset?: 'MAX' | 'Balanced' | 'MIN' | 'Custom';
+  // Multi-select for parallel/compare mode
+  chatMode?: 'single' | 'parallel';
+  selectedModelsForParallel?: ModelInfo[];
+  onSelectedModelsForParallelChange?: (models: ModelInfo[]) => void;
 }
 
 const themeIcon = (t: 'light' | 'dark' | 'auto') => t==='light'? <Sun size={16}/> : t==='dark'? <Moon size={16}/> : <Monitor size={16}/>;
@@ -46,7 +50,8 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
   systemPrompt, onChangeSystemPrompt, 
   globalPrompt, onChangeGlobalPrompt, onSaveGlobalPrompt, globalPromptHasChanges,
   modelPrompt, modelPromptHasChanges, onSaveModelPrompt,
-  tokenUsage, generationConfig, onCyclePreset, currentPreset 
+  tokenUsage, generationConfig, onCyclePreset, currentPreset,
+  chatMode, selectedModelsForParallel, onSelectedModelsForParallelChange
 }) => {
   const effectiveConfig = generationConfig || config.generation;
   
@@ -107,6 +112,10 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
           modelPrompt={modelPrompt}
           modelPromptHasChanges={modelPromptHasChanges}
           onSaveModelPrompt={onSaveModelPrompt}
+          // Multi-select for parallel/compare mode
+          chatMode={chatMode}
+          selectedModelsForParallel={selectedModelsForParallel}
+          onSelectedModelsForParallelChange={onSelectedModelsForParallelChange}
         />
       </div>
       

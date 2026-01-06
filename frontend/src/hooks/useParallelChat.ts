@@ -1,6 +1,21 @@
 import { useState, useCallback, useRef } from 'react';
 import { ModelInfo, GenerationConfig, ChatResponse } from '../types';
 
+// Per-model settings type
+export interface PerModelSettings {
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  topK?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  thinkingBudget?: number;
+  reasoningEffort?: 'minimal' | 'medium' | 'high';
+  streaming?: boolean;
+  stopSequences?: string[];
+}
+
 interface ParallelResponse {
   model: ModelInfo;
   content: string;
@@ -24,7 +39,8 @@ interface UseParallelChatReturn {
     message: string,
     models: ModelInfo[],
     config: GenerationConfig,
-    systemPrompt?: string
+    systemPrompt?: string,
+    perModelConfigs?: Record<string, PerModelSettings>
   ) => Promise<void>;
   cancelAll: () => void;
   clearResponses: () => void;
@@ -58,7 +74,8 @@ export const useParallelChat = (): UseParallelChatReturn => {
     message: string,
     models: ModelInfo[],
     config: GenerationConfig,
-    systemPrompt?: string
+    systemPrompt?: string,
+    perModelConfigs?: Record<string, PerModelSettings>
   ) => {
     if (models.length === 0) return;
 
@@ -83,13 +100,41 @@ export const useParallelChat = (): UseParallelChatReturn => {
       abortControllersRef.current.set(modelKey, abortController);
 
       try {
+        // Get per-model settings if available
+        const modelSettings = perModelConfigs?.[modelKey];
+        
+        // Build model-specific config by merging global config with per-model settings
+        const modelConfig: GenerationConfig = {
+          ...config,
+          // Override with per-model settings if available
+          ...(modelSettings?.temperature !== undefined && { temperature: modelSettings.temperature }),
+          ...(modelSettings?.maxTokens !== undefined && { max_tokens: modelSettings.maxTokens }),
+          ...(modelSettings?.topP !== undefined && { top_p: modelSettings.topP }),
+          ...(modelSettings?.topK !== undefined && { top_k: modelSettings.topK }),
+          ...(modelSettings?.frequencyPenalty !== undefined && { frequency_penalty: modelSettings.frequencyPenalty }),
+          ...(modelSettings?.presencePenalty !== undefined && { presence_penalty: modelSettings.presencePenalty }),
+          ...(modelSettings?.thinkingBudget !== undefined && { thinking_budget: modelSettings.thinkingBudget }),
+          ...(modelSettings?.reasoningEffort !== undefined && { reasoning_effort: modelSettings.reasoningEffort }),
+          ...(modelSettings?.streaming !== undefined && { stream: modelSettings.streaming }),
+          ...(modelSettings?.stopSequences !== undefined && { stop_sequences: modelSettings.stopSequences }),
+        };
+        
+        // Determine system prompt: per-model > global > none
+        const effectiveSystemPrompt = modelSettings?.systemPrompt || systemPrompt;
+        
+        console.log(`[ParallelChat] Sending request for ${modelKey}:`, {
+          hasPerModelConfig: !!modelSettings,
+          effectiveSystemPrompt: effectiveSystemPrompt?.substring(0, 50) + '...',
+          config: modelConfig
+        });
+
         const requestBody = {
           message,
           provider: model.provider,
           model: model.id,
           conversation_id: `parallel-${Date.now()}-${index}`,
-          config,
-          ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
+          config: modelConfig,
+          ...(effectiveSystemPrompt ? { system_prompt: effectiveSystemPrompt } : {}),
         };
 
         const response = await fetch('/api/chat/send', {

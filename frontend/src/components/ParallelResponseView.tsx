@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Bot, Brain, Copy, Check, Sparkles, ChevronRight, Maximize2, Minimize2, X } from 'lucide-react';
 import { ModelInfo, ModelProvider } from '../types';
 import { cn } from '../lib/utils';
@@ -23,6 +25,20 @@ interface ParallelResponseViewProps {
   responses: ParallelResponse[];
   onClose?: () => void;
 }
+
+// Clean response content - filter garbage prefixes
+const cleanResponseContent = (content: string): string => {
+  return content
+    .replace(/^\s*\(Reasoning mode enabled.*?\)\s*/gi, '')
+    .replace(/^\s*\(Note: Reasoning mode.*?\)\s*/gi, '')
+    .replace(/^\s*\[Reasoning mode enabled.*?\]\s*/gi, '')
+    .replace(/^\s*Note:\s*Reasoning mode.*?\n*/gi, '')
+    .replace(/^\s*\*\*Note:\*\*\s*Reasoning mode.*?\n*/gi, '')
+    .replace(/^0\s+/, '')
+    .replace(/^0\n/, '')
+    .replace(/^\s*0\s*$/, '')
+    .trim();
+};
 
 // Provider colors
 const providerColors: Record<ModelProvider, { bg: string; text: string; gradient: string }> = {
@@ -164,7 +180,9 @@ const ResponseColumn: React.FC<{
           </div>
         ) : (
           <p className="text-sm text-foreground whitespace-pre-wrap break-words">
-            {response.content}
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {cleanResponseContent(response.content)}
+            </ReactMarkdown>
             {response.isStreaming && <span className="animate-pulse">▊</span>}
           </p>
         )}
@@ -229,7 +247,7 @@ export const ParallelResponseView: React.FC<ParallelResponseViewProps> = ({
       {/* Responses grid */}
       <div className={cn(
         "flex-1 overflow-y-auto p-3",
-        expandedIndex === null ? `grid ${gridCols} gap-3 auto-rows-fr` : ""
+        expandedIndex === null ? `grid ${gridCols} gap-3 items-start` : ""
       )}>
         {expandedIndex !== null ? (
           <ResponseColumn

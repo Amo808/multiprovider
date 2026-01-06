@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Sliders, RotateCcw, Save } from 'lucide-react';
 import { GenerationConfig, ModelProvider, ModelInfo } from '../types';
+import { getModelMaxOutputTokens, getModelDefaultTokens, validateMaxTokens } from '../utils/modelLimits';
 
 interface GenerationSettingsProps {
   config: GenerationConfig;
@@ -95,22 +96,6 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
     return {};
   };
 
-  // Validate max_tokens against model's actual limits
-  const validateMaxTokens = (maxTokens: number | undefined, model?: typeof currentModel): number | undefined => {
-    if (maxTokens === undefined) return undefined;
-    
-    // Get model's actual max output tokens
-    const modelMax = model?.max_output_tokens || model?.context_length || 8192;
-    
-    // If saved value exceeds model's limit, use model's max
-    if (maxTokens > modelMax) {
-      console.log(`Correcting max_tokens from ${maxTokens} to model limit ${modelMax}`);
-      return modelMax;
-    }
-    
-    return maxTokens;
-  };
-
   // Save model-specific settings to localStorage
   const saveModelSettings = (provider?: ModelProvider, modelId?: string, settings?: Partial<GenerationConfig>) => {
     if (!provider || !modelId || !settings) return;
@@ -138,169 +123,27 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
     }
   };
 
-  // Get max tokens based on current model and provider
+  // Get max tokens based on current model - uses shared utility
   const getMaxTokens = () => {
-    // First priority: use model-specific max_output_tokens if available
-    if (currentModel?.max_output_tokens) {
-      return currentModel.max_output_tokens;
+    if (!currentModel) {
+      // Fallback to provider defaults if no model
+      switch (currentProvider) {
+        case 'deepseek': return 8192;
+        case 'openai': return 16384;
+        case 'anthropic': return 64000;
+        case 'gemini': return 32768;
+        default: return 8192;
+      }
     }
-    
-    // Second priority: use model-specific recommended max
-    if (currentModel?.recommended_max_tokens) {
-      return currentModel.recommended_max_tokens;
-    }
-    
-    // Third priority: provider-specific defaults based on official documentation
-    switch (currentProvider) {
-      case 'deepseek':
-        // DeepSeek official limits from API docs:
-        // deepseek-chat (Non-thinking): DEFAULT 4K, MAXIMUM 8K
-        // deepseek-reasoner (Thinking): DEFAULT 32K, MAXIMUM 64K
-        if (currentModel?.name?.toLowerCase().includes('reasoner') || 
-            currentModel?.id?.toLowerCase().includes('reasoner') ||
-            currentModel?.name?.toLowerCase().includes('r1')) {
-          return 65536; // deepseek-reasoner: 64K max
-        }
-        return 8192; // deepseek-chat: 8K max
-      case 'openai':
-        // OpenAI model-specific limits from official docs (Nov 2025)
-        const modelId = currentModel?.id?.toLowerCase() || '';
-        const modelName = currentModel?.name?.toLowerCase() || '';
-        
-        // GPT-5 series - high limits
-        if (modelId.includes('gpt-5') || modelName.includes('gpt-5')) {
-          return 131072; // GPT-5: 128K output tokens
-        }
-        
-        // GPT-4.1 series - medium-high limits  
-        if (modelId.includes('gpt-4.1') || modelName.includes('gpt-4.1')) {
-          return 65536; // GPT-4.1: 64K output tokens
-        }
-        
-        // O3/O4 reasoning series
-        if (modelId.includes('o3') || modelId.includes('o4') || 
-            modelName.includes('o3') || modelName.includes('o4')) {
-          return 65536; // O3/O4: 64K output tokens
-        }
-        
-        // O1 reasoning series 
-        if (modelId.includes('o1') || modelName.includes('o1')) {
-          return 32768; // O1: 32K output tokens
-        }
-        
-        // GPT-4o series - IMPORTANT: Limited to 16K!
-        if (modelId.includes('gpt-4o') || modelName.includes('gpt-4o')) {
-          return 16384; // GPT-4o: 16K output tokens (API enforced!)
-        }
-        
-        // GPT-4 Turbo and legacy GPT-4
-        if (modelId.includes('gpt-4-turbo') || modelName.includes('gpt-4-turbo') ||
-            modelId.includes('gpt-4') || modelName.includes('gpt-4')) {
-          return 16384; // GPT-4/Turbo: 16K output tokens
-        }
-        
-        // GPT-3.5 series
-        if (modelId.includes('gpt-3.5') || modelName.includes('gpt-3.5')) {
-          return 4096; // GPT-3.5: 4K output tokens
-        }
-        
-        // Conservative fallback for unknown OpenAI models
-        return 16384;
-      case 'anthropic':
-        // Claude models official limits from Anthropic docs:
-        // Claude Opus 4.1: 32K max output tokens
-        // Claude Sonnet 4.5 & Haiku 4.5: 64K max output tokens
-        if (currentModel?.name?.toLowerCase().includes('opus') || 
-            currentModel?.id?.toLowerCase().includes('opus')) {
-          return 32000; // Claude Opus: exactly 32K max (API enforced)
-        }
-        if (currentModel?.name?.toLowerCase().includes('sonnet') || 
-            currentModel?.id?.toLowerCase().includes('sonnet') ||
-            currentModel?.name?.toLowerCase().includes('haiku') || 
-            currentModel?.id?.toLowerCase().includes('haiku')) {
-          return 64000; // Claude Sonnet 4.5 & Haiku 4.5: 64K max
-        }
-        return 64000; // Default for newer Claude models
-      case 'gemini':
-        return 32768;  // Gemini models limit
-      default:
-        return 8192;   // Conservative default
-    }
+    return getModelMaxOutputTokens(currentModel);
   };
 
-  // Get recommended default max tokens based on model type
+  // Get recommended default max tokens - uses shared utility
   const getRecommendedMaxTokens = () => {
-    switch (currentProvider) {
-      case 'deepseek':
-        // DeepSeek recommendations from docs:
-        if (currentModel?.name?.toLowerCase().includes('reasoner') || 
-            currentModel?.id?.toLowerCase().includes('reasoner') ||
-            currentModel?.name?.toLowerCase().includes('r1')) {
-          return 32768; // deepseek-reasoner: DEFAULT 32K
-        }
-        return 4096; // deepseek-chat: DEFAULT 4K
-      case 'openai':
-        // OpenAI recommended defaults by model series
-        const modelId = currentModel?.id?.toLowerCase() || '';
-        const modelName = currentModel?.name?.toLowerCase() || '';
-        
-        // GPT-5 series - can handle larger outputs
-        if (modelId.includes('gpt-5') || modelName.includes('gpt-5')) {
-          return 8192; // GPT-5: reasonable default for most tasks
-        }
-        
-        // GPT-4.1 series
-        if (modelId.includes('gpt-4.1') || modelName.includes('gpt-4.1')) {
-          return 6144; // GPT-4.1: balanced default
-        }
-        
-        // O3/O4 reasoning models - often need longer outputs
-        if (modelId.includes('o3') || modelId.includes('o4') || 
-            modelName.includes('o3') || modelName.includes('o4')) {
-          return 8192; // Reasoning models: higher default for complex responses
-        }
-        
-        // O1 reasoning series
-        if (modelId.includes('o1') || modelName.includes('o1')) {
-          return 6144; // O1: medium default for reasoning
-        }
-        
-        // GPT-4o series - conservative due to 16K limit
-        if (modelId.includes('gpt-4o') || modelName.includes('gpt-4o')) {
-          return 4096; // GPT-4o: conservative default (limit is 16K)
-        }
-        
-        // GPT-4 and GPT-4 Turbo
-        if (modelId.includes('gpt-4') || modelName.includes('gpt-4')) {
-          return 4096; // GPT-4: standard default
-        }
-        
-        // GPT-3.5
-        if (modelId.includes('gpt-3.5') || modelName.includes('gpt-3.5')) {
-          return 2048; // GPT-3.5: smaller default
-        }
-        
-        return 4096; // Conservative default for unknown OpenAI models
-      case 'anthropic':
-        // Claude recommended defaults based on model type:
-        if (currentModel?.name?.toLowerCase().includes('opus') || 
-            currentModel?.id?.toLowerCase().includes('opus')) {
-          return 8192; // Claude Opus: higher default for complex reasoning tasks
-        }
-        if (currentModel?.name?.toLowerCase().includes('sonnet') || 
-            currentModel?.id?.toLowerCase().includes('sonnet')) {
-          return 8192; // Claude Sonnet: good balance for coding and agents
-        }
-        if (currentModel?.name?.toLowerCase().includes('haiku') || 
-            currentModel?.id?.toLowerCase().includes('haiku')) {
-          return 4096; // Claude Haiku: optimized for speed, smaller outputs
-        }
-        return 6144; // Default for other Claude models
-      case 'gemini':
-        return 4096; // Reasonable default
-      default:
-        return 4096; // Conservative default
+    if (!currentModel) {
+      return 4096; // Conservative default
     }
+    return getModelDefaultTokens(currentModel);
   };
 
   // Get minimum tokens
@@ -341,7 +184,9 @@ export const GenerationSettings: React.FC<GenerationSettingsProps> = ({
       const maxTokensLimit = getMaxTokens();
       
       // Validate saved max_tokens against model's actual limits
-      const validatedMaxTokens = validateMaxTokens(savedSettings.max_tokens, currentModel);
+      const validatedMaxTokens = currentModel && savedSettings.max_tokens !== undefined
+        ? validateMaxTokens(savedSettings.max_tokens, currentModel)
+        : undefined;
       
       // Create new config with saved settings or defaults
       const newConfig = {

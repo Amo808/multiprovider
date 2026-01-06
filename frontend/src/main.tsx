@@ -2,7 +2,11 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import { ConversationsProvider } from './contexts/ConversationsContext.tsx'
+import { migrateToLargeStorage } from './lib/largeStorage.ts'
 import './index.css'
+
+// Migrate large data from localStorage to IndexedDB on app start
+migrateToLargeStorage().catch(console.error);
 
 // Error Boundary component to prevent white screen crashes
 class ErrorBoundary extends React.Component<

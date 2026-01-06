@@ -43,6 +43,10 @@ interface UnifiedModelMenuProps {
   modelPrompt?: string;
   modelPromptHasChanges?: boolean;
   onSaveModelPrompt?: () => Promise<void>;  // NEW: explicit save for model prompt
+  // Multi-select for parallel/compare mode
+  chatMode?: 'single' | 'parallel';
+  selectedModelsForParallel?: ModelInfo[];
+  onSelectedModelsForParallelChange?: (models: ModelInfo[]) => void;
 }
 
 // Helper to render capability badges
@@ -69,12 +73,31 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
   config, activeModel, activeProvider, onSelectModel, onManageProviders, className, loading, onUpdateModel: _onUpdateModel, 
   generationConfig, onChangeGeneration, systemPrompt: _systemPrompt, onChangeSystemPrompt,
   globalPrompt, onChangeGlobalPrompt, onSaveGlobalPrompt, globalPromptHasChanges,
-  modelPrompt, modelPromptHasChanges, onSaveModelPrompt
+  modelPrompt, modelPromptHasChanges, onSaveModelPrompt,
+  chatMode, selectedModelsForParallel, onSelectedModelsForParallelChange
 }) => {
   const [open, setOpen] = useState(false);
   const [hoveredModelId, setHoveredModelId] = useState<string | null>(null);
   const [settingsModelId, setSettingsModelId] = useState<string | null>(null);
   const [localGenConfig, setLocalGenConfig] = useState<Partial<GenerationConfig>>({});
+  
+  // Helper to check if a model is selected for parallel mode
+  const isModelSelectedForParallel = useCallback((model: ModelInfo) => {
+    return selectedModelsForParallel?.some(m => m.id === model.id) ?? false;
+  }, [selectedModelsForParallel]);
+  
+  // Toggle model selection for parallel mode
+  const toggleModelForParallel = useCallback((model: ModelInfo) => {
+    if (!onSelectedModelsForParallelChange) return;
+    const current = selectedModelsForParallel || [];
+    if (isModelSelectedForParallel(model)) {
+      onSelectedModelsForParallelChange(current.filter(m => m.id !== model.id));
+    } else {
+      // Max 4 models
+      if (current.length >= 4) return;
+      onSelectedModelsForParallelChange([...current, model]);
+    }
+  }, [selectedModelsForParallel, onSelectedModelsForParallelChange, isModelSelectedForParallel]);
   
   // Custom presets stored in localStorage
   const [customPresets, setCustomPresets] = useState<Array<{name: string, prompt: string}>>(() => {
@@ -181,12 +204,31 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
     .map(([id, pc]) => ({ id: id as ModelProvider, models: pc.models.filter(m => m.enabled !== false) }));
 
   const activeDisplay = activeModel?.display_name || activeModel?.name || activeProvider || 'Select Model';
+  
+  // Display text for parallel mode
+  const parallelDisplay = selectedModelsForParallel && selectedModelsForParallel.length > 0
+    ? `${selectedModelsForParallel.length} model${selectedModelsForParallel.length > 1 ? 's' : ''} selected`
+    : 'Select models';
 
   return (
     <div className={cn('relative', className)}>
-      <Button ref={buttonRef} variant="ghost" size="sm" onClick={() => setOpen(o => !o)} className="rounded-xl px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium flex items-center gap-1 sm:gap-2 bg-secondary/50 dark:bg-[#2f2f2f] hover:bg-secondary dark:hover:bg-[#3a3a3a] border-0 text-foreground max-w-[140px] sm:max-w-[200px]">
-        {activeModel?.supports_vision ? <Eye size={14} /> : activeModel?.supports_streaming ? <Zap size={14} /> : <Bot size={14} />}
-        <span className="truncate text-foreground">{activeDisplay}</span>
+      <Button ref={buttonRef} variant="ghost" size="sm" onClick={() => setOpen(o => !o)} className={cn(
+        "rounded-xl px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium flex items-center gap-1 sm:gap-2 border-0 text-foreground max-w-[140px] sm:max-w-[200px]",
+        chatMode === 'parallel' 
+          ? "bg-purple-500/20 hover:bg-purple-500/30 dark:bg-purple-500/20 dark:hover:bg-purple-500/30"
+          : "bg-secondary/50 dark:bg-[#2f2f2f] hover:bg-secondary dark:hover:bg-[#3a3a3a]"
+      )}>
+        {chatMode === 'parallel' ? (
+          <>
+            <Eye size={14} className="text-purple-500" />
+            <span className="truncate text-foreground">{parallelDisplay}</span>
+          </>
+        ) : (
+          <>
+            {activeModel?.supports_vision ? <Eye size={14} /> : activeModel?.supports_streaming ? <Zap size={14} /> : <Bot size={14} />}
+            <span className="truncate text-foreground">{activeDisplay}</span>
+          </>
+        )}
         <ChevronDown size={14} className={`transition-transform text-muted-foreground flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
       </Button>
       {open && (
@@ -220,33 +262,56 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                 <div key={g.id} className="group">
                   <ProviderHeader provider={g.id} count={g.models.length} connected={true} />
                   <div className="py-1">
-                    {g.models.map(m => (
+                    {g.models.map(m => {
+                      const isSelectedForParallel = isModelSelectedForParallel(m);
+                      return (
                       <div
                         key={m.id}
                         onMouseEnter={() => setHoveredModelId(m.id)}
                         onMouseLeave={() => setHoveredModelId(null)}
                         className={cn(
                           'w-full text-left px-3 py-2 hover:bg-accent hover:text-accent-foreground transition flex items-center gap-2 text-xs group/model cursor-pointer',
-                          activeModel?.id === m.id && 'bg-accent/40',
+                          activeModel?.id === m.id && chatMode !== 'parallel' && 'bg-accent/40',
+                          isSelectedForParallel && 'bg-purple-500/10 border-l-2 border-purple-500',
                           settingsModelId === m.id && 'bg-primary/10'
                         )}
                       >
+                        {/* Checkbox for parallel mode */}
+                        {chatMode === 'parallel' && (
+                          <button
+                            onClick={() => toggleModelForParallel(m)}
+                            className={cn(
+                              "w-5 h-5 rounded border-2 flex items-center justify-center transition-all flex-shrink-0",
+                              isSelectedForParallel 
+                                ? "bg-purple-500 border-purple-500 text-white" 
+                                : "border-muted-foreground/40 hover:border-purple-500/60"
+                            )}
+                          >
+                            {isSelectedForParallel && <Eye size={12} />}
+                          </button>
+                        )}
+                        
                         {/* Model info - clickable to select */}
                         <div 
                           className="flex-1 min-w-0"
                           onClick={() => { 
-                            onSelectModel(m); 
-                            // If settings panel is open for another model, switch to the new one
-                            if (settingsModelId && settingsModelId !== m.id) {
-                              setSettingsModelId(m.id);
-                              setLocalGenConfig({}); // Clear local config to load new model's settings
+                            if (chatMode === 'parallel') {
+                              toggleModelForParallel(m);
+                            } else {
+                              onSelectModel(m); 
+                              // If settings panel is open for another model, switch to the new one
+                              if (settingsModelId && settingsModelId !== m.id) {
+                                setSettingsModelId(m.id);
+                                setLocalGenConfig({}); // Clear local config to load new model's settings
+                              }
                             }
                           }}
                         >
                           <div className="flex items-center gap-2">
                             {m.supports_streaming ? <Zap size={12} className="text-green-500 flex-shrink-0" /> : <Bot size={12} className="text-gray-400 flex-shrink-0" />}
                             <span className="font-medium text-[11px] leading-tight truncate">{m.display_name || m.name}</span>
-                            {activeModel?.id === m.id && <span className="text-[10px] text-primary font-semibold flex-shrink-0">Active</span>}
+                            {activeModel?.id === m.id && chatMode !== 'parallel' && <span className="text-[10px] text-primary font-semibold flex-shrink-0">Active</span>}
+                            {isSelectedForParallel && <span className="text-[10px] text-purple-500 font-semibold flex-shrink-0">✓ Selected</span>}
                           </div>
                           <div className="flex items-center flex-wrap gap-1 mt-1 text-[10px] text-muted-foreground">
                             <span>{m.context_length.toLocaleString()} tokens</span>
@@ -275,7 +340,8 @@ export const UnifiedModelMenu: React.FC<UnifiedModelMenuProps & { loading?: bool
                           <Settings size={16} className="sm:w-[14px] sm:h-[14px]" />
                         </button>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               ))}

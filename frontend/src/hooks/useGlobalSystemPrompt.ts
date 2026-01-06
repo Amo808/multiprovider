@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiClient } from '../services/api';
+import { largeStorage } from '../lib/largeStorage';
 
 interface UseGlobalSystemPromptReturn {
   globalPrompt: string;
@@ -16,6 +17,7 @@ const STORAGE_KEY = 'global-system-prompt';
  * Hook for managing global system prompt that applies to ALL models.
  * This is like OpenRouter's "System Prompt" that gets prepended to every request.
  * Per-model prompts are added AFTER this global prompt.
+ * Uses IndexedDB for large prompts (>100KB) to avoid Chrome localStorage limits.
  */
 export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
   const [globalPrompt, setGlobalPromptState] = useState<string>('');
@@ -23,20 +25,20 @@ export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load from localStorage and backend on mount
+  // Load from storage and backend on mount
   useEffect(() => {
     const loadPrompt = async () => {
       setLoading(true);
       
-      // First, load from localStorage for instant UI
+      // First, load from storage for instant UI (supports large data via IndexedDB)
       try {
-        const cached = localStorage.getItem(STORAGE_KEY);
+        const cached = await largeStorage.getItem(STORAGE_KEY);
         if (cached) {
           setGlobalPromptState(cached);
           setSavedPrompt(cached);
         }
       } catch (e) {
-        console.warn('[useGlobalSystemPrompt] Failed to load from localStorage:', e);
+        console.warn('[useGlobalSystemPrompt] Failed to load from storage:', e);
       }
       
       // Then fetch from backend (authoritative)
@@ -46,7 +48,7 @@ export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
         setGlobalPromptState(backendPrompt);
         setSavedPrompt(backendPrompt);
         if (backendPrompt) {
-          localStorage.setItem(STORAGE_KEY, backendPrompt);
+          await largeStorage.setItem(STORAGE_KEY, backendPrompt);
         }
       } catch (e) {
         // Fallback: try to get from config
@@ -56,7 +58,7 @@ export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
           if (backendPrompt) {
             setGlobalPromptState(backendPrompt);
             setSavedPrompt(backendPrompt);
-            localStorage.setItem(STORAGE_KEY, backendPrompt);
+            await largeStorage.setItem(STORAGE_KEY, backendPrompt);
           }
         } catch (e2) {
           console.error('[useGlobalSystemPrompt] Failed to load from backend:', e2);
@@ -72,12 +74,10 @@ export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
 
   const setGlobalPrompt = useCallback((prompt: string) => {
     setGlobalPromptState(prompt);
-    // Save to localStorage immediately for quick access
-    try {
-      localStorage.setItem(STORAGE_KEY, prompt);
-    } catch (e) {
-      console.warn('[useGlobalSystemPrompt] Failed to save to localStorage:', e);
-    }
+    // Save to storage immediately for quick access (uses IndexedDB for large data)
+    largeStorage.setItem(STORAGE_KEY, prompt).catch(e => {
+      console.warn('[useGlobalSystemPrompt] Failed to save to storage:', e);
+    });
   }, []);
 
   const saveGlobalPrompt = useCallback(async () => {
