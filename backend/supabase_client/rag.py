@@ -6,6 +6,8 @@ import os
 import hashlib
 import logging
 import asyncio
+import re
+import unicodedata
 from typing import List, Optional, Dict, Any, BinaryIO, Tuple
 from uuid import uuid4
 from datetime import datetime
@@ -15,6 +17,43 @@ import tempfile
 from .client import get_supabase_service_client, get_or_create_user, is_supabase_configured
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename for storage - remove non-ASCII chars, spaces, special chars.
+    Keeps the original extension.
+    """
+    # Get extension
+    path = Path(filename)
+    ext = path.suffix.lower()
+    name = path.stem
+    
+    # Normalize unicode (decompose accented chars)
+    name = unicodedata.normalize('NFKD', name)
+    
+    # Remove non-ASCII characters
+    name = name.encode('ascii', 'ignore').decode('ascii')
+    
+    # Replace spaces and special chars with underscores
+    name = re.sub(r'[^\w\-]', '_', name)
+    
+    # Remove multiple underscores
+    name = re.sub(r'_+', '_', name)
+    
+    # Remove leading/trailing underscores
+    name = name.strip('_')
+    
+    # If name is empty after sanitization, use a default
+    if not name:
+        name = 'document'
+    
+    # Limit length
+    if len(name) > 100:
+        name = name[:100]
+    
+    return f"{name}{ext}"
+
 
 # Embedding configuration
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
@@ -335,8 +374,11 @@ class RAGStore:
             logger.info(f"Document already exists: {existing.data[0]['id']}")
             return self.get_document(existing.data[0]["id"], user_email)
         
-        # Generate storage path
-        storage_path = f"{user_id}/{uuid4()}/{filename}"
+        # Generate storage path with sanitized filename
+        safe_filename = sanitize_filename(filename)
+        storage_path = f"{user_id}/{uuid4()}/{safe_filename}"
+        
+        logger.info(f"Uploading document: {filename} -> {safe_filename}")
         
         # Upload to storage
         try:
