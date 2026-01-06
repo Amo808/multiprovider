@@ -62,7 +62,7 @@ const ResponseColumn: React.FC<{
   // Always start collapsed - user can expand manually if needed
   const [showThinking, setShowThinking] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  
+
   const colors = providerColors[response.model.provider] || providerColors.ollama;
 
   const handleCopy = async () => {
@@ -163,7 +163,7 @@ const ResponseColumn: React.FC<{
       )}
 
       {/* Response content only - no user message */}
-      <div 
+      <div
         ref={contentRef}
         className="flex-1 overflow-y-auto min-h-0 p-3"
       >
@@ -222,9 +222,9 @@ export const ParallelResponseView: React.FC<ParallelResponseViewProps> = ({
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
   // Calculate grid columns based on response count
-  const gridCols = responses.length <= 2 ? 'grid-cols-1 md:grid-cols-2' 
-                  : responses.length === 3 ? 'grid-cols-1 md:grid-cols-3'
-                  : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4';
+  const gridCols = responses.length <= 2 ? 'grid-cols-1 md:grid-cols-2'
+    : responses.length === 3 ? 'grid-cols-1 md:grid-cols-3'
+      : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4';
 
   return (
     <div className="flex flex-col h-full">

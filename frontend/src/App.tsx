@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { 
-  ChatInterface, 
+import {
+  ChatInterface,
   ProviderManager,
   UnlockModal,
   LoginModal,
@@ -66,16 +66,16 @@ function App() {
 
   // ========================= Hooks =========================
   const { config, loading: configLoading, error: configError, updateConfig, fetchConfig } = useConfig();
-  const { 
-    deleteConversation: deleteConversationMessages, 
+  const {
+    deleteConversation: deleteConversationMessages,
     createBranchConversation,
-    conversations: conversationMessages 
+    conversations: conversationMessages
   } = useConversationsContext();
-  
+
   // Per-model settings hook - manages generation settings + system prompt per model
   // Pass selectedModel to calculate proper max values for each model
-  const { 
-    settings: modelSettings, 
+  const {
+    settings: modelSettings,
     loading: modelSettingsLoading,
     updateSettings: updateModelSettings,
     saveSettings: saveModelSettings,  // NEW: explicit save function
@@ -84,7 +84,7 @@ function App() {
     cyclePreset,
     currentPreset
   } = useModelSettings(selectedProvider, selectedModel?.id, selectedModel);
-  
+
   // Global system prompt hook - applies to ALL models
   const {
     globalPrompt,
@@ -94,10 +94,10 @@ function App() {
     saveGlobalPrompt,
     hasChanges: globalPromptHasChanges
   } = useGlobalSystemPrompt();
-  
+
   // Per-model system prompt (from model settings)
   const modelSystemPrompt = modelSettings.system_prompt || '';
-  
+
   // DEBUG: Log when modelSystemPrompt changes
   useEffect(() => {
     console.log('[App] modelSystemPrompt changed:', {
@@ -108,7 +108,7 @@ function App() {
       provider: selectedProvider
     });
   }, [modelSystemPrompt, selectedModel?.id, selectedProvider]);
-  
+
   // Combined system prompt: Global + Per-Model (OpenRouter style)
   // Final prompt = [Global prompt] + "\n\n" + [Per-model prompt]
   const combinedSystemPrompt = useMemo(() => {
@@ -123,7 +123,7 @@ function App() {
     });
     return combined;
   }, [globalPrompt, modelSystemPrompt]);
-  
+
   // Build effective generation config from model settings
   const effectiveGenerationConfig: GenerationConfig = {
     temperature: modelSettings.temperature ?? config?.generation?.temperature ?? 0.7,
@@ -177,7 +177,7 @@ function App() {
         apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${jwt}` }));
         setIsAuthenticated(true);
         // fetch user email first to verify token
-        fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` }} )
+        fetch('/auth/me', { headers: { Authorization: `Bearer ${jwt}` } })
           .then(r => {
             if (!r.ok) throw new Error('me failed');
             return r.json();
@@ -202,12 +202,12 @@ function App() {
     const body = document.body;
     const appElement = document.getElementById('root');
     console.log(`Applying theme: ${theme}`);
-    
+
     // Remove all theme classes first
     root.classList.remove('dark', 'light');
     body.classList.remove('dark', 'light');
     if (appElement) appElement.classList.remove('dark', 'light');
-    
+
     // Clear any forced styles
     root.style.backgroundColor = '';
     body.style.backgroundColor = '';
@@ -217,7 +217,7 @@ function App() {
       appElement.style.backgroundColor = '';
       appElement.style.color = '';
     }
-    
+
     if (theme === 'auto') {
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       console.log(`Auto theme - system prefers dark: ${prefersDark}`);
@@ -241,10 +241,10 @@ function App() {
       body.classList.add('light');
       if (appElement) appElement.classList.add('light');
     }
-    
+
     console.log(`Root element classes: ${root.className}`);
     console.log(`Body element classes: ${body.className}`);
-    
+
     // Save theme to localStorage
     try {
       localStorage.setItem('theme', theme);
@@ -265,22 +265,22 @@ function App() {
         }
         const data = await response.json();
         const { conversations: backendConversations } = data;
-        
-interface BackendConversation {
-  id: string;
-  title?: string;
-  updated_at?: string;
-}
+
+        interface BackendConversation {
+          id: string;
+          title?: string;
+          updated_at?: string;
+        }
 
         if (backendConversations && backendConversations.length > 0) {
           // Transform backend data to frontend format
-            const transformedConversations = backendConversations.map((conv: BackendConversation) => ({
+          const transformedConversations = backendConversations.map((conv: BackendConversation) => ({
             id: conv.id,
             title: conv.title || 'Untitled Conversation',
             updatedAt: conv.updated_at || new Date().toISOString()
           }));
           setConversations(transformedConversations);
-          
+
           // Set current conversation to the most recent one if default is empty
           const defaultConv = transformedConversations.find((c: Conversation) => c.id === 'default');
           if (defaultConv) {
@@ -292,7 +292,7 @@ interface BackendConversation {
           // No conversations found, create a default one
           const defaultConversation = {
             id: 'default',
-            title: 'New Conversation', 
+            title: 'New Conversation',
             updatedAt: new Date().toISOString()
           };
           setConversations([defaultConversation]);
@@ -303,7 +303,7 @@ interface BackendConversation {
         // Fallback to default conversation
         const defaultConversation = {
           id: 'default',
-          title: 'New Conversation', 
+          title: 'New Conversation',
           updatedAt: new Date().toISOString()
         };
         setConversations([defaultConversation]);
@@ -351,7 +351,7 @@ interface BackendConversation {
     if (model.provider !== selectedProvider) {
       setSelectedProvider(model.provider);
     }
-    
+
     // Update config without triggering full reload
     if (config) {
       try {
@@ -373,10 +373,10 @@ interface BackendConversation {
         console.log('App: Calling updateProviderConfig...');
         await apiClient.updateProviderConfig(selectedProvider, { api_key: apiKey });
         console.log('App: API key updated successfully');
-        
+
         setShowUnlockModal(false);
         console.log('App: Modal closed');
-        
+
         // Refresh config to get updated provider status
         console.log('App: Refreshing configuration...');
         // Instead of reloading the page, refetch the config
@@ -386,7 +386,7 @@ interface BackendConversation {
         } catch (error) {
           console.error('App: Failed to refresh config:', error);
         }
-        
+
         // TODO: Re-send pending message
         console.log('API key saved, pending message:', pendingMessage);
         setPendingMessage('');
@@ -423,7 +423,7 @@ interface BackendConversation {
       title: 'New Conversation',
       updatedAt: new Date().toISOString()
     };
-    
+
     try {
       await fetch('/api/conversations', {
         method: 'POST',
@@ -433,7 +433,7 @@ interface BackendConversation {
           title: 'New Conversation'
         })
       });
-      
+
       setConversations(prev => [newConversation, ...prev]);
       setCurrentConversationId(newId);
     } catch (error) {
@@ -454,19 +454,19 @@ interface BackendConversation {
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ title: newTitle })
       });
-      
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === conversationId 
+
+      setConversations(prev =>
+        prev.map(conv =>
+          conv.id === conversationId
             ? { ...conv, title: newTitle, updatedAt: new Date().toISOString() }
             : conv
         )
       );
     } catch (error) {
       console.error('Failed to update conversation title:', error);
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === conversationId 
+      setConversations(prev =>
+        prev.map(conv =>
+          conv.id === conversationId
             ? { ...conv, title: newTitle, updatedAt: new Date().toISOString() }
             : conv
         )
@@ -477,29 +477,29 @@ interface BackendConversation {
   // Branch from a specific message in conversation - creates new conversation with history up to that point
   const handleBranchFromMessage = async (sourceConversationId: string, messageIndex: number) => {
     const newId = `conv_${Date.now()}`;
-    
+
     // Get source conversation messages from context
     const sourceMessages = conversationMessages[sourceConversationId]?.messages || [];
     if (sourceMessages.length === 0) {
       console.warn('No messages in source conversation to branch from');
       return;
     }
-    
+
     // Messages up to and including the selected index
     const branchedMessages = sourceMessages.slice(0, messageIndex + 1);
-    
+
     // Generate title from first user message or use default
     const firstUserMessage = branchedMessages.find((m: { role: string; content: string }) => m.role === 'user');
-    const branchTitle = firstUserMessage 
+    const branchTitle = firstUserMessage
       ? `Branch: ${firstUserMessage.content.slice(0, 30)}${firstUserMessage.content.length > 30 ? '...' : ''}`
       : 'Branch from conversation';
-    
+
     const newConversation = {
       id: newId,
       title: branchTitle,
       updatedAt: new Date().toISOString()
     };
-    
+
     try {
       // Create new conversation in backend with the branched messages
       await fetch('/api/conversations', {
@@ -511,14 +511,14 @@ interface BackendConversation {
           messages: branchedMessages
         })
       });
-      
+
       // Create branch conversation in context (this also sets messages)
       createBranchConversation(sourceConversationId, messageIndex, newId);
-      
+
       // Add to UI conversations list and switch to new conversation
       setConversations(prev => [newConversation, ...prev]);
       setCurrentConversationId(newId);
-      
+
       console.log(`[App] Created branch conversation ${newId} with ${branchedMessages.length} messages`);
     } catch (error) {
       console.error('Failed to create branch conversation:', error);
@@ -530,21 +530,21 @@ interface BackendConversation {
   };
 
   const handleDeleteConversation = async (conversationId: string) => {
-    if (conversations.length <= 1) return; 
-    
+    if (conversations.length <= 1) return;
+
     try {
       console.log('Deleting conversation:', conversationId);
       console.log('Current conversations:', conversations);
       console.log('Current conversation ID:', currentConversationId);
-      
+
       await fetch(`/api/conversations/${conversationId}`, {
         method: 'DELETE',
         headers: getAuthHeaders()
       });
-      
+
       const remaining = conversations.filter(conv => conv.id !== conversationId);
       console.log('Remaining conversations after deletion:', remaining);
-      
+
       if (currentConversationId === conversationId) {
         if (remaining.length > 0) {
           console.log('Switching to conversation:', remaining[0].id);
@@ -558,7 +558,7 @@ interface BackendConversation {
             title: 'New Conversation',
             updatedAt: new Date().toISOString()
           };
-          
+
           try {
             await fetch('/api/conversations', {
               method: 'POST',
@@ -571,18 +571,18 @@ interface BackendConversation {
           } catch (error) {
             console.error('Failed to create new conversation:', error);
           }
-          
+
           setCurrentConversationId(newId);
           setConversations([newConversation]);
         }
       } else {
         setConversations(remaining);
       }
-      
+
       deleteConversationMessages(conversationId);
-      
+
       console.log('Conversation deletion completed');
-      
+
     } catch (error) {
       console.error('Failed to delete conversation:', error);
     }
@@ -608,9 +608,9 @@ interface BackendConversation {
     // removed naive placeholder token update (now real aggregation handled via ChatInterface onTokenUsageUpdate)
   };
 
-interface GoogleCredentialResponse {
-  credential?: string;
-}
+  interface GoogleCredentialResponse {
+    credential?: string;
+  }
 
   // ========================= Auth Handlers =========================
   const handleGoogleCredential = useCallback(async (resp: GoogleCredentialResponse) => {
@@ -620,41 +620,41 @@ interface GoogleCredentialResponse {
         console.error('[GIS] missing credential field');
         return;
       }
-      
+
       console.log('[GIS] sending request to /auth/google...');
-      
+
       // Добавляем таймаут для запроса
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 секунд таймаут
-      
+
       try {
-        const r = await fetch('/auth/google', { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
+        const r = await fetch('/auth/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id_token: resp.credential }),
           signal: controller.signal
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         console.log('[GIS] backend response status:', r.status);
-        
-        if (!r.ok) { 
+
+        if (!r.ok) {
           const errorText = await r.text();
-          console.error('[GIS] backend /auth/google failed', r.status, errorText); 
-          throw new Error(`Google auth failed: ${r.status} ${errorText}`); 
+          console.error('[GIS] backend /auth/google failed', r.status, errorText);
+          throw new Error(`Google auth failed: ${r.status} ${errorText}`);
         }
-        
+
         const data = await r.json();
         const token = data.access_token;
         console.log('[GIS] backend token received, length=', token?.length);
-        
+
         localStorage.setItem('jwt_token', token);
         apiClient.setAuthHeadersProvider(() => ({ Authorization: `Bearer ${token}` }));
         setIsAuthenticated(true);
-        
+
         console.log('[GIS] calling /auth/me...');
-        const me = await fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` }});
+        const me = await fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` } });
         if (me.ok) {
           const d = await me.json();
           setUserEmail(d?.email || null);
@@ -662,7 +662,7 @@ interface GoogleCredentialResponse {
         } else {
           console.warn('[GIS] /auth/me failed', me.status);
         }
-        
+
         console.log('[GIS] fetching config...');
         await fetchConfig();
         console.log('[GIS] auth flow completed successfully');
@@ -701,7 +701,7 @@ interface GoogleCredentialResponse {
       <LoginModal
         isOpen={true}
         error={undefined}
-        onGoogleCredential={() => {}}
+        onGoogleCredential={() => { }}
       />
     );
   }
@@ -742,10 +742,10 @@ interface GoogleCredentialResponse {
         onLogout={() => { localStorage.removeItem('jwt_token'); setIsAuthenticated(false); setUserEmail(null); }}
         onSelectModel={handleModelChange}
         onChangeGeneration={async (patch) => {
-          try { 
-            await updateModelSettings(patch); 
-          } catch(e) { 
-            console.error(e); 
+          try {
+            await updateModelSettings(patch);
+          } catch (e) {
+            console.error(e);
           }
         }}
         // Combined system prompt for display (Global + Per-Model)
@@ -774,14 +774,14 @@ interface GoogleCredentialResponse {
       />
       <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-1.5 text-xs border-b border-border bg-background flex-shrink-0">
         {/* History toggle - always visible, especially on mobile */}
-        <button 
-          onClick={() => setShowHistory(h => !h)} 
+        <button
+          onClick={() => setShowHistory(h => !h)}
           className="px-2.5 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium flex-shrink-0 flex items-center gap-1.5 min-h-[36px] touch-manipulation"
         >
           <span className="text-base">{showHistory ? '✕' : '☰'}</span>
           <span className="hidden sm:inline text-xs">{showHistory ? 'Hide' : 'History'}</span>
         </button>
-        
+
         {/* Chat mode toggle */}
         <div className="flex items-center gap-0.5 sm:gap-1 bg-muted rounded-lg p-0.5 flex-shrink-0">
           <button
@@ -797,9 +797,9 @@ interface GoogleCredentialResponse {
             Compare
           </button>
         </div>
-        
+
         <span className="ml-auto"></span>
-        
+
         {/* Status indicators - hidden on mobile */}
         <div className="hidden sm:flex items-center gap-1 flex-shrink-0">
           {globalPromptLoading && <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 animate-pulse text-[10px]">Loading global prompt...</span>}
@@ -814,8 +814,8 @@ interface GoogleCredentialResponse {
         {showHistory && chatMode === 'single' && (
           <>
             {/* Mobile overlay backdrop */}
-            <div 
-              className="fixed inset-0 bg-black/50 z-40 sm:hidden animate-in fade-in duration-200" 
+            <div
+              className="fixed inset-0 bg-black/50 z-40 sm:hidden animate-in fade-in duration-200"
               onClick={() => setShowHistory(false)}
             />
             <div className="fixed sm:relative left-0 top-0 h-full z-50 sm:z-auto animate-in slide-in-from-left duration-200 sm:animate-none">
@@ -837,8 +837,8 @@ interface GoogleCredentialResponse {
         {showHistory && chatMode === 'parallel' && (
           <>
             {/* Mobile overlay backdrop */}
-            <div 
-              className="fixed inset-0 bg-black/50 z-40 sm:hidden animate-in fade-in duration-200" 
+            <div
+              className="fixed inset-0 bg-black/50 z-40 sm:hidden animate-in fade-in duration-200"
               onClick={() => setShowHistory(false)}
             />
             <div className="fixed sm:relative left-0 top-0 h-full z-50 sm:z-auto animate-in slide-in-from-left duration-200 sm:animate-none">

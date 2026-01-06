@@ -29,7 +29,7 @@ export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
   useEffect(() => {
     const loadPrompt = async () => {
       setLoading(true);
-      
+
       // First, load from storage for instant UI (supports large data via IndexedDB)
       try {
         const cached = await largeStorage.getItem(STORAGE_KEY);
@@ -40,7 +40,7 @@ export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
       } catch (e) {
         console.warn('[useGlobalSystemPrompt] Failed to load from storage:', e);
       }
-      
+
       // Then fetch from backend (authoritative)
       try {
         const response = await apiClient.getGlobalSystemPrompt();
@@ -68,7 +68,7 @@ export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
         setLoading(false);
       }
     };
-    
+
     loadPrompt();
   }, []);
 
@@ -83,7 +83,7 @@ export function useGlobalSystemPrompt(): UseGlobalSystemPromptReturn {
   const saveGlobalPrompt = useCallback(async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       await apiClient.updateGlobalSystemPrompt(globalPrompt);
       setSavedPrompt(globalPrompt);

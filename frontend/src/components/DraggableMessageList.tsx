@@ -4,6 +4,11 @@ import { Message, ModelInfo } from '../types';
 import { cn } from '../lib/utils';
 import { MessageBubble } from './MessageBubble';
 
+// Number of messages to render initially, then progressively add more
+const INITIAL_RENDER_COUNT = 5;
+const RENDER_BATCH_SIZE = 5;
+const RENDER_BATCH_DELAY = 50; // ms between batches
+
 interface DraggableMessageListProps {
   messages: Message[];
   selectedModel?: ModelInfo;
@@ -28,9 +33,9 @@ const GhostNavigationOverlay: React.FC<{
   onDropTarget: (index: number) => void;
 }> = ({ messages, draggedIndex, dragOverIndex, containerRect, onDropTarget }) => {
   if (draggedIndex === null || !containerRect) return null;
-  
+
   return (
-    <div 
+    <div
       className="fixed z-50 pointer-events-auto"
       style={{
         right: 20,
@@ -49,7 +54,7 @@ const GhostNavigationOverlay: React.FC<{
             const isDragged = idx === draggedIndex;
             const isDropTarget = idx === dragOverIndex;
             const preview = msg.content.substring(0, 25) + (msg.content.length > 25 ? '...' : '');
-            
+
             return (
               <div
                 key={idx}
@@ -102,6 +107,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [containerRect, setContainerRect] = useState<DOMRect | null>(null);
   const [scrollSpeed, setScrollSpeed] = useState(0);
+  const [renderCount, setRenderCount] = useState(INITIAL_RENDER_COUNT);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dragImageRef = useRef<HTMLDivElement | null>(null);
@@ -157,16 +163,39 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
     };
   }, []);
 
+  // Progressive rendering - render messages in batches to prevent UI freeze
+  useEffect(() => {
+    // Reset render count when messages change significantly
+    if (messages.length <= INITIAL_RENDER_COUNT) {
+      setRenderCount(messages.length);
+      return;
+    }
+
+    // If we need to render more messages
+    if (renderCount < messages.length) {
+      const timer = setTimeout(() => {
+        setRenderCount(prev => Math.min(prev + RENDER_BATCH_SIZE, messages.length));
+      }, RENDER_BATCH_DELAY);
+      return () => clearTimeout(timer);
+    }
+  }, [messages.length, renderCount]);
+
+  // Reset render count when conversation changes (detected by first message ID change)
+  const firstMessageId = messages[0]?.id;
+  useEffect(() => {
+    setRenderCount(INITIAL_RENDER_COUNT);
+  }, [firstMessageId]);
+
   // Handle drag with controlled auto-scroll
   const handleDrag = useCallback((e: React.DragEvent) => {
     if (draggedIndex === null) return;
-    
+
     // Ignore invalid coordinates (happens when dragging ends)
     if (e.clientY === 0 && e.clientX === 0) {
       setScrollSpeed(0);
       return;
     }
-    
+
     const scrollContainer = containerRef.current?.parentElement;
     if (!scrollContainer) return;
 
@@ -195,12 +224,12 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
       e.preventDefault();
       return;
     }
-    
+
     // Set drag data
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', String(index));
     e.dataTransfer.setData('application/x-message-drag', 'true');
-    
+
     // Create mini preview as drag image
     const message = messages[index];
     const container = document.createElement('div');
@@ -208,11 +237,11 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
     container.style.top = '-1000px';
     container.style.left = '-1000px';
     document.body.appendChild(container);
-    
+
     // Render mini preview
     const isUser = message.role === 'user';
     const preview = message.content.substring(0, 50) + (message.content.length > 50 ? '...' : '');
-    
+
     container.innerHTML = `
       <div style="
         display: flex;
@@ -245,17 +274,17 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
         </div>
       </div>
     `;
-    
+
     dragImageRef.current = container;
     e.dataTransfer.setDragImage(container, 125, 25);
-    
+
     // Cleanup after a delay
     setTimeout(() => {
       if (container && document.body.contains(container)) {
         document.body.removeChild(container);
       }
     }, 100);
-    
+
     setDraggedIndex(index);
   }, [isStreaming, messages]);
 
@@ -269,19 +298,19 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     // Only handle message drags, not file drags
     if (!e.dataTransfer.types.includes('application/x-message-drag')) {
       return;
     }
-    
+
     e.dataTransfer.dropEffect = 'move';
-    
+
     if (draggedIndex === null || draggedIndex === index) {
       setDragOverIndex(null);
       return;
     }
-    
+
     setDragOverIndex(index);
   }, [draggedIndex]);
 
@@ -289,22 +318,22 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setScrollSpeed(0);
-    
+
     // Only handle message drags
     if (!e.dataTransfer.types.includes('application/x-message-drag')) {
       setDraggedIndex(null);
       setDragOverIndex(null);
       return;
     }
-    
+
     const dragIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
-    
+
     if (isNaN(dragIndex) || dragIndex === dropIndex) {
       setDraggedIndex(null);
       setDragOverIndex(null);
       return;
     }
-    
+
     console.log(`[DraggableMessageList] Reordering: ${dragIndex} -> ${dropIndex}`);
     onReorder(dragIndex, dropIndex);
     setDraggedIndex(null);
@@ -334,6 +363,10 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
     setScrollSpeed(0);
   }, [draggedIndex, onReorder]);
 
+  // Get messages to render (progressive)
+  const messagesToRender = messages.slice(0, renderCount);
+  const hasMoreToRender = renderCount < messages.length;
+
   return (
     <>
       {/* Ghost Navigation Overlay */}
@@ -344,7 +377,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
         containerRect={containerRect}
         onDropTarget={handleGhostDrop}
       />
-      
+
       {/* Scroll indicators when near edges */}
       {draggedIndex !== null && scrollSpeed !== 0 && (
         <div className={cn(
@@ -356,16 +389,26 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
           </div>
         </div>
       )}
-      
+
       <div ref={containerRef} className="py-6 max-w-3xl mx-auto px-4" onDragOver={handleDrag}>
-        {messages.map((message, index) => {
+        {/* Loading indicator while rendering more messages */}
+        {hasMoreToRender && (
+          <div className="flex items-center justify-center py-2 mb-4">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+              Loading messages... ({renderCount}/{messages.length})
+            </div>
+          </div>
+        )}
+
+        {messagesToRender.map((message, index) => {
           const isLastMessage = index === messages.length - 1;
           const keyId = `${message.id}-v${updateVersion}-${isLastMessage && isThinking ? 'thinking' : 'done'}`;
           const isDragging = draggedIndex === index;
           const isDragOver = dragOverIndex === index && draggedIndex !== null;
           const showTopIndicator = isDragOver && draggedIndex !== null && draggedIndex > index;
           const showBottomIndicator = isDragOver && draggedIndex !== null && draggedIndex < index;
-          
+
           return (
             <div
               key={keyId}
@@ -393,7 +436,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
                   </div>
                 </div>
               )}
-              
+
               {/* Drop indicator line - below */}
               {showBottomIndicator && (
                 <div className="absolute -bottom-2 left-4 right-4 z-30">
@@ -406,24 +449,24 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
                   </div>
                 </div>
               )}
-              
+
               {/* Message number badge - shows during drag */}
               {draggedIndex !== null && (
                 <div className={cn(
                   "absolute -left-1 top-2 z-20 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all",
-                  isDragging 
-                    ? "bg-primary text-primary-foreground scale-125" 
-                    : isDragOver 
+                  isDragging
+                    ? "bg-primary text-primary-foreground scale-125"
+                    : isDragOver
                       ? "bg-primary/80 text-primary-foreground"
                       : "bg-muted text-muted-foreground"
                 )}>
                   {index + 1}
                 </div>
               )}
-              
+
               {/* Drag handle - visible on hover */}
               {!isStreaming && (
-                <div 
+                <div
                   className={cn(
                     "absolute left-2 top-1/2 -translate-y-1/2 z-20",
                     "opacity-0 group-hover:opacity-100 transition-all duration-200",
@@ -437,7 +480,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
                   <GripVertical size={18} />
                 </div>
               )}
-              
+
               <MessageBubble
                 message={message}
                 index={index}

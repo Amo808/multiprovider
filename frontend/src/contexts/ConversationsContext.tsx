@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode, useRef } from 'react';
 import { Message, SendMessageRequest, ChatResponse } from '../types';
 import { apiClient } from '../services/api';
 
@@ -14,6 +14,9 @@ interface ConversationState {
   thinkingContent?: string;
   isThinking?: boolean;
   updateVersion?: number; // Incremented on each update to force re-renders
+  totalCount?: number; // Total messages in conversation
+  hasMore?: boolean; // Whether more messages can be loaded
+  isLoadingMore?: boolean; // Loading older messages
 }
 
 interface ConversationsState {
@@ -33,6 +36,7 @@ interface ConversationsContextType {
   recoverStuckRequest: (conversationId: string) => void;
   updateMessages: (conversationId: string, messages: Message[]) => void;
   createBranchConversation: (sourceConversationId: string, upToMessageIndex: number, newConversationId: string) => Message[];
+  loadMoreMessages: (conversationId: string) => Promise<void>;
 }
 
 const ConversationsContext = createContext<ConversationsContextType | null>(null);
@@ -54,22 +58,22 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
     try {
       const saved = localStorage.getItem('conversations');
       const version = localStorage.getItem('conversations_version');
-      
+
       // MIGRATION TO v3.0: Clear local storage on Supabase migration
       // Version 3.0+ uses Supabase as the primary data store
       const CURRENT_VERSION = '3.0';
-      
+
       if (!version || version !== CURRENT_VERSION) {
         console.log('[ConversationsContext] Migrating to Supabase - clearing local conversation cache');
         localStorage.removeItem('conversations');
         localStorage.setItem('conversations_version', CURRENT_VERSION);
         return {};
       }
-      
+
       if (saved) {
         return JSON.parse(saved);
       }
-      
+
       return {};
     } catch {
       localStorage.setItem('conversations_version', '3.0');
@@ -79,6 +83,9 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
 
   // Track active requests for abort functionality
   const [, setActiveRequests] = useState<Map<string, string>>(new Map());
+
+  // Track conversations currently being loaded to prevent duplicate requests
+  const loadingConversationsRef = useRef<Set<string>>(new Set());
 
   // Save to localStorage
   useEffect(() => {
@@ -101,9 +108,21 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
     localStorage.setItem('conversations', JSON.stringify(conversationsToSave));
   }, [conversations]);
 
-  const loadConversationHistory = useCallback(async (conversationId: string) => {
+  const loadConversationHistory = useCallback(async (conversationId: string, loadAll: boolean = false) => {
+    // Prevent duplicate requests
+    if (loadingConversationsRef.current.has(conversationId)) {
+      console.log(`[ConversationsContext] Already loading ${conversationId}, skipping`);
+      return;
+    }
+
+    loadingConversationsRef.current.add(conversationId);
+    console.log(`[ConversationsContext] Loading history for ${conversationId}`);
+
     try {
-      const response = await fetch(`/api/history/${conversationId}`);
+      // Load with smaller limit for fast initial load (20 messages)
+      // User can load more with "Load more" button
+      const limit = loadAll ? 200 : 20;
+      const response = await fetch(`/api/history/${conversationId}?limit=${limit}`);
       if (response.ok) {
         const history = await response.json();
         if (history.messages && history.messages.length > 0) {
@@ -112,7 +131,9 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
             [conversationId]: {
               ...prev[conversationId],
               messages: history.messages,
-              loaded: true
+              loaded: true,
+              totalCount: history.total_count,
+              hasMore: history.has_more
             }
           }));
         } else {
@@ -120,19 +141,24 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
             ...prev,
             [conversationId]: {
               ...prev[conversationId],
-              loaded: true
+              loaded: true,
+              totalCount: 0,
+              hasMore: false
             }
           }));
         }
       }
     } catch (error) {
       console.error('Failed to load conversation history:', error);
+    } finally {
+      // Remove from loading set
+      loadingConversationsRef.current.delete(conversationId);
     }
   }, []);
 
   const getConversation = useCallback((conversationId: string): ConversationState => {
     let conversation = conversations[conversationId];
-    
+
     if (!conversation) {
       conversation = {
         messages: [],
@@ -143,17 +169,17 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         thinkingContent: undefined,
         isThinking: false
       };
-      
+
       setConversations(prev => ({
         ...prev,
         [conversationId]: conversation!
       }));
     }
-    
+
     if (!conversation.loaded) {
       loadConversationHistory(conversationId);
     }
-    
+
     return conversation;
   }, [conversations, loadConversationHistory]);
 
@@ -164,10 +190,10 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
   ) => {
     const requestId = `${conversationId}-${Date.now()}`;
     setActiveRequests(prev => new Map(prev.set(requestId, conversationId)));
-    
+
     // Clear thinking ref
     thinkingContentRefs[conversationId] = '';
-    
+
     // Initialize streaming state
     setConversations(prev => {
       const existingConvo = prev[conversationId] || {
@@ -243,7 +269,7 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
           metaThoughtTokens: chunk.meta?.thought_tokens,
           metaReasoning: chunk.meta?.reasoning
         });
-        
+
         // Handle errors
         if (chunk.error) {
           setConversations(prev => ({
@@ -280,14 +306,14 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         // Handle thinking/reasoning content (only for streaming chunks, not final)
         // Check if this is a streaming thinking chunk (not the final done chunk)
         const isStreamingThinkingChunk = (chunk.meta?.thinking || chunk.meta?.reasoning_content) && !chunk.done;
-        
+
         if (isStreamingThinkingChunk) {
           const thinkingChunk = chunk.meta!.thinking || chunk.meta!.reasoning_content || '';
           thinkingContentRefs[conversationId] = (thinkingContentRefs[conversationId] || '') + thinkingChunk;
           const accumulated = thinkingContentRefs[conversationId];
-          
+
           console.log(`[ConversationsContext] Thinking chunk: ${thinkingChunk.length} chars, total: ${accumulated.length}`);
-          
+
           setConversations(prev => {
             const currentVersion = prev[conversationId]?.updateVersion || 0;
             return {
@@ -302,16 +328,16 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
                 messages: prev[conversationId].messages.map(msg =>
                   msg.id === assistantMessage.id
                     ? {
-                        ...msg,
-                        meta: {
-                          ...msg.meta,
-                          reasoning: true,
-                          thought_tokens: chunk.meta?.thought_tokens,
-                          reasoning_content: accumulated,
-                          thought_content: accumulated,
-                          thinking: accumulated
-                        }
+                      ...msg,
+                      meta: {
+                        ...msg.meta,
+                        reasoning: true,
+                        thought_tokens: chunk.meta?.thought_tokens,
+                        reasoning_content: accumulated,
+                        thought_content: accumulated,
+                        thinking: accumulated
                       }
+                    }
                     : msg
                 )
               }
@@ -327,7 +353,7 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
           // Use refThinking (accumulated during streaming) OR finalThinking (from final chunk)
           // refThinking takes priority since it's accumulated from real-time chunks
           const mergedThinking = refThinking || finalThinking;
-          
+
           console.log(`[ConversationsContext] Final chunk received:`, {
             refThinkingLen: refThinking.length,
             finalThinkingLen: finalThinking.length,
@@ -335,7 +361,7 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
             thought_tokens: chunk.meta?.thought_tokens,
             hasChunkMeta: !!chunk.meta
           });
-          
+
           setConversations(prev => ({
             ...prev,
             [conversationId]: {
@@ -344,16 +370,16 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
               messages: prev[conversationId].messages.map(msg =>
                 msg.id === assistantMessage.id
                   ? {
-                      ...msg,
-                      meta: {
-                        ...msg.meta,
-                        ...(chunk.meta || {}),
-                        // Preserve accumulated reasoning content
-                        reasoning_content: mergedThinking || msg.meta?.reasoning_content,
-                        thought_content: mergedThinking || msg.meta?.thought_content,
-                        thinking: mergedThinking || msg.meta?.thinking
-                      }
+                    ...msg,
+                    meta: {
+                      ...msg.meta,
+                      ...(chunk.meta || {}),
+                      // Preserve accumulated reasoning content
+                      reasoning_content: mergedThinking || msg.meta?.reasoning_content,
+                      thought_content: mergedThinking || msg.meta?.thought_content,
+                      thinking: mergedThinking || msg.meta?.thinking
                     }
+                  }
                   : msg
               )
             }
@@ -384,7 +410,7 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
       // Cleanup - FORCE re-render by incrementing updateVersion significantly
       const finalThinking = thinkingContentRefs[conversationId] || '';
       delete thinkingContentRefs[conversationId];
-      
+
       console.log(`[ConversationsContext] Cleanup - finalThinking length: ${finalThinking.length}`);
 
       setConversations(prev => {
@@ -392,9 +418,9 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         const lastMsg = prev[conversationId]?.messages[prev[conversationId]?.messages.length - 1];
         const existingThinking = lastMsg?.meta?.reasoning_content || lastMsg?.meta?.thought_content || '';
         const mergedThinking = finalThinking || existingThinking;
-        
+
         console.log(`[ConversationsContext] Final cleanup - existingThinking: ${existingThinking.length}, mergedThinking: ${mergedThinking.length}`);
-        
+
         return {
           ...prev,
           [conversationId]: {
@@ -440,10 +466,10 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         setConversations(prev => {
           const conv = prev[conversationId];
           if (!conv) return prev;
-          
+
           const currentVersion = conv.updateVersion || 0;
           console.log(`[ConversationsContext] Delayed force update - version: ${currentVersion + 1}`);
-          
+
           return {
             ...prev,
             [conversationId]: {
@@ -543,14 +569,68 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
     }));
   }, []);
 
+  // Load more older messages (pagination)
+  const loadMoreMessages = useCallback(async (conversationId: string) => {
+    const conversation = conversations[conversationId];
+    if (!conversation || conversation.isLoadingMore || !conversation.hasMore) {
+      return;
+    }
+
+    setConversations(prev => ({
+      ...prev,
+      [conversationId]: {
+        ...prev[conversationId],
+        isLoadingMore: true
+      }
+    }));
+
+    try {
+      const currentCount = conversation.messages.length;
+      const response = await fetch(`/api/history/${conversationId}?limit=50&offset=${currentCount}`);
+
+      if (response.ok) {
+        const history = await response.json();
+        if (history.messages && history.messages.length > 0) {
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              messages: [...prev[conversationId].messages, ...history.messages],
+              hasMore: history.has_more,
+              isLoadingMore: false
+            }
+          }));
+        } else {
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              hasMore: false,
+              isLoadingMore: false
+            }
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load more messages:', error);
+      setConversations(prev => ({
+        ...prev,
+        [conversationId]: {
+          ...prev[conversationId],
+          isLoadingMore: false
+        }
+      }));
+    }
+  }, [conversations]);
+
   const createBranchConversation = useCallback((sourceConversationId: string, upToMessageIndex: number, newConversationId: string) => {
     setConversations(prev => {
       const sourceConversation = prev[sourceConversationId];
       if (!sourceConversation) return prev;
-      
+
       // Extract messages up to the specified index
       const newMessages = sourceConversation.messages.slice(0, upToMessageIndex + 1);
-      
+
       // Create the new conversation with extracted messages
       const newConversation: ConversationState = {
         messages: newMessages,
@@ -561,13 +641,13 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         thinkingContent: undefined,
         isThinking: false
       };
-      
+
       return {
         ...prev,
         [newConversationId]: newConversation
       };
     });
-    
+
     // Optionally, you can return the new conversation state
     return conversations[newConversationId]?.messages || [];
   }, [conversations]);
@@ -583,7 +663,8 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         stopStreaming,
         recoverStuckRequest,
         updateMessages,
-        createBranchConversation
+        createBranchConversation,
+        loadMoreMessages
       }}
     >
       {children}

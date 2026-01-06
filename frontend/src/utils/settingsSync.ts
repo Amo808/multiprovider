@@ -1,77 +1,107 @@
 /**
- * Settings Sync Utility
+ * Settings Sync - Event-based synchronization between components
  * 
- * Provides event-based synchronization for per-model settings
- * between Single and Compare (Dual) modes.
- * 
- * When settings are changed in one mode, this emits an event
- * that other components can listen to and refresh their state.
+ * Используется для синхронизации настроек между:
+ * - UnifiedModelMenu (dropdown с шестерёнками)
+ * - ParallelChatInterface (per-model settings popup)
+ * - ChatInterface (single mode settings)
  */
 
-export type SettingsSyncEvent = {
-  provider: string;
-  modelId: string;
-  settings: Record<string, unknown>;
-  source: 'single' | 'compare';
-};
+import { GenerationConfig } from '../types';
 
-type SettingsSyncCallback = (event: SettingsSyncEvent) => void;
-
-class SettingsSyncManager {
-  private listeners: Set<SettingsSyncCallback> = new Set();
-  
-  /**
-   * Subscribe to settings sync events
-   * @returns unsubscribe function
-   */
-  subscribe(callback: SettingsSyncCallback): () => void {
-    this.listeners.add(callback);
-    return () => {
-      this.listeners.delete(callback);
+export interface ModelSettingsUpdate {
+    provider: string;
+    modelId: string;
+    settings: Partial<GenerationConfig> & {
+        system_prompt?: string;
     };
-  }
-  
-  /**
-   * Emit a settings change event
-   * This should be called after saving settings to backend
-   */
-  emit(event: SettingsSyncEvent): void {
-    console.log('[SettingsSync] Emitting event:', {
-      provider: event.provider,
-      modelId: event.modelId,
-      source: event.source,
-      settingsKeys: Object.keys(event.settings)
-    });
-    
-    // Notify all listeners
-    this.listeners.forEach(callback => {
-      try {
-        callback(event);
-      } catch (error) {
-        console.error('[SettingsSync] Listener error:', error);
-      }
-    });
-    
-    // Also dispatch a custom DOM event for cross-component communication
-    window.dispatchEvent(new CustomEvent('settings-sync', { 
-      detail: event 
-    }));
-  }
-  
-  /**
-   * Get the number of active listeners
-   */
-  getListenerCount(): number {
-    return this.listeners.size;
-  }
+    source: 'dropdown' | 'parallel-popup' | 'single-chat';
 }
 
-// Singleton instance
-export const settingsSync = new SettingsSyncManager();
+// Custom event for settings updates
+const SETTINGS_UPDATE_EVENT = 'model-settings-updated';
 
 /**
- * Helper hook-style function to create a sync key
+ * Emit settings update event
  */
-export const getSettingsKey = (provider: string, modelId: string): string => {
-  return `${provider}-${modelId}`;
-};
+export function emitSettingsUpdate(update: ModelSettingsUpdate): void {
+    const event = new CustomEvent(SETTINGS_UPDATE_EVENT, {
+        detail: update,
+        bubbles: true
+    });
+    window.dispatchEvent(event);
+    console.log('[SettingsSync] Emitted update:', update.provider, update.modelId, 'from', update.source);
+}
+
+/**
+ * Subscribe to settings updates
+ */
+export function subscribeToSettingsUpdates(
+    callback: (update: ModelSettingsUpdate) => void,
+    options?: { ignoreSource?: ModelSettingsUpdate['source'] }
+): () => void {
+    const handler = (event: Event) => {
+        const detail = (event as CustomEvent<ModelSettingsUpdate>).detail;
+        // Optionally ignore updates from a specific source to prevent loops
+        if (options?.ignoreSource && detail.source === options.ignoreSource) {
+            return;
+        }
+        callback(detail);
+    };
+
+    window.addEventListener(SETTINGS_UPDATE_EVENT, handler);
+
+    return () => {
+        window.removeEventListener(SETTINGS_UPDATE_EVENT, handler);
+    };
+}
+
+/**
+ * Create a model key for caching
+ */
+export function getModelKey(provider: string, modelId: string): string {
+    return `${provider}-${modelId}`;
+}
+
+/**
+ * Local cache for settings - shared across components
+ */
+const settingsCache = new Map<string, Partial<GenerationConfig> & { system_prompt?: string }>();
+
+export function getCachedSettings(provider: string, modelId: string): (Partial<GenerationConfig> & { system_prompt?: string }) | undefined {
+    return settingsCache.get(getModelKey(provider, modelId));
+}
+
+export function setCachedSettings(provider: string, modelId: string, settings: Partial<GenerationConfig> & { system_prompt?: string }): void {
+    settingsCache.set(getModelKey(provider, modelId), settings);
+}
+
+export function clearCachedSettings(provider: string, modelId: string): void {
+    settingsCache.delete(getModelKey(provider, modelId));
+}
+
+// Also export an invalidation event for when we need to reload from backend
+const SETTINGS_INVALIDATE_EVENT = 'model-settings-invalidated';
+
+export function emitSettingsInvalidation(provider: string, modelId: string): void {
+    const event = new CustomEvent(SETTINGS_INVALIDATE_EVENT, {
+        detail: { provider, modelId },
+        bubbles: true
+    });
+    window.dispatchEvent(event);
+}
+
+export function subscribeToSettingsInvalidation(
+    callback: (data: { provider: string; modelId: string }) => void
+): () => void {
+    const handler = (event: Event) => {
+        const detail = (event as CustomEvent<{ provider: string; modelId: string }>).detail;
+        callback(detail);
+    };
+
+    window.addEventListener(SETTINGS_INVALIDATE_EVENT, handler);
+
+    return () => {
+        window.removeEventListener(SETTINGS_INVALIDATE_EVENT, handler);
+    };
+}

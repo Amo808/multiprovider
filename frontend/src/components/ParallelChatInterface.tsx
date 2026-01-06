@@ -12,6 +12,7 @@ import { cn } from '../lib/utils';
 import { parallelAPI, ParallelConversation, ParallelTurn } from '../services/parallelConversationsAPI';
 import { apiClient } from '../services/api';
 import { getModelMaxOutputTokens, getModelDefaultTokens } from '../utils/modelLimits';
+import { emitSettingsUpdate, subscribeToSettingsUpdates, getCachedSettings, setCachedSettings } from '../utils/settingsSync';
 
 // Code block component for syntax highlighting
 const CodeBlock: React.FC<{ language?: string; children: string }> = ({ language, children }) => {
@@ -55,7 +56,7 @@ const MarkdownContent: React.FC<{ content: string; className?: string }> = ({ co
     .replace(/^0\n/, '') // Remove leading "0\n"
     .replace(/^\s*0\s*$/, '') // Remove if content is just "0"
     .trim();
-  
+
   return (
     <div className={cn(
       "prose prose-sm max-w-none dark:prose-invert",
@@ -128,7 +129,7 @@ const ThinkingSection: React.FC<{
         )}
         <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", isOpen && "rotate-180")} />
       </button>
-      
+
       {isOpen && content && (
         <div className="mt-1.5 pl-3 border-l-2 border-purple-500/30 max-h-32 overflow-y-auto">
           <pre className="text-[10px] text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">
@@ -236,14 +237,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const selectedModels = externalSelectedModels ?? internalSelectedModels;
   // Note: Model selection is now handled via global menu, keep this for potential future use
   void (onSelectedModelsChange ?? setInternalSelectedModels);
-  
+
   const [inputValue, setInputValue] = useState('');
   const [currentUserMessage, setCurrentUserMessage] = useState('');
-  
+
   // Shared history mode (brainstorm)
   const [sharedHistoryMode, setSharedHistoryMode] = useState(false);
   const [conversationHistory, setConversationHistory] = useState<ConversationTurn[]>([]);
-  
+
   // Supabase state
   const [supabaseConversationId, setSupabaseConversationId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -252,14 +253,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const [showConversationList, setShowConversationList] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [conversationTitle, setConversationTitle] = useState('Parallel Chat');
-  
+
   // Track regeneration state: which turn/response is being regenerated
-  const [regeneratingInfo, setRegeneratingInfo] = useState<{turnId: string; responseIndex: number; dbId?: string} | null>(null);
-  
+  const [regeneratingInfo, setRegeneratingInfo] = useState<{ turnId: string; responseIndex: number; dbId?: string } | null>(null);
+
   // Drag & Drop state (desktop)
-  const [draggedResponse, setDraggedResponse] = useState<{turnId: string; responseIndex: number} | null>(null);
-  const [dragOverTarget, setDragOverTarget] = useState<{turnId: string; responseIndex: number} | null>(null);
-  
+  const [draggedResponse, setDraggedResponse] = useState<{ turnId: string; responseIndex: number } | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<{ turnId: string; responseIndex: number } | null>(null);
+
   // Touch Drag & Drop state (mobile)
   const [touchDragging, setTouchDragging] = useState<{
     turnId: string;
@@ -270,14 +271,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     currentY: number;
     element: HTMLElement | null;
   } | null>(null);
-  const [touchDropTarget, setTouchDropTarget] = useState<{turnId: string; responseIndex: number} | null>(null);
+  const [touchDropTarget, setTouchDropTarget] = useState<{ turnId: string; responseIndex: number } | null>(null);
   const touchGhostRef = useRef<HTMLDivElement>(null);
   const responseRefs = useRef<Map<string, HTMLElement>>(new Map());
-  
+
   // Inline Edit state for user messages
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const [editingMessage, setEditingMessage] = useState('');
-  
+
   // Expanded response modal state
   const [expandedResponse, setExpandedResponse] = useState<{
     turnId: string;
@@ -285,14 +286,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     content: string;
     model: ModelInfo;
   } | null>(null);
-  
+
   // Custom context popup for smart regenerate
   const [smartRegeneratePopup, setSmartRegeneratePopup] = useState<{
     turnId: string;
     responseIndex: number;
     customContext: string;
   } | null>(null);
-  
+
   // Per-model settings popup
   const [modelSettingsPopup, setModelSettingsPopup] = useState<{
     model: ModelInfo;
@@ -310,7 +311,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       stopSequences: string[];
     };
   } | null>(null);
-  
+
   // Per-model settings storage (model.id -> settings)
   const [perModelSettings, setPerModelSettings] = useState<Record<string, {
     systemPrompt: string;
@@ -325,7 +326,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     streaming: boolean;
     stopSequences: string[];
   }>>({});
-  
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const conversationListRef = useRef<HTMLDivElement>(null);
@@ -394,6 +395,54 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     loadSavedConversations();
   }, []);
 
+  // Subscribe to settings updates from other components (e.g., UnifiedModelMenu dropdown)
+  useEffect(() => {
+    const unsubscribe = subscribeToSettingsUpdates((update) => {
+      console.log('[ParallelChat] Received settings update from', update.source, 'for', update.modelId);
+
+      // Update our local perModelSettings cache
+      const modelKey = `${update.provider}-${update.modelId}`;
+      setPerModelSettings(prev => ({
+        ...prev,
+        [modelKey]: {
+          systemPrompt: update.settings.system_prompt || '',
+          temperature: update.settings.temperature ?? 0.7,
+          maxTokens: update.settings.max_tokens ?? 8192,
+          topP: update.settings.top_p ?? 0.95,
+          topK: update.settings.top_k,
+          frequencyPenalty: update.settings.frequency_penalty ?? 0,
+          presencePenalty: update.settings.presence_penalty ?? 0,
+          thinkingBudget: update.settings.thinking_budget,
+          reasoningEffort: update.settings.reasoning_effort,
+          streaming: update.settings.stream !== false,
+          stopSequences: update.settings.stop_sequences || [],
+        }
+      }));
+
+      // If we have a popup open for this model, update it too
+      if (modelSettingsPopup && modelSettingsPopup.model.id === update.modelId) {
+        setModelSettingsPopup(prev => prev ? {
+          ...prev,
+          settings: {
+            systemPrompt: update.settings.system_prompt || '',
+            temperature: update.settings.temperature ?? prev.settings.temperature,
+            maxTokens: update.settings.max_tokens ?? prev.settings.maxTokens,
+            topP: update.settings.top_p ?? prev.settings.topP,
+            topK: update.settings.top_k ?? prev.settings.topK,
+            frequencyPenalty: update.settings.frequency_penalty ?? prev.settings.frequencyPenalty,
+            presencePenalty: update.settings.presence_penalty ?? prev.settings.presencePenalty,
+            thinkingBudget: update.settings.thinking_budget ?? prev.settings.thinkingBudget,
+            reasoningEffort: update.settings.reasoning_effort ?? prev.settings.reasoningEffort,
+            streaming: update.settings.stream !== false,
+            stopSequences: update.settings.stop_sequences || prev.settings.stopSequences,
+          }
+        } : null);
+      }
+    }, { ignoreSource: 'parallel-popup' }); // Ignore our own updates
+
+    return unsubscribe;
+  }, [modelSettingsPopup]);
+
   // Load initial conversation if provided, or reset if null
   useEffect(() => {
     if (initialConversationId && initialConversationId !== supabaseConversationId) {
@@ -415,7 +464,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   }, [supabaseConversationId, onConversationChange]);
 
   // ==================== SUPABASE INTEGRATION ====================
-  
+
   // Load list of saved conversations
   const loadSavedConversations = async () => {
     setIsLoadingConversations(true);
@@ -432,7 +481,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Create or get conversation in Supabase
   const ensureSupabaseConversation = useCallback(async (): Promise<string | null> => {
     if (supabaseConversationId) return supabaseConversationId;
-    
+
     try {
       const conversation = await parallelAPI.createConversation(
         conversationTitle,
@@ -453,7 +502,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const saveTurnToSupabase = useCallback(async (turn: ConversationTurn): Promise<ParallelTurn | null> => {
     const convId = await ensureSupabaseConversation();
     if (!convId) return null;
-    
+
     setIsSaving(true);
     setSaveError(null);
     try {
@@ -472,7 +521,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           total_latency: r.meta?.total_latency,
         })),
       });
-      
+
       console.log('[ParallelChat] Saved turn to Supabase:', apiTurn.id);
       return apiTurn;
     } catch (error) {
@@ -487,7 +536,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Update response enabled state in Supabase
   const updateResponseInSupabase = useCallback(async (dbId: string | undefined, updates: { enabled?: boolean; content?: string }) => {
     if (!dbId) return;
-    
+
     try {
       await parallelAPI.updateResponse(dbId, updates);
       console.log('[ParallelChat] Updated response in Supabase:', dbId, updates);
@@ -500,7 +549,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Regenerate response in Supabase
   const regenerateResponseInSupabase = useCallback(async (dbId: string | undefined, newContent: string, newMeta?: Record<string, unknown>) => {
     if (!dbId) return;
-    
+
     try {
       await parallelAPI.regenerateResponse(dbId, newContent, newMeta);
       console.log('[ParallelChat] Regenerated response in Supabase:', dbId);
@@ -513,7 +562,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Delete turn from Supabase
   const deleteTurnFromSupabase = useCallback(async (dbId: string | undefined) => {
     if (!dbId) return;
-    
+
     try {
       await parallelAPI.deleteTurn(dbId);
       console.log('[ParallelChat] Deleted turn from Supabase:', dbId);
@@ -526,7 +575,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Delete response from Supabase
   const deleteResponseFromSupabase = useCallback(async (dbId: string | undefined) => {
     if (!dbId) return;
-    
+
     try {
       await parallelAPI.deleteResponse(dbId);
       console.log('[ParallelChat] Deleted response from Supabase:', dbId);
@@ -545,11 +594,11 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         setSaveError('Conversation not found');
         return false;
       }
-      
+
       setSupabaseConversationId(conversation.id);
       setSharedHistoryMode(conversation.shared_history_mode);
       setConversationTitle(conversation.title);
-      
+
       // Convert API turns to frontend format
       const turns: ConversationTurn[] = conversation.turns.map(turn => {
         const formatted = parallelAPI.formatTurnFromAPI(turn);
@@ -567,7 +616,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           })),
         };
       });
-      
+
       setConversationHistory(turns);
       clearResponses();
       setCurrentUserMessage('');
@@ -588,14 +637,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     try {
       await parallelAPI.deleteConversation(conversationId);
       setSavedConversations(prev => prev.filter(c => c.id !== conversationId));
-      
+
       // If we deleted the current conversation, reset state
       if (conversationId === supabaseConversationId) {
         setSupabaseConversationId(null);
         setConversationHistory([]);
         setConversationTitle('Parallel Chat');
       }
-      
+
       console.log('[ParallelChat] Deleted conversation:', conversationId);
     } catch (error) {
       console.error('[ParallelChat] Failed to delete conversation:', error);
@@ -606,9 +655,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Build shared history for API calls (only enabled responses)
   const buildSharedHistory = (): Message[] => {
     if (!sharedHistoryMode) return [];
-    
+
     const messages: Message[] = [];
-    
+
     for (const turn of conversationHistory) {
       messages.push({
         id: `user-${turn.id}`,
@@ -616,13 +665,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         content: turn.userMessage,
         timestamp: turn.timestamp,
       });
-      
+
       const enabledResponses = turn.responses.filter(r => r.enabled);
       if (enabledResponses.length > 0) {
-        const combinedContent = enabledResponses.map(r => 
+        const combinedContent = enabledResponses.map(r =>
           `[${r.model.display_name || r.model.name} (${r.model.provider})]: ${r.content}`
         ).join('\n\n---\n\n');
-        
+
         messages.push({
           id: `assistant-${turn.id}`,
           role: 'assistant',
@@ -631,19 +680,19 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         });
       }
     }
-    
+
     return messages;
   };
 
   // Enhanced system prompt for shared history mode
   const getEnhancedSystemPrompt = (): string => {
     if (!sharedHistoryMode) return systemPrompt || '';
-    
+
     const basePrompt = systemPrompt || '';
     const sharedHistoryNote = `
 [CONTEXT: This is a brainstorm/comparison session. Multiple AI models are responding to the same questions. Previous responses may contain answers from different models. Please consider the diversity of perspectives when responding.]
 `;
-    
+
     return basePrompt + sharedHistoryNote;
   };
 
@@ -652,12 +701,12 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   useEffect(() => {
     const allDone = responses.length > 0 && responses.every(r => !r.isStreaming);
     if (allDone && responses.some(r => r.content)) {
-      
+
       // If we're regenerating, update the existing response instead of creating new turn
       if (regeneratingInfo) {
         const { turnId, responseIndex, dbId } = regeneratingInfo;
         const newResponse = responses[0]; // Should only be one response when regenerating
-        
+
         if (newResponse && newResponse.content) {
           setConversationHistory(prev => prev.map(turn => {
             if (turn.id === turnId) {
@@ -672,18 +721,18 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             }
             return turn;
           }));
-          
+
           // Update in Supabase
           if (dbId) {
             regenerateResponseInSupabase(dbId, newResponse.content, newResponse.meta);
           }
         }
-        
+
         setRegeneratingInfo(null);
         clearResponses();
         return;
       }
-      
+
       // Normal flow: create new turn
       if (currentUserMessage) {
         const turn: ConversationTurn = {
@@ -698,15 +747,15 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             meta: r.meta,
           })),
         };
-        
+
         setConversationHistory(prev => {
           // Prevent duplicates - check if turn with same userMessage already exists
-          const alreadyExists = prev.some(t => 
-            t.userMessage === currentUserMessage && 
+          const alreadyExists = prev.some(t =>
+            t.userMessage === currentUserMessage &&
             Math.abs(new Date(t.timestamp).getTime() - Date.now()) < 5000 // within 5 seconds
           );
           if (alreadyExists) return prev;
-          
+
           // Save to Supabase asynchronously
           saveTurnToSupabase(turn).then(apiTurn => {
             if (apiTurn) {
@@ -726,41 +775,41 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               }));
             }
           });
-          
+
           return [...prev, turn];
         });
-        
+
         // Update conversation title from first message
         if (conversationHistory.length === 0) {
           const newTitle = currentUserMessage.slice(0, 50) + (currentUserMessage.length > 50 ? '...' : '');
           setConversationTitle(newTitle);
         }
-        
+
         // Clear current message and responses after saving to history
         setCurrentUserMessage('');
         clearResponses();
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps  
+    // eslint-disable-next-line react-hooks/exhaustive-deps  
   }, [responsesStreamingKey]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!inputValue.trim() || selectedModels.length === 0 || isLoading) return;
 
     const message = inputValue.trim();
     setInputValue('');
     setCurrentUserMessage(message);
     setSaveError(null);
-    
+
     const history = sharedHistoryMode ? buildSharedHistory() : undefined;
     const enhancedPrompt = getEnhancedSystemPrompt();
-    
-    const historyContext = history && history.length > 0 
+
+    const historyContext = history && history.length > 0
       ? '\n\n[PREVIOUS CONVERSATION]:\n' + history.map(m => `${m.role}: ${m.content}`).join('\n\n') + '\n\n[END PREVIOUS CONVERSATION]\n'
       : '';
-    
+
     // DEBUG: Log what's being sent
     if (historyContext) {
       console.log('[Send Message] Shared history context:');
@@ -768,11 +817,11 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       console.log(historyContext + message);
       console.log('------- CONTEXT END -------');
     }
-    
+
     await sendParallelMessages(
-      historyContext + message, 
-      selectedModels, 
-      generationConfig, 
+      historyContext + message,
+      selectedModels,
+      generationConfig,
       enhancedPrompt,
       perModelSettings
     );
@@ -804,10 +853,10 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           ...newResponses[responseIndex],
           enabled: newEnabled
         };
-        
+
         // Update in Supabase
         updateResponseInSupabase(newResponses[responseIndex].dbId, { enabled: newEnabled });
-        
+
         return { ...turn, responses: newResponses };
       }
       return turn;
@@ -829,11 +878,11 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Open model settings popup - load from backend API
   const openModelSettings = async (model: ModelInfo) => {
     setIsLoadingModelSettings(true);
-    
+
     // Get model-specific limits
     const modelMaxTokens = getModelMaxOutputTokens(model);
     const modelDefaultTokens = getModelDefaultTokens(model);
-    
+
     // First show popup with smart defaults
     setModelSettingsPopup({
       model,
@@ -851,7 +900,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         stopSequences: [],
       }
     });
-    
+
     // Then load real settings from backend
     try {
       const result = await apiClient.getModelSettings(model.provider, model.id);
@@ -862,7 +911,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             systemPrompt: result.settings.system_prompt || systemPrompt || '',
             temperature: result.settings.temperature ?? generationConfig.temperature ?? 0.7,
             maxTokens: Math.min(
-              result.settings.max_tokens ?? generationConfig.max_tokens ?? modelDefaultTokens, 
+              result.settings.max_tokens ?? generationConfig.max_tokens ?? modelDefaultTokens,
               modelMaxTokens
             ),
             topP: result.settings.top_p ?? generationConfig.top_p ?? 0.95,
@@ -887,14 +936,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Save model settings - save to backend API
   const saveModelSettings = async () => {
     if (!modelSettingsPopup) return;
-    
+
     const settings = modelSettingsPopup.settings;
     const model = modelSettingsPopup.model;
-    
+
     // Validate maxTokens against model limit
     const modelMaxTokens = getModelMaxOutputTokens(model);
     const validatedMaxTokens = Math.min(settings.maxTokens, modelMaxTokens);
-    
+
     // Convert to backend format
     const backendSettings: Partial<GenerationConfig> & { system_prompt?: string } = {
       temperature: settings.temperature,
@@ -909,22 +958,33 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       stop_sequences: settings.stopSequences.length > 0 ? settings.stopSequences : undefined,
       system_prompt: settings.systemPrompt || undefined,
     };
-    
+
     try {
       await apiClient.updateModelSettings(model.provider, model.id, backendSettings);
       console.log('[ParallelChat] Model settings saved to backend:', model.id);
-      
+
       // Also update local cache
       const modelKey = `${model.provider}-${model.id}`;
       setPerModelSettings(prev => ({
         ...prev,
         [modelKey]: { ...settings, maxTokens: validatedMaxTokens }
       }));
+
+      // Cache settings for sync
+      setCachedSettings(model.provider, model.id, backendSettings);
+
+      // Emit event for other components to sync
+      emitSettingsUpdate({
+        provider: model.provider,
+        modelId: model.id,
+        settings: backendSettings,
+        source: 'parallel-popup'
+      });
     } catch (error) {
       console.error('Failed to save model settings:', error);
       setSaveError('Failed to save model settings');
     }
-    
+
     setModelSettingsPopup(null);
   };
 
@@ -942,7 +1002,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         }
         return turn;
       }).filter(turn => turn.responses.length > 0); // Remove turn if no responses left
-      
+
       return updated;
     });
   };
@@ -953,7 +1013,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     setConversationHistory(prev => prev.map(turn => {
       if (turn.id === turnId) {
         const newResponses = [...turn.responses];
-        [newResponses[responseIndex - 1], newResponses[responseIndex]] = 
+        [newResponses[responseIndex - 1], newResponses[responseIndex]] =
           [newResponses[responseIndex], newResponses[responseIndex - 1]];
         return { ...turn, responses: newResponses };
       }
@@ -968,7 +1028,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     setConversationHistory(prev => prev.map(t => {
       if (t.id === turnId) {
         const newResponses = [...t.responses];
-        [newResponses[responseIndex], newResponses[responseIndex + 1]] = 
+        [newResponses[responseIndex], newResponses[responseIndex + 1]] =
           [newResponses[responseIndex + 1], newResponses[responseIndex]];
         return { ...t, responses: newResponses };
       }
@@ -982,7 +1042,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     if (turnIndex <= 0) return;
     setConversationHistory(prev => {
       const newHistory = [...prev];
-      [newHistory[turnIndex - 1], newHistory[turnIndex]] = 
+      [newHistory[turnIndex - 1], newHistory[turnIndex]] =
         [newHistory[turnIndex], newHistory[turnIndex - 1]];
       return newHistory;
     });
@@ -994,7 +1054,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     if (turnIndex < 0 || turnIndex >= conversationHistory.length - 1) return;
     setConversationHistory(prev => {
       const newHistory = [...prev];
-      [newHistory[turnIndex], newHistory[turnIndex + 1]] = 
+      [newHistory[turnIndex], newHistory[turnIndex + 1]] =
         [newHistory[turnIndex + 1], newHistory[turnIndex]];
       return newHistory;
     });
@@ -1018,9 +1078,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
 
   const handleDrop = (targetTurnId: string, targetIndex: number) => {
     if (!draggedResponse) return;
-    
+
     const { turnId: sourceTurnId, responseIndex: sourceIndex } = draggedResponse;
-    
+
     if (sourceTurnId === targetTurnId) {
       // Same turn - reorder within turn
       setConversationHistory(prev => prev.map(turn => {
@@ -1036,7 +1096,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       // Different turns - move response between turns
       setConversationHistory(prev => {
         let movedResponse: typeof prev[0]['responses'][0] | null = null;
-        
+
         // First, remove from source
         const afterRemove = prev.map(turn => {
           if (turn.id === sourceTurnId) {
@@ -1048,7 +1108,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           }
           return turn;
         }).filter(turn => turn.responses.length > 0);
-        
+
         // Then, add to target
         if (movedResponse) {
           return afterRemove.map(turn => {
@@ -1060,11 +1120,11 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             return turn;
           });
         }
-        
+
         return afterRemove;
       });
     }
-    
+
     setDraggedResponse(null);
     setDragOverTarget(null);
   };
@@ -1075,7 +1135,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   };
 
   // ==================== TOUCH DRAG & DROP (Mobile) ====================
-  
+
   // Register response element ref for hit testing
   const registerResponseRef = (turnId: string, idx: number, el: HTMLElement | null) => {
     const key = `${turnId}-${idx}`;
@@ -1087,7 +1147,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   };
 
   // Find which response element is under the touch point
-  const findDropTarget = (x: number, y: number): {turnId: string; responseIndex: number} | null => {
+  const findDropTarget = (x: number, y: number): { turnId: string; responseIndex: number } | null => {
     for (const [key, el] of responseRefs.current.entries()) {
       const rect = el.getBoundingClientRect();
       // Expand hit area slightly for easier dropping
@@ -1109,24 +1169,24 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const handleTouchStart = (e: React.TouchEvent, turnId: string, responseIndex: number) => {
     // Prevent text selection immediately
     e.preventDefault();
-    
+
     // Long press to start drag (300ms)
     const touch = e.touches[0];
     const startX = touch.clientX;
     const startY = touch.clientY;
     const element = e.currentTarget as HTMLElement;
-    
+
     // Store initial position for movement detection
     (element as any)._startX = startX;
     (element as any)._startY = startY;
-    
+
     const longPressTimer = setTimeout(() => {
       // Vibrate if supported
       if (navigator.vibrate) navigator.vibrate(50);
-      
+
       // Disable text selection on body
       document.body.classList.add('touch-dragging');
-      
+
       setTouchDragging({
         turnId,
         responseIndex,
@@ -1136,12 +1196,12 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         currentY: startY,
         element
       });
-      
+
       // Prevent scrolling while dragging
       document.body.style.overflow = 'hidden';
       document.body.style.touchAction = 'none';
     }, 300);
-    
+
     // Store timer to cancel on touchend/touchmove (short distance)
     (element as any)._longPressTimer = longPressTimer;
   };
@@ -1157,7 +1217,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
         const startX = (element as any)._startX || touch.clientX;
         const startY = (element as any)._startY || touch.clientY;
         const dist = Math.sqrt(
-          Math.pow(touch.clientX - startX, 2) + 
+          Math.pow(touch.clientX - startX, 2) +
           Math.pow(touch.clientY - startY, 2)
         );
         if (dist > 10) {
@@ -1167,16 +1227,16 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       }
       return;
     }
-    
+
     e.preventDefault();
     const touch = e.touches[0];
-    
+
     setTouchDragging(prev => prev ? {
       ...prev,
       currentX: touch.clientX,
       currentY: touch.clientY
     } : null);
-    
+
     // Find drop target
     const target = findDropTarget(touch.clientX, touch.clientY);
     if (target && (target.turnId !== touchDragging.turnId || target.responseIndex !== touchDragging.responseIndex)) {
@@ -1195,19 +1255,19 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       clearTimeout(timer);
       (element as any)._longPressTimer = null;
     }
-    
+
     if (!touchDragging) return;
-    
+
     // Restore scrolling and text selection
     document.body.style.overflow = '';
     document.body.style.touchAction = '';
     document.body.classList.remove('touch-dragging');
-    
+
     // Perform drop if we have a target
     if (touchDropTarget) {
       handleDrop(touchDropTarget.turnId, touchDropTarget.responseIndex);
     }
-    
+
     setTouchDragging(null);
     setTouchDropTarget(null);
   };
@@ -1216,7 +1276,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const handleTouchCancel = () => {
     const timer = (document as any)._longPressTimer;
     if (timer) clearTimeout(timer);
-    
+
     document.body.style.overflow = '';
     document.body.style.touchAction = '';
     document.body.classList.remove('touch-dragging');
@@ -1228,26 +1288,26 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const regenerateResponse = async (turnId: string, responseIndex: number) => {
     const turn = conversationHistory.find(t => t.id === turnId);
     if (!turn || isLoading) return;
-    
+
     const responseToRegenerate = turn.responses[responseIndex];
     const modelToRegenerate = responseToRegenerate.model;
     const enhancedPrompt = getEnhancedSystemPrompt();
-    
+
     // Find history up to this turn (exclude this turn)
     const turnIndex = conversationHistory.findIndex(t => t.id === turnId);
-    
+
     // Build history context only from turns before this one
     const historyBeforeTurn = conversationHistory.slice(0, turnIndex);
-    const historyContext = historyBeforeTurn.length > 0 
-      ? '\n\n[PREVIOUS CONVERSATION]:\n' + historyBeforeTurn.map(t => 
-          `user: ${t.userMessage}\n\nassistant: ${t.responses.filter(r => r.enabled).map(r => r.content).join('\n---\n')}`
-        ).join('\n\n') + '\n\n[END PREVIOUS CONVERSATION]\n'
+    const historyContext = historyBeforeTurn.length > 0
+      ? '\n\n[PREVIOUS CONVERSATION]:\n' + historyBeforeTurn.map(t =>
+        `user: ${t.userMessage}\n\nassistant: ${t.responses.filter(r => r.enabled).map(r => r.content).join('\n---\n')}`
+      ).join('\n\n') + '\n\n[END PREVIOUS CONVERSATION]\n'
       : '';
-    
+
     // Set regenerating info BEFORE sending - this tells the useEffect to update instead of create new
     // Include dbId for Supabase update
     setRegeneratingInfo({ turnId, responseIndex, dbId: responseToRegenerate.dbId });
-    
+
     // Mark the response as regenerating (visual feedback)
     setConversationHistory(prev => prev.map(t => {
       if (t.id === turnId) {
@@ -1260,12 +1320,12 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       }
       return t;
     }));
-    
+
     // Send to single model
     await sendParallelMessages(
-      historyContext + turn.userMessage, 
-      [modelToRegenerate], 
-      generationConfig, 
+      historyContext + turn.userMessage,
+      [modelToRegenerate],
+      generationConfig,
       enhancedPrompt,
       perModelSettings
     );
@@ -1296,7 +1356,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     if (!turn || !editingMessage.trim() || isLoading) return;
 
     const newMessage = editingMessage.trim();
-    
+
     // Update the message in history
     setConversationHistory(prev => prev.map(t => {
       if (t.id === turnId) {
@@ -1306,9 +1366,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     }));
 
     // TODO: Update in Supabase if needed
-    
+
     cancelEditing();
-    
+
     // Optionally regenerate all responses for this turn with the new message
     // This would require sending to all models again
     // For now, just update the message - user can manually regenerate
@@ -1322,21 +1382,21 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     const newMessage = editingMessage.trim();
     const modelsToRegenerate = turn.responses.map(r => r.model);
     const enhancedPrompt = getEnhancedSystemPrompt();
-    
+
     // Find history up to this turn (exclude this turn)
     const turnIndex = conversationHistory.findIndex(t => t.id === turnId);
     const historyBeforeTurn = conversationHistory.slice(0, turnIndex);
-    const historyContext = historyBeforeTurn.length > 0 
-      ? '\n\n[PREVIOUS CONVERSATION]:\n' + historyBeforeTurn.map(t => 
-          `user: ${t.userMessage}\n\nassistant: ${t.responses.filter(r => r.enabled).map(r => r.content).join('\n---\n')}`
-        ).join('\n\n') + '\n\n[END PREVIOUS CONVERSATION]\n'
+    const historyContext = historyBeforeTurn.length > 0
+      ? '\n\n[PREVIOUS CONVERSATION]:\n' + historyBeforeTurn.map(t =>
+        `user: ${t.userMessage}\n\nassistant: ${t.responses.filter(r => r.enabled).map(r => r.content).join('\n---\n')}`
+      ).join('\n\n') + '\n\n[END PREVIOUS CONVERSATION]\n'
       : '';
-    
+
     // Update the message
     setConversationHistory(prev => prev.map(t => {
       if (t.id === turnId) {
-        return { 
-          ...t, 
+        return {
+          ...t,
           userMessage: newMessage,
           responses: t.responses.map(r => ({
             ...r,
@@ -1348,22 +1408,22 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     }));
 
     cancelEditing();
-    
+
     // We need custom logic here - regenerate all responses in the turn
     // For simplicity, we'll store the turn info and handle in useEffect
     // Actually, let's just create a new "turn" after this one and delete this one
     // OR we can use the existing regenerate flow with a special flag
-    
+
     // Simple approach: Clear this turn's responses and send new request
     setCurrentUserMessage(newMessage);
-    
+
     // Remove this turn temporarily and add responses as they come
     setConversationHistory(prev => prev.filter(t => t.id !== turnId));
-    
+
     await sendParallelMessages(
-      historyContext + newMessage, 
-      modelsToRegenerate, 
-      generationConfig, 
+      historyContext + newMessage,
+      modelsToRegenerate,
+      generationConfig,
       enhancedPrompt,
       perModelSettings
     );
@@ -1378,77 +1438,77 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   const executeSmartRegenerate = async (customContext?: string) => {
     if (!smartRegeneratePopup) return;
     const { turnId, responseIndex } = smartRegeneratePopup;
-    
+
     const turn = conversationHistory.find(t => t.id === turnId);
     if (!turn || isLoading) return;
-    
+
     const responseToRegenerate = turn.responses[responseIndex];
     const modelToRegenerate = responseToRegenerate.model;
     const enhancedPrompt = getEnhancedSystemPrompt();
-    
+
     // Build FULL context from ALL enabled responses across ALL turns
     const fullContext = conversationHistory.map(t => {
       const enabledResponses = t.responses.filter((r, idx) => {
         if (t.id === turnId && idx === responseIndex) return false;
         return r.enabled;
       });
-      
+
       if (enabledResponses.length === 0 && t.id !== turnId) return null;
-      
-      const responsesText = enabledResponses.map(r => 
+
+      const responsesText = enabledResponses.map(r =>
         `[${r.model.display_name || r.model.name}]: ${r.content}`
       ).join('\n\n---\n\n');
-      
+
       return {
         userMessage: t.userMessage,
         responses: responsesText
       };
     }).filter(Boolean);
-    
+
     let contextString = fullContext.length > 0
-      ? '\n\n[FULL CONVERSATION CONTEXT - All enabled responses]:\n' + 
-        fullContext.map(c => `USER: ${c!.userMessage}\n\nRESPONSES:\n${c!.responses}`).join('\n\n=====\n\n') +
-        '\n\n[END CONTEXT]\n'
+      ? '\n\n[FULL CONVERSATION CONTEXT - All enabled responses]:\n' +
+      fullContext.map(c => `USER: ${c!.userMessage}\n\nRESPONSES:\n${c!.responses}`).join('\n\n=====\n\n') +
+      '\n\n[END CONTEXT]\n'
       : '';
-    
+
     // Add custom context if provided
     if (customContext && customContext.trim()) {
       contextString += `\n\n[ADDITIONAL INSTRUCTIONS]:\n${customContext.trim()}\n\n`;
     }
-    
+
     contextString += 'Now respond to this specific message:';
-    
+
     // DEBUG: Log what's being sent to the model
     console.log('[Smart Regenerate] Full context being sent:');
     console.log('------- CONTEXT START -------');
     console.log(contextString + turn.userMessage);
     console.log('------- CONTEXT END -------');
     console.log('[Smart Regenerate] Enabled responses per turn:', fullContext.length);
-    
+
     // Set regenerating info
     setRegeneratingInfo({ turnId, responseIndex, dbId: responseToRegenerate.dbId });
-    
+
     // Mark as regenerating
     setConversationHistory(prev => prev.map(t => {
       if (t.id === turnId) {
         const newResponses = [...t.responses];
         newResponses[responseIndex] = {
           ...newResponses[responseIndex],
-          content: customContext?.trim() 
-            ? '✨ Smart regenerating with custom instructions...' 
+          content: customContext?.trim()
+            ? '✨ Smart regenerating with custom instructions...'
             : '✨ Smart regenerating with full context...',
         };
         return { ...t, responses: newResponses };
       }
       return t;
     }));
-    
+
     setSmartRegeneratePopup(null);
-    
+
     await sendParallelMessages(
-      contextString + turn.userMessage, 
-      [modelToRegenerate], 
-      generationConfig, 
+      contextString + turn.userMessage,
+      [modelToRegenerate],
+      generationConfig,
       enhancedPrompt,
       perModelSettings
     );
@@ -1479,7 +1539,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               {sharedHistoryMode ? 'Brainstorm Mode' : 'Parallel Model Comparison'}
             </h2>
             <p className="text-xs text-muted-foreground">
-              {sharedHistoryMode 
+              {sharedHistoryMode
                 ? 'Shared memory across all models'
                 : 'Compare responses side-by-side'}
             </p>
@@ -1489,7 +1549,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             {sharedHistoryMode ? 'Brainstorm' : 'Compare'}
           </span>
         </div>
-        
+
         <div className="flex items-center gap-1 sm:gap-2">
           {/* Conversation selector dropdown */}
           <div className="relative" ref={conversationListRef}>
@@ -1511,7 +1571,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 showConversationList && "rotate-180"
               )} />
             </button>
-            
+
             {/* Dropdown menu */}
             {showConversationList && (
               <div className="absolute right-0 top-full mt-1 w-72 bg-popover text-popover-foreground border border-border rounded-lg shadow-lg z-50 max-h-80 overflow-hidden flex flex-col">
@@ -1526,7 +1586,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                     New
                   </button>
                 </div>
-                
+
                 {/* List */}
                 <div className="overflow-y-auto flex-1">
                   {isLoadingConversations ? (
@@ -1546,7 +1606,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                           conv.id === supabaseConversationId && "bg-secondary"
                         )}
                       >
-                        <div 
+                        <div
                           className="flex-1 min-w-0"
                           onClick={() => loadConversation(conv.id)}
                         >
@@ -1566,7 +1626,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                             <span>{new Date(conv.updated_at).toLocaleDateString()}</span>
                           </div>
                         </div>
-                        
+
                         {/* Delete button */}
                         <button
                           onClick={(e) => {
@@ -1586,23 +1646,23 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               </div>
             )}
           </div>
-          
+
           <button
             onClick={() => setSharedHistoryMode(!sharedHistoryMode)}
             className={cn(
               "flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all border",
-              sharedHistoryMode 
+              sharedHistoryMode
                 ? "bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/50 shadow-sm shadow-green-500/20"
                 : "bg-muted text-muted-foreground hover:bg-muted/80 border-border hover:border-green-500/30"
             )}
-            title={sharedHistoryMode 
-              ? "Shared memory ON: Models can see each other's responses" 
+            title={sharedHistoryMode
+              ? "Shared memory ON: Models can see each other's responses"
               : "Click to enable shared memory - models will see previous responses"}
           >
             {sharedHistoryMode ? <GitMerge size={14} /> : <GitBranch size={14} />}
             <span className="hidden sm:inline">{sharedHistoryMode ? '🧠 Shared ON' : '💡 Enable Shared'}</span>
           </button>
-          
+
           {onClose && (
             <button
               onClick={onClose}
@@ -1631,7 +1691,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
             <>
               <AlertCircle size={12} className="flex-shrink-0" />
               <span className="truncate">{saveError}</span>
-              <button 
+              <button
                 onClick={() => setSaveError(null)}
                 className="ml-auto hover:text-foreground flex-shrink-0"
               >
@@ -1690,9 +1750,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       )}
 
       {/* Main chat area - scrollable with improved Mac scrolling */}
-      <div 
+      <div
         className="flex-1 overflow-y-auto min-h-0 scroll-container"
-        style={{ 
+        style={{
           WebkitOverflowScrolling: 'touch',
           overscrollBehavior: 'contain'
         }}
@@ -1715,11 +1775,11 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 {sharedHistoryMode ? 'Brainstorm Mode' : 'Compare AI Models'}
               </h3>
               <p className="text-muted-foreground mb-6">
-                {sharedHistoryMode 
+                {sharedHistoryMode
                   ? 'All models share conversation history for collaborative problem-solving.'
                   : 'Select models below and send a message to compare responses.'}
               </p>
-              
+
               {/* Quick load recent conversation */}
               {savedConversations.length > 0 && (
                 <div className="mt-4">
@@ -1766,7 +1826,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                     </button>
                   )}
                 </div>
-                
+
                 {/* User message bubble - ChatGPT style with inline edit */}
                 <div className="flex justify-end">
                   <div className="flex items-start gap-2 max-w-[80%] relative group/user">
@@ -1791,7 +1851,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                         </button>
                       )}
                     </div>
-                    
+
                     {/* Message content - either text or edit textarea */}
                     {editingTurnId === turn.id ? (
                       <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground rounded-2xl rounded-br-md px-3 py-2 w-full">
@@ -1837,24 +1897,24 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                         <p className="text-[15px] whitespace-pre-wrap break-words leading-relaxed">{turn.userMessage}</p>
                       </div>
                     )}
-                    
+
                     <div className="w-9 h-9 rounded-full bg-muted-foreground/60 dark:bg-zinc-600 flex items-center justify-center flex-shrink-0 shadow-sm">
                       <User size={16} className="text-white dark:text-zinc-200" />
                     </div>
                   </div>
                 </div>
-                
+
                 {/* Model responses - shown as a grid with interactive controls */}
                 <div className="flex justify-start">
                   <div className="max-w-full w-full">
                     <div className={cn(
                       "grid gap-3 items-start", // items-start prevents stretching
-                      turn.responses.length <= 2 ? "grid-cols-1 md:grid-cols-2" 
+                      turn.responses.length <= 2 ? "grid-cols-1 md:grid-cols-2"
                         : turn.responses.length === 3 ? "grid-cols-1 md:grid-cols-3"
-                        : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
+                          : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
                     )}>
                       {turn.responses.map((resp, idx) => (
-                        <div 
+                        <div
                           key={idx}
                           ref={(el) => registerResponseRef(turn.id, idx, el)}
                           draggable={typeof window !== 'undefined' && window.innerWidth >= 768}
@@ -1874,12 +1934,12 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                             // Cards size based on content, earlier turns get max-height
                             turnIndex !== conversationHistory.length - 1 && "max-h-[200px]",
                             "md:cursor-grab md:active:cursor-grabbing",
-                            resp.enabled 
+                            resp.enabled
                               ? cn(
-                                  providerColors[resp.model.provider] || providerColors.ollama,
-                                  providerGlowColors[resp.model.provider] || providerGlowColors.ollama,
-                                  "hover:shadow-xl hover:scale-[1.01]"
-                                )
+                                providerColors[resp.model.provider] || providerColors.ollama,
+                                providerGlowColors[resp.model.provider] || providerGlowColors.ollama,
+                                "hover:shadow-xl hover:scale-[1.01]"
+                              )
                               : "bg-muted/20 border-border/30 opacity-50 grayscale-[30%]",
                             // Desktop drag states
                             draggedResponse?.turnId === turn.id && draggedResponse?.responseIndex === idx && "opacity-50 scale-95",
@@ -1918,7 +1978,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               </button>
                             )}
                           </div>
-                          
+
                           {/* Response header with model name and action buttons */}
                           <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-2 pl-6 sm:pl-0">
@@ -1949,7 +2009,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                 <Settings size={14} />
                               </button>
                             </div>
-                            
+
                             {/* Action buttons - modern pill style */}
                             <div className="flex items-center gap-0.5 bg-black/5 dark:bg-white/5 rounded-full p-0.5">
                               {/* Expand button */}
@@ -1965,7 +2025,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               >
                                 <Maximize2 size={15} />
                               </button>
-                              
+
                               {/* Copy button */}
                               <button
                                 onClick={() => copyResponse(resp.content)}
@@ -1974,13 +2034,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               >
                                 <Copy size={15} />
                               </button>
-                              
+
                               {/* Toggle visibility button */}
                               <button
                                 onClick={() => toggleResponseEnabled(turn.id, idx)}
                                 className={cn(
                                   "p-2 rounded-full transition-all touch-manipulation",
-                                  resp.enabled 
+                                  resp.enabled
                                     ? "hover:bg-white/10 text-foreground/60 hover:text-foreground"
                                     : "bg-emerald-500/20 text-emerald-400"
                                 )}
@@ -1988,7 +2048,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               >
                                 {resp.enabled ? <EyeOff size={15} /> : <Eye size={15} />}
                               </button>
-                              
+
                               {/* Regenerate button */}
                               <button
                                 onClick={() => regenerateResponse(turn.id, idx)}
@@ -1998,7 +2058,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               >
                                 <RefreshCw size={15} />
                               </button>
-                              
+
                               {/* Smart Regenerate */}
                               <div className="relative">
                                 <button
@@ -2009,10 +2069,10 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                 >
                                   <Sparkles size={16} />
                                 </button>
-                                
+
                                 {/* Smart Regenerate Popup */}
                                 {smartRegeneratePopup?.turnId === turn.id && smartRegeneratePopup?.responseIndex === idx && (
-                                  <div 
+                                  <div
                                     data-smart-regenerate-popup
                                     className="fixed sm:absolute inset-4 sm:inset-auto sm:right-0 sm:top-full sm:mt-1 sm:w-72 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl z-50 p-3 flex flex-col"
                                     onClick={(e) => e.stopPropagation()}
@@ -2022,7 +2082,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                         <Sparkles size={12} className="text-purple-500" />
                                         Smart Regenerate
                                       </span>
-                                      <button 
+                                      <button
                                         onClick={() => setSmartRegeneratePopup(null)}
                                         className="p-1 rounded hover:bg-muted text-muted-foreground"
                                       >
@@ -2034,7 +2094,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                     </p>
                                     <textarea
                                       value={smartRegeneratePopup.customContext}
-                                      onChange={(e) => setSmartRegeneratePopup(prev => prev ? {...prev, customContext: e.target.value} : null)}
+                                      onChange={(e) => setSmartRegeneratePopup(prev => prev ? { ...prev, customContext: e.target.value } : null)}
                                       onKeyDown={(e) => {
                                         if (e.key === 'Escape') setSmartRegeneratePopup(null);
                                         if (e.key === 'Enter' && e.ctrlKey) executeSmartRegenerate(smartRegeneratePopup.customContext);
@@ -2063,7 +2123,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                                   </div>
                                 )}
                               </div>
-                              
+
                               {/* Delete response button */}
                               <button
                                 onClick={() => deleteResponse(turn.id, idx)}
@@ -2074,17 +2134,17 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               </button>
                             </div>
                           </div>
-                          
+
                           {/* Thinking/Reasoning section - collapsible */}
                           {(resp.thinkingContent || (resp.meta?.thought_tokens && resp.meta.thought_tokens > 0)) && (
-                            <ThinkingSection 
-                              content={resp.thinkingContent || ''} 
+                            <ThinkingSection
+                              content={resp.thinkingContent || ''}
                               tokens={resp.meta?.thought_tokens}
                             />
                           )}
-                          
+
                           {/* Response content with Markdown - click to expand, last turn fully visible, others scrollable */}
-                          <div 
+                          <div
                             onClick={() => setExpandedResponse({
                               turnId: turn.id,
                               responseIndex: idx,
@@ -2097,14 +2157,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               // Only add scroll to earlier turns
                               turnIndex !== conversationHistory.length - 1 && "overflow-y-auto"
                             )}
-                            style={{ 
+                            style={{
                               overscrollBehavior: 'contain',
                               WebkitOverflowScrolling: 'touch'
                             }}
                           >
                             <MarkdownContent content={resp.content} />
                           </div>
-                          
+
                           {/* Meta info footer - modern pill style */}
                           {resp.meta && (
                             <div className="flex items-center gap-2 mt-3 pt-2 border-t border-white/5 text-[11px] text-foreground/40 flex-shrink-0">
@@ -2129,7 +2189,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 </div>
               </div>
             ))}
-            
+
             {/* Current turn - streaming responses */}
             {responses.length > 0 && (
               <div className="space-y-3">
@@ -2144,7 +2204,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                     </div>
                   </div>
                 </div>
-                
+
                 {/* Current model responses grid */}
                 <div className="flex justify-start">
                   <div className="max-w-full w-full">
@@ -2153,7 +2213,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 </div>
               </div>
             )}
-            
+
             <div ref={chatEndRef} />
           </div>
         )}
@@ -2196,7 +2256,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   <Plus size={18} />
                 </Button>
               )}
-              
+
               {isLoading ? (
                 <Button
                   type="button"
@@ -2215,8 +2275,8 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   size="sm"
                   className={cn(
                     "h-10 w-10 p-0 rounded-full transition-all duration-300",
-                    canSend 
-                      ? "bg-gradient-to-br from-violet-500 to-purple-600 hover:from-violet-400 hover:to-purple-500 text-white shadow-lg shadow-violet-500/25" 
+                    canSend
+                      ? "bg-gradient-to-br from-violet-500 to-purple-600 hover:from-violet-400 hover:to-purple-500 text-white shadow-lg shadow-violet-500/25"
                       : "text-foreground/30"
                   )}
                 >
@@ -2272,10 +2332,10 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           </div>
         </div>
       </div>
-      
+
       {/* Expanded Response Modal - Modern fullscreen */}
       {expandedResponse && (
-        <div 
+        <div
           className="fixed inset-0 z-[200] bg-background/98 backdrop-blur-xl flex flex-col animate-in fade-in zoom-in-95 duration-300"
           onClick={() => setExpandedResponse(null)}
         >
@@ -2319,25 +2379,25 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               </button>
             </div>
           </div>
-          
+
           {/* Content - scrollable with Markdown */}
-          <div 
+          <div
             className="flex-1 overflow-y-auto p-4 sm:p-8 scroll-container"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="max-w-4xl mx-auto">
-              <MarkdownContent 
-                content={expandedResponse.content} 
+              <MarkdownContent
+                content={expandedResponse.content}
                 className="text-[16px] leading-[1.9]"
               />
             </div>
           </div>
         </div>
       )}
-      
+
       {/* Touch drag ghost overlay */}
       {touchDragging && (
-        <div 
+        <div
           ref={touchGhostRef}
           className="fixed pointer-events-none z-[100] bg-gradient-to-br from-violet-500/30 to-purple-500/30 border border-violet-400/50 rounded-xl px-4 py-3 shadow-2xl backdrop-blur-md"
           style={{
@@ -2353,14 +2413,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           </div>
         </div>
       )}
-      
+
       {/* Model Settings Popup */}
       {modelSettingsPopup && (
-        <div 
+        <div
           className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
           onClick={() => setModelSettingsPopup(null)}
         >
-          <div 
+          <div
             className="bg-background border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
@@ -2393,16 +2453,16 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 <X size={18} />
               </button>
             </div>
-            
+
             {/* Quick Presets */}
             <div className="flex items-center gap-2 p-3 border-b border-border bg-secondary/20 flex-shrink-0">
               <span className="text-xs text-foreground/50">Quick:</span>
               <button
                 onClick={() => setModelSettingsPopup(prev => prev ? {
                   ...prev,
-                  settings: { 
-                    ...prev.settings, 
-                    temperature: 1.0, 
+                  settings: {
+                    ...prev.settings,
+                    temperature: 1.0,
                     maxTokens: 32768,
                     topP: 1.0,
                     frequencyPenalty: 0,
@@ -2418,9 +2478,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               <button
                 onClick={() => setModelSettingsPopup(prev => prev ? {
                   ...prev,
-                  settings: { 
-                    ...prev.settings, 
-                    temperature: 0.7, 
+                  settings: {
+                    ...prev.settings,
+                    temperature: 0.7,
                     maxTokens: 8192,
                     topP: 0.95,
                     frequencyPenalty: 0,
@@ -2436,9 +2496,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
               <button
                 onClick={() => setModelSettingsPopup(prev => prev ? {
                   ...prev,
-                  settings: { 
-                    ...prev.settings, 
-                    temperature: 0.1, 
+                  settings: {
+                    ...prev.settings,
+                    temperature: 0.1,
                     maxTokens: 1024,
                     topP: 0.5,
                     frequencyPenalty: 0.5,
@@ -2452,7 +2512,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 ❄️ MIN
               </button>
             </div>
-            
+
             {/* Content - scrollable */}
             <div className="p-4 space-y-5 overflow-y-auto flex-1">
               {/* System Prompt */}
@@ -2473,7 +2533,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   Leave empty to use global system prompt
                 </p>
               </div>
-              
+
               {/* Temperature */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -2499,7 +2559,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   <span>Creative (2)</span>
                 </div>
               </div>
-              
+
               {/* Max Tokens */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -2572,7 +2632,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   </button>
                 </div>
               </div>
-              
+
               {/* Top P */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -2595,7 +2655,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 />
                 <p className="text-[10px] text-foreground/40 mt-1">Nucleus sampling - controls diversity</p>
               </div>
-              
+
               {/* Frequency & Presence Penalty */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -2639,7 +2699,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   />
                 </div>
               </div>
-              
+
               {/* Provider-specific: Reasoning Effort (OpenAI) */}
               {modelSettingsPopup.model.provider === 'openai' && (
                 <div>
@@ -2649,9 +2709,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                       value={modelSettingsPopup.settings.reasoningEffort || ''}
                       onChange={(e) => setModelSettingsPopup(prev => prev ? {
                         ...prev,
-                        settings: { 
-                          ...prev.settings, 
-                          reasoningEffort: (e.target.value as 'minimal' | 'medium' | 'high') || undefined 
+                        settings: {
+                          ...prev.settings,
+                          reasoningEffort: (e.target.value as 'minimal' | 'medium' | 'high') || undefined
                         }
                       } : null)}
                       className="text-xs bg-secondary border border-border rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -2665,17 +2725,17 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   <p className="text-[10px] text-foreground/40">Controls reasoning depth for GPT-5/o-series</p>
                 </div>
               )}
-              
+
               {/* Provider-specific: Thinking Budget (Gemini/DeepSeek) */}
               {(modelSettingsPopup.model.provider === 'gemini' || modelSettingsPopup.model.provider === 'deepseek') && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-sm font-medium text-foreground/80">Thinking Budget</label>
                     <span className="text-xs text-foreground/60 font-mono bg-secondary/50 px-2 py-0.5 rounded">
-                      {modelSettingsPopup.settings.thinkingBudget === undefined || modelSettingsPopup.settings.thinkingBudget === -1 
-                        ? 'auto' 
-                        : modelSettingsPopup.settings.thinkingBudget === 0 
-                          ? 'off' 
+                      {modelSettingsPopup.settings.thinkingBudget === undefined || modelSettingsPopup.settings.thinkingBudget === -1
+                        ? 'auto'
+                        : modelSettingsPopup.settings.thinkingBudget === 0
+                          ? 'off'
                           : modelSettingsPopup.settings.thinkingBudget.toLocaleString()}
                     </span>
                   </div>
@@ -2723,7 +2783,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   <p className="text-[10px] text-foreground/40 mt-1">-1 = dynamic, 0 = off, &gt;0 = fixed thinking tokens</p>
                 </div>
               )}
-              
+
               {/* Streaming Toggle */}
               <div className="flex items-center justify-between py-2">
                 <div>
@@ -2737,20 +2797,20 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   } : null)}
                   className={cn(
                     "relative w-11 h-6 rounded-full transition-colors",
-                    modelSettingsPopup.settings.streaming 
-                      ? "bg-primary" 
+                    modelSettingsPopup.settings.streaming
+                      ? "bg-primary"
                       : "bg-secondary"
                   )}
                 >
                   <span className={cn(
                     "absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform",
-                    modelSettingsPopup.settings.streaming 
-                      ? "translate-x-6" 
+                    modelSettingsPopup.settings.streaming
+                      ? "translate-x-6"
                       : "translate-x-1"
                   )} />
                 </button>
               </div>
-              
+
               {/* Stop Sequences */}
               <div>
                 <label className="block text-sm font-medium text-foreground/80 mb-2">
@@ -2760,9 +2820,9 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   value={modelSettingsPopup.settings.stopSequences.join('\n')}
                   onChange={(e) => setModelSettingsPopup(prev => prev ? {
                     ...prev,
-                    settings: { 
-                      ...prev.settings, 
-                      stopSequences: e.target.value.split('\n').filter(s => s.trim()) 
+                    settings: {
+                      ...prev.settings,
+                      stopSequences: e.target.value.split('\n').filter(s => s.trim())
                     }
                   } : null)}
                   placeholder="One sequence per line (optional)&#10;e.g.&#10;---&#10;END"
@@ -2772,7 +2832,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                   Tokens where the API will stop generating (each line = one sequence)
                 </p>
               </div>
-              
+
               {/* Model Info */}
               <div className="mt-4 pt-3 border-t border-border/50">
                 <div className="flex items-center justify-between text-[10px] text-foreground/40">
@@ -2789,7 +2849,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                 </div>
               </div>
             </div>
-            
+
             {/* Footer */}
             <div className="flex items-center justify-end gap-2 p-4 border-t border-border bg-secondary/30 flex-shrink-0">
               <button

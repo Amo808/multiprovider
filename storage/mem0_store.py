@@ -9,13 +9,19 @@ Features:
 - Automatic fact extraction from conversations
 - Semantic search across memories
 - Per-user memory isolation
-- Local storage with Qdrant or in-memory vector DB
+- Storage options: Supabase PGVector, Qdrant, or in-memory
 - No cloud API required - fully self-hosted
 
 Usage:
     Set MEM0_ENABLED=1 to enable Mem0 integration.
-    Optionally set QDRANT_URL for persistent vector storage.
-    Uses OpenAI API key from secrets for embeddings (or configure local embeddings).
+    
+    For Supabase PGVector (recommended):
+        Set MEM0_DATABASE_URL=postgresql://postgres:PASSWORD@db.xxx.supabase.co:5432/postgres
+    
+    For Qdrant:
+        Set QDRANT_URL for persistent vector storage.
+    
+    Uses OpenAI API key from secrets for embeddings.
 """
 
 import os
@@ -48,20 +54,28 @@ class Mem0MemoryStore:
     - Semantic search across all memories
     - Long-term user preferences and context
     - Fully local - no cloud API needed
+    
+    Storage backends (priority order):
+    1. Supabase PGVector (MEM0_DATABASE_URL)
+    2. Qdrant (QDRANT_URL)
+    3. In-memory (default, no persistence)
     """
     
     def __init__(self):
         self.enabled = os.getenv('MEM0_ENABLED', '0') == '1' and MEM0_AVAILABLE
         self.client = None
+        self.backend = "none"
         
         if self.enabled:
             try:
                 # Configure Mem0 Open Source
                 config = self._build_config()
                 self.client = Memory.from_config(config)
-                logger.info("✅ Mem0 Open Source memory store initialized successfully")
+                logger.info(f"✅ Mem0 memory store initialized with {self.backend} backend")
             except Exception as e:
                 logger.error(f"Failed to initialize Mem0: {e}")
+                import traceback
+                traceback.print_exc()
                 self.enabled = False
         else:
             if not MEM0_AVAILABLE:
@@ -73,6 +87,11 @@ class Mem0MemoryStore:
         """Build Mem0 configuration for Open Source version."""
         # Get API keys from environment
         openai_key = os.getenv('OPENAI_API_KEY', '')
+        
+        # Supabase/PGVector connection
+        database_url = os.getenv('MEM0_DATABASE_URL', '') or os.getenv('DATABASE_URL', '')
+        
+        # Qdrant fallback
         qdrant_url = os.getenv('QDRANT_URL', '')
         qdrant_api_key = os.getenv('QDRANT_API_KEY', '')
         
@@ -90,14 +109,30 @@ class Mem0MemoryStore:
                 "provider": "openai",
                 "config": {
                     "model": "text-embedding-3-small",
+                    "embedding_dims": 1536,
                     "api_key": openai_key,
                 }
             },
             "version": "v1.1"
         }
         
-        # Vector store configuration
-        if qdrant_url:
+        # Vector store configuration - priority: Supabase > Qdrant > In-memory
+        if database_url:
+            # Use Supabase PGVector for persistent storage
+            config["vector_store"] = {
+                "provider": "pgvector",
+                "config": {
+                    "connection_string": database_url,
+                    "collection_name": os.getenv('MEM0_COLLECTION_NAME', 'mem0_memories'),
+                    "embedding_model_dims": 1536,
+                    "hnsw": True,  # Use HNSW index for fast search
+                    "sslmode": "require",  # Required for Supabase
+                }
+            }
+            self.backend = "supabase-pgvector"
+            logger.info(f"🐘 Mem0 configured with Supabase PGVector")
+            
+        elif qdrant_url:
             # Use Qdrant for persistent storage
             config["vector_store"] = {
                 "provider": "qdrant",
@@ -107,11 +142,15 @@ class Mem0MemoryStore:
                     "collection_name": "mem0_memories",
                 }
             }
-            logger.info(f"Mem0 using Qdrant at {qdrant_url}")
+            self.backend = "qdrant"
+            logger.info(f"📦 Mem0 configured with Qdrant at {qdrant_url}")
+            
         else:
             # Use in-memory Chroma (default, no persistence)
             # Data will be lost on restart, but good for testing
-            logger.info("Mem0 using in-memory vector store (set QDRANT_URL for persistence)")
+            self.backend = "in-memory"
+            logger.warning("⚠️ Mem0 using in-memory vector store (data will be lost on restart)")
+            logger.info("Set MEM0_DATABASE_URL for Supabase persistence or QDRANT_URL for Qdrant")
         
         return config
     
@@ -189,8 +228,12 @@ class Mem0MemoryStore:
                 limit=limit
             )
             
-            logger.debug(f"Search results for '{query}': {len(results)} memories")
-            return results
+            # Handle response format - may be dict with 'results' or list directly
+            if isinstance(results, dict) and 'results' in results:
+                results = results.get('results', [])
+            
+            logger.debug(f"Search results for '{query}': {len(results) if results else 0} memories")
+            return results if results else []
             
         except Exception as e:
             logger.error(f"Error searching memories: {e}")
@@ -222,6 +265,10 @@ class Mem0MemoryStore:
                 user_id=user_id,
                 limit=limit
             )
+            
+            # Handle response format
+            if isinstance(results, dict) and 'results' in results:
+                results = results.get('results', [])
             
             return results if results else []
             
@@ -257,10 +304,23 @@ class Mem0MemoryStore:
             if not memories:
                 return ""
             
+            # Handle different response formats from Mem0
+            # Could be list of dicts or dict with 'results' key
+            if isinstance(memories, dict) and 'results' in memories:
+                memories = memories.get('results', [])
+            
+            if not memories or not isinstance(memories, list):
+                return ""
+            
             # Format memories for injection into system prompt
             memory_texts = []
             for mem in memories:
-                memory_text = mem.get('memory', mem.get('content', ''))
+                if isinstance(mem, dict):
+                    memory_text = mem.get('memory', mem.get('content', ''))
+                elif isinstance(mem, str):
+                    memory_text = mem
+                else:
+                    continue
                 if memory_text:
                     memory_texts.append(f"- {memory_text}")
             

@@ -235,6 +235,15 @@ async def debug_auth_public():
     }
 
 # Pydantic models
+class RAGConfig(BaseModel):
+    """RAG configuration for chat requests"""
+    enabled: bool = True  # Enable RAG by default
+    mode: str = "auto"  # "auto", "manual", "off"
+    document_ids: Optional[List[str]] = None  # Specific documents to search
+    max_chunks: int = 5  # Max chunks to include
+    min_similarity: float = 0.5  # Minimum similarity threshold
+    use_rerank: bool = True  # Use LLM reranking for better results
+
 class ChatRequest(BaseModel):
     message: str
     provider: str = "deepseek"  # Default provider
@@ -243,6 +252,7 @@ class ChatRequest(BaseModel):
     stream: bool = True
     config: Optional[Dict[str, Any]] = None
     system_prompt: Optional[str] = None
+    rag: Optional[RAGConfig] = None  # RAG configuration
 
 class ChatResponse(BaseModel):
     id: str
@@ -304,6 +314,610 @@ async def health_check():
         "uptime": "unknown",  # TODO: Track uptime
         "timestamp": datetime.now().isoformat()
     }
+
+# ==================== MEM0 MEMORY API ====================
+
+class MemoryAddRequest(BaseModel):
+    user_id: str
+    messages: List[Dict[str, str]]  # [{"role": "user", "content": "..."}, ...]
+    metadata: Optional[Dict[str, Any]] = None
+
+class MemorySearchRequest(BaseModel):
+    user_id: str
+    query: str
+    limit: int = 10
+
+@api_router.get("/memory/status")
+async def memory_status():
+    """Check Mem0 memory status."""
+    mem0_store = get_mem0_store()
+    return {
+        "enabled": mem0_store.enabled,
+        "backend": mem0_store.backend if hasattr(mem0_store, 'backend') else "unknown",
+        "status": "ready" if mem0_store.enabled else "disabled",
+        "mem0_enabled_env": os.getenv("MEM0_ENABLED", "0"),
+        "database_url_set": bool(os.getenv("MEM0_DATABASE_URL") or os.getenv("DATABASE_URL")),
+    }
+
+@api_router.post("/memory/add")
+async def memory_add(request: MemoryAddRequest, _: str = Depends(get_current_user)):
+    """Add memories from a conversation."""
+    mem0_store = get_mem0_store()
+    if not mem0_store.enabled:
+        raise HTTPException(status_code=503, detail="Mem0 memory is not enabled")
+    
+    result = await mem0_store.add_memory(
+        user_id=request.user_id,
+        messages=request.messages,
+        metadata=request.metadata
+    )
+    
+    return {"success": True, "result": result}
+
+@api_router.post("/memory/search")
+async def memory_search(request: MemorySearchRequest, _: str = Depends(get_current_user)):
+    """Search memories for a user."""
+    mem0_store = get_mem0_store()
+    if not mem0_store.enabled:
+        raise HTTPException(status_code=503, detail="Mem0 memory is not enabled")
+    
+    results = await mem0_store.search_memories(
+        user_id=request.user_id,
+        query=request.query,
+        limit=request.limit
+    )
+    
+    return {"results": results, "count": len(results)}
+
+@api_router.get("/memory/{user_id}")
+async def memory_get_all(user_id: str, limit: int = 100, _: str = Depends(get_current_user)):
+    """Get all memories for a user."""
+    mem0_store = get_mem0_store()
+    if not mem0_store.enabled:
+        raise HTTPException(status_code=503, detail="Mem0 memory is not enabled")
+    
+    memories = await mem0_store.get_all_memories(user_id=user_id, limit=limit)
+    
+    return {"memories": memories, "count": len(memories)}
+
+@api_router.delete("/memory/{user_id}")
+async def memory_delete_all(user_id: str, _: str = Depends(get_current_user)):
+    """Delete all memories for a user."""
+    mem0_store = get_mem0_store()
+    if not mem0_store.enabled:
+        raise HTTPException(status_code=503, detail="Mem0 memory is not enabled")
+    
+    success = await mem0_store.delete_user_memories(user_id=user_id)
+    
+    return {"success": success}
+
+@api_router.delete("/memory/item/{memory_id}")
+async def memory_delete_item(memory_id: str, _: str = Depends(get_current_user)):
+    """Delete a specific memory by ID."""
+    mem0_store = get_mem0_store()
+    if not mem0_store.enabled:
+        raise HTTPException(status_code=503, detail="Mem0 memory is not enabled")
+    
+    success = await mem0_store.delete_memory(memory_id=memory_id)
+    
+    return {"success": success}
+
+# ==================== END MEM0 MEMORY API ====================
+
+# ==================== DOCUMENT RAG API ====================
+from fastapi import UploadFile, File
+import tempfile
+import shutil
+
+# Lazy import for document RAG (heavy dependencies)
+_document_rag = None
+
+def get_document_rag_store():
+    """Lazy load Document RAG to avoid startup delays"""
+    global _document_rag
+    if _document_rag is None:
+        try:
+            from storage.document_rag import get_document_rag
+            _document_rag = get_document_rag()
+            logger.info("[DOC-RAG] Document RAG initialized")
+        except ImportError as e:
+            logger.warning(f"[DOC-RAG] Document RAG not available: {e}")
+            return None
+    return _document_rag
+
+
+class DocumentSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    document_id: Optional[str] = None
+
+
+@api_router.get("/documents/status")
+async def document_rag_status():
+    """Check Document RAG status."""
+    rag = get_document_rag_store()
+    if not rag:
+        return {
+            "enabled": False,
+            "status": "not_available",
+            "error": "Document RAG dependencies not installed"
+        }
+    
+    stats = rag.get_stats()
+    return {
+        "enabled": True,
+        "status": "ready",
+        "documents_count": stats["documents_count"],
+        "total_chunks": stats["total_chunks"],
+        "documents": stats["documents"]
+    }
+
+
+@api_router.post("/documents/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    user_email: str = Depends(get_current_user)
+):
+    """
+    Upload and ingest a document for RAG search.
+    
+    Supports: PDF, DOCX, TXT, MD files
+    """
+    rag = get_document_rag_store()
+    if not rag:
+        raise HTTPException(status_code=503, detail="Document RAG not available")
+    
+    # Validate file type
+    allowed_extensions = {'.pdf', '.docx', '.txt', '.md'}
+    file_ext = Path(file.filename).suffix.lower()
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {file_ext}. Allowed: {', '.join(allowed_extensions)}"
+        )
+    
+    # Save to temp file
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+        
+        # Ingest document
+        result = await rag.ingest_document(
+            file_path=tmp_path,
+            document_name=file.filename
+        )
+        
+        logger.info(f"[DOC-RAG] Uploaded document '{file.filename}' for user {user_email}: {result}")
+        
+        return {
+            "success": True,
+            "message": f"Document '{file.filename}' uploaded and indexed",
+            **result
+        }
+    
+    except Exception as e:
+        logger.error(f"[DOC-RAG] Failed to upload document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    finally:
+        # Cleanup temp file
+        if 'tmp_path' in locals():
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+
+
+@api_router.post("/documents/search")
+async def search_documents(
+    request: DocumentSearchRequest,
+    user_email: str = Depends(get_current_user)
+):
+    """
+    Search documents using hybrid vector + keyword search.
+    
+    Returns ranked results with citations.
+    """
+    rag = get_document_rag_store()
+    if not rag:
+        raise HTTPException(status_code=503, detail="Document RAG not available")
+    
+    try:
+        results = await rag.search(
+            query=request.query,
+            top_k=request.top_k,
+            document_id=request.document_id
+        )
+        
+        return {
+            "query": request.query,
+            "results_count": len(results),
+            "results": [r.to_dict() for r in results]
+        }
+    
+    except Exception as e:
+        logger.error(f"[DOC-RAG] Search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/documents/context")
+async def get_document_context(
+    request: DocumentSearchRequest,
+    user_email: str = Depends(get_current_user)
+):
+    """
+    Get formatted context for chat integration.
+    
+    Returns a prompt-ready context string with citations.
+    """
+    rag = get_document_rag_store()
+    if not rag:
+        raise HTTPException(status_code=503, detail="Document RAG not available")
+    
+    try:
+        results = await rag.search(
+            query=request.query,
+            top_k=request.top_k,
+            document_id=request.document_id
+        )
+        
+        # Build prompt with context
+        prompt = rag.build_rag_prompt(
+            query=request.query,
+            results=results,
+            max_context_chars=8000
+        )
+        
+        return {
+            "query": request.query,
+            "context_prompt": prompt,
+            "sources_count": len(results),
+            "sources": [
+                {
+                    "citation": r.chunk.get_citation(),
+                    "score": r.final_score,
+                    "preview": r.chunk.content[:200] + "..." if len(r.chunk.content) > 200 else r.chunk.content
+                }
+                for r in results
+            ]
+        }
+    
+    except Exception as e:
+        logger.error(f"[DOC-RAG] Context generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/documents")
+async def list_documents(user_email: str = Depends(get_current_user)):
+    """List all uploaded documents."""
+    rag = get_document_rag_store()
+    if not rag:
+        raise HTTPException(status_code=503, detail="Document RAG not available")
+    
+    return {
+        "documents": [
+            {
+                "id": doc_id,
+                "name": doc["name"],
+                "chunks_count": len(doc.get("chunks", [])),
+                "file_path": doc.get("file_path"),
+                "ingested_at": doc.get("ingested_at")
+            }
+            for doc_id, doc in rag.documents.items()
+        ]
+    }
+
+
+@api_router.delete("/documents/{document_id}")
+async def delete_document(document_id: str, user_email: str = Depends(get_current_user)):
+    """Delete a document and all its chunks."""
+    rag = get_document_rag_store()
+    if not rag:
+        raise HTTPException(status_code=503, detail="Document RAG not available")
+    
+    if document_id not in rag.documents:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Remove from memory
+    doc = rag.documents.pop(document_id)
+    
+    # Remove chunks
+    rag.all_chunks = [c for c in rag.all_chunks if c.document_id != document_id]
+    
+    # Rebuild BM25 index
+    if rag.all_chunks:
+        rag.search_engine.build_bm25_index(rag.all_chunks)
+    
+    logger.info(f"[DOC-RAG] Deleted document '{doc['name']}' (id={document_id})")
+    
+    return {"success": True, "message": f"Document '{doc['name']}' deleted"}
+
+# ==================== END DOCUMENT RAG API ====================
+
+# ==================== SUPABASE RAG API ====================
+# These endpoints use the new Supabase-backed RAG system
+
+_supabase_rag_store = None
+
+def get_supabase_rag_store():
+    """Lazy load Supabase RAG store"""
+    global _supabase_rag_store
+    if _supabase_rag_store is None:
+        try:
+            from supabase_client.rag import get_rag_store
+            _supabase_rag_store = get_rag_store()
+            logger.info("[SUPABASE-RAG] RAG store initialized")
+        except Exception as e:
+            logger.warning(f"[SUPABASE-RAG] RAG not available: {e}")
+            return None
+    return _supabase_rag_store
+
+
+@api_router.get("/rag/status")
+async def rag_status():
+    """Check Supabase RAG system status."""
+    rag_store = get_supabase_rag_store()
+    if not rag_store:
+        return {
+            "configured": False,
+            "error": "Supabase RAG not configured",
+            "supported_types": []
+        }
+    
+    try:
+        from supabase_client.rag import SUPPORTED_TYPES
+        return {
+            "configured": True,
+            "supported_types": list(SUPPORTED_TYPES.keys())
+        }
+    except Exception as e:
+        return {
+            "configured": False,
+            "error": str(e),
+            "supported_types": []
+        }
+
+
+@api_router.post("/rag/documents/upload")
+async def rag_upload_document(
+    file: UploadFile = File(...),
+    user_email: str = Depends(get_current_user),
+    metadata: Optional[str] = None
+):
+    """Upload and process a document for RAG."""
+    rag_store = get_supabase_rag_store()
+    if not rag_store:
+        raise HTTPException(status_code=503, detail="Supabase RAG not available")
+    
+    try:
+        # Read file content
+        content = await file.read()
+        
+        # Parse metadata if provided
+        meta_dict = None
+        if metadata:
+            import json
+            meta_dict = json.loads(metadata)
+        
+        # Upload and process
+        doc = await rag_store.upload_and_process_document(
+            user_email=user_email,
+            file_content=content,
+            filename=file.filename,
+            content_type=file.content_type or "application/octet-stream",
+            metadata=meta_dict
+        )
+        
+        logger.info(f"[SUPABASE-RAG] Uploaded document: {doc['id']} for user {user_email}")
+        
+        return {"document": doc}
+        
+    except Exception as e:
+        logger.error(f"[SUPABASE-RAG] Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/rag/documents")
+async def rag_list_documents(
+    user_email: str = Depends(get_current_user),
+    status: Optional[str] = None,
+    limit: int = 50
+):
+    """List documents for current user."""
+    rag_store = get_supabase_rag_store()
+    if not rag_store:
+        raise HTTPException(status_code=503, detail="Supabase RAG not available")
+    
+    try:
+        docs = rag_store.list_documents(user_email, status=status, limit=limit)
+        return {"documents": docs}
+    except Exception as e:
+        logger.error(f"[SUPABASE-RAG] List failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/rag/documents/{document_id}")
+async def rag_get_document(
+    document_id: str,
+    user_email: str = Depends(get_current_user)
+):
+    """Get a specific document."""
+    rag_store = get_supabase_rag_store()
+    if not rag_store:
+        raise HTTPException(status_code=503, detail="Supabase RAG not available")
+    
+    doc = rag_store.get_document(document_id, user_email)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    return doc
+
+
+@api_router.delete("/rag/documents/{document_id}")
+async def rag_delete_document(
+    document_id: str,
+    user_email: str = Depends(get_current_user)
+):
+    """Delete a document."""
+    rag_store = get_supabase_rag_store()
+    if not rag_store:
+        raise HTTPException(status_code=503, detail="Supabase RAG not available")
+    
+    success = rag_store.delete_document(document_id, user_email)
+    if not success:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    return {"success": True}
+
+
+class RAGSearchRequest(BaseModel):
+    query: str
+    document_ids: Optional[List[str]] = None
+    limit: int = 5
+    threshold: float = 0.5
+    use_hybrid: bool = True
+
+
+@api_router.post("/rag/search")
+async def rag_search(
+    request: RAGSearchRequest,
+    user_email: str = Depends(get_current_user)
+):
+    """Search documents using vector similarity."""
+    rag_store = get_supabase_rag_store()
+    if not rag_store:
+        raise HTTPException(status_code=503, detail="Supabase RAG not available")
+    
+    try:
+        if request.use_hybrid:
+            results = rag_store.hybrid_search(
+                query=request.query,
+                user_email=user_email,
+                limit=request.limit
+            )
+        else:
+            results = rag_store.search(
+                query=request.query,
+                user_email=user_email,
+                document_ids=request.document_ids,
+                threshold=request.threshold,
+                limit=request.limit
+            )
+        
+        # Build context string
+        context_parts = []
+        for r in results:
+            context_parts.append(f"[{r.get('document_name', 'Unknown')}]\n{r['content']}")
+        
+        return {
+            "results": results,
+            "context": "\n\n---\n\n".join(context_parts)
+        }
+        
+    except Exception as e:
+        logger.error(f"[SUPABASE-RAG] Search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RAGContextRequest(BaseModel):
+    query: str
+    document_ids: Optional[List[str]] = None
+    max_tokens: int = 4000
+    use_hybrid: bool = True
+
+
+@api_router.post("/rag/context")
+async def rag_build_context(
+    request: RAGContextRequest,
+    user_email: str = Depends(get_current_user)
+):
+    """Build RAG context for a query."""
+    rag_store = get_supabase_rag_store()
+    if not rag_store:
+        raise HTTPException(status_code=503, detail="Supabase RAG not available")
+    
+    try:
+        context, sources = rag_store.build_rag_context(
+            query=request.query,
+            user_email=user_email,
+            document_ids=request.document_ids,
+            max_tokens=request.max_tokens,
+            use_hybrid=request.use_hybrid
+        )
+        
+        return {
+            "context": context,
+            "sources": sources
+        }
+        
+    except Exception as e:
+        logger.error(f"[SUPABASE-RAG] Context build failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/rag/reprocess/{document_id}")
+async def rag_reprocess_document(
+    document_id: str,
+    user_email: str = Depends(get_current_user)
+):
+    """Reprocess a failed document."""
+    rag_store = get_supabase_rag_store()
+    if not rag_store:
+        raise HTTPException(status_code=503, detail="Supabase RAG not available")
+    
+    # Get document to reprocess
+    doc = rag_store.get_document(document_id, user_email)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Download content from storage and reprocess
+    try:
+        # Get content from storage
+        storage_path = doc.get("storage_path")
+        if not storage_path:
+            raise HTTPException(status_code=400, detail="Document has no storage path")
+        
+        # Download file
+        file_response = rag_store.client.storage.from_("documents").download(storage_path)
+        
+        # Save to temp file
+        import tempfile
+        from pathlib import Path
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(doc["filename"]).suffix) as tmp:
+            tmp.write(file_response)
+            tmp_path = tmp.name
+        
+        # Extract text
+        text_content = rag_store.extract_text_from_file(tmp_path, doc["content_type"])
+        
+        # Clean up
+        import os
+        os.unlink(tmp_path)
+        
+        if not text_content.strip():
+            rag_store.update_document_status(document_id, "error", error_message="No text content found")
+            raise HTTPException(status_code=400, detail="No text content found")
+        
+        # Process
+        chunks_count = await rag_store.process_document_text(
+            document_id=document_id,
+            content=text_content
+        )
+        
+        return {
+            "success": True,
+            "chunks_created": chunks_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[SUPABASE-RAG] Reprocess failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== END SUPABASE RAG API ====================
 
 @api_router.get("/debug/auth")
 async def debug_auth():
@@ -712,6 +1326,53 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             logger.warning(f"[MEM0] Failed to get memory context: {e}")
         # === END MEM0 MEMORY CONTEXT ===
         
+        # === DOCUMENT RAG CONTEXT ===
+        # Search documents for relevant context (if RAG is enabled)
+        rag_context = ""
+        rag_sources = []
+        rag_config = request.rag or RAGConfig()  # Default RAG config
+        
+        if rag_config.enabled and rag_config.mode != "off":
+            try:
+                from supabase_client.rag import get_rag_store
+                rag_store = get_rag_store()
+                
+                # Check if user has any documents
+                user_docs = rag_store.list_documents(user_email, status="ready", limit=1)
+                
+                if user_docs:
+                    logger.info(f"[RAG] Searching documents for user {user_email}")
+                    
+                    # Build context with citations
+                    if rag_config.use_rerank:
+                        rag_context, rag_sources = rag_store.build_cited_context(
+                            query=request.message,
+                            user_email=user_email,
+                            max_tokens=4000,
+                            use_rerank=True,
+                            include_citations=True
+                        )
+                    else:
+                        rag_context, rag_sources = rag_store.build_rag_context(
+                            query=request.message,
+                            user_email=user_email,
+                            document_ids=rag_config.document_ids,
+                            max_tokens=4000,
+                            threshold=rag_config.min_similarity,
+                            use_hybrid=True
+                        )
+                    
+                    if rag_sources:
+                        logger.info(f"[RAG] Found {len(rag_sources)} relevant chunks from documents")
+                else:
+                    logger.debug(f"[RAG] No documents available for user {user_email}")
+                    
+            except ImportError as e:
+                logger.warning(f"[RAG] RAG module not available: {e}")
+            except Exception as e:
+                logger.warning(f"[RAG] Failed to get RAG context: {e}")
+        # === END DOCUMENT RAG CONTEXT ===
+        
         # Add system prompt if provided
         system_prompt_content = request.system_prompt or ""
         logger.info(f"[CHAT] System prompt from request: length={len(system_prompt_content)}, preview={system_prompt_content[:100] if system_prompt_content else 'EMPTY'}...")
@@ -722,6 +1383,13 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                 system_prompt_content = f"{system_prompt_content}\n\n{memory_context}"
             else:
                 system_prompt_content = f"You are a helpful AI assistant.\n\n{memory_context}"
+        
+        # Inject RAG context into system prompt if available
+        if rag_context:
+            if system_prompt_content:
+                system_prompt_content = f"{system_prompt_content}\n\n{rag_context}"
+            else:
+                system_prompt_content = f"You are a helpful AI assistant.\n\n{rag_context}"
         
         if system_prompt_content:
             logger.info(f"[CHAT] Final system prompt: length={len(system_prompt_content)}")
@@ -959,6 +1627,21 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                         except Exception as save_err:
                             logger.error(f"[CHAT] Failed to save assistant message: {save_err}")
                         
+                        # === SAVE TO MEM0 MEMORY ===
+                        # Extract and store facts from this conversation exchange
+                        try:
+                            mem0_result = await add_conversation_to_memory(
+                                user_id=user_email,
+                                user_message=request.message,
+                                assistant_response=full_content,
+                                model=model_id
+                            )
+                            if mem0_result:
+                                logger.info(f"[MEM0] Saved conversation to memory for user {user_email}: {mem0_result}")
+                        except Exception as mem0_err:
+                            logger.warning(f"[MEM0] Failed to save to memory: {mem0_err}")
+                        # === END MEM0 SAVE ===
+                        
                         # Complete process
                         await process_emitter.complete_process(process, metadata={
                             "tokens_in": final_tokens_in,
@@ -982,7 +1665,10 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                                 'thought_tokens': thought_tokens,
                                 # Include the full thought content for frontend to display
                                 'thought_content': thought_content if thought_content else None,
-                                'reasoning_content': thought_content if thought_content else None
+                                'reasoning_content': thought_content if thought_content else None,
+                                # RAG sources for citations
+                                'rag_sources': rag_sources if rag_sources else None,
+                                'rag_enabled': bool(rag_context)
                             }
                         }
                         yield f"data: {json.dumps(final_response)}\n\n"
@@ -1090,14 +1776,64 @@ async def create_conversation(conversation_data: dict, user_email: str = Depends
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/history/{conversation_id}")
-async def get_conversation_history(conversation_id: str, user_email: str = Depends(get_current_user)):
-    """Get chat history for a specific conversation (scoped to user)."""
+async def get_conversation_history(
+    conversation_id: str, 
+    user_email: str = Depends(get_current_user),
+    limit: int = 50,
+    offset: int = 0
+):
+    """Get chat history for a specific conversation (scoped to user).
+    
+    Supports pagination:
+    - limit: max messages to return (default 50, max 200)
+    - offset: skip first N messages (for loading older messages)
+    """
     try:
-        logger.info(f"[HISTORY] Request for conversation_id: {conversation_id} user={user_email}")
-        messages = conversation_store.load_conversation_history(conversation_id, user_email=user_email)
-        logger.info(f"[HISTORY] Returning {len(messages)} messages for conversation_id: {conversation_id} user={user_email}")
+        # Clamp limit to reasonable values
+        limit = min(max(1, limit), 200)
+        
+        logger.info(f"[HISTORY] Request for conversation_id: {conversation_id} user={user_email} limit={limit} offset={offset}")
+        
+        # For initial load (offset=0), load a bit extra to check if there's more
+        # This avoids a separate count query
+        load_limit = limit + 1 if offset == 0 else limit
+        
+        # Load messages with pagination
+        messages = conversation_store.load_conversation_history(
+            conversation_id, 
+            user_email=user_email,
+            limit=load_limit + offset
+        )
+        
+        # Apply offset manually if store doesn't support it natively
+        if offset > 0:
+            messages = messages[offset:]
+        
+        # Determine if there are more messages
+        has_more = len(messages) > limit
+        messages = messages[:limit]
+        
+        # Only get total count if explicitly needed (on subsequent loads)
+        # For first load, we use has_more flag
+        total_count = 0
+        if offset > 0:
+            # Only count when doing pagination
+            try:
+                total_count = len(conversation_store.load_conversation_history(
+                    conversation_id, 
+                    user_email=user_email,
+                    limit=10000
+                ))
+            except:
+                total_count = offset + len(messages) + (1 if has_more else 0)
+        
+        logger.info(f"[HISTORY] Returning {len(messages)} messages for conversation_id: {conversation_id} user={user_email} has_more={has_more}")
         return {
             "conversation_id": conversation_id,
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset,
+            "has_more": has_more,
             "messages": [
                 {
                     "id": msg.id,

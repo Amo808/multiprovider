@@ -41,24 +41,24 @@ interface TopNavigationProps {
   onSelectedModelsForParallelChange?: (models: ModelInfo[]) => void;
 }
 
-const themeIcon = (t: 'light' | 'dark' | 'auto') => t==='light'? <Sun size={16}/> : t==='dark'? <Moon size={16}/> : <Monitor size={16}/>;
+const themeIcon = (t: 'light' | 'dark' | 'auto') => t === 'light' ? <Sun size={16} /> : t === 'dark' ? <Moon size={16} /> : <Monitor size={16} />;
 
 const LEVELS = ['off', 'low', 'medium', 'high'];
 
-export const TopNavigation: React.FC<TopNavigationProps> = ({ 
-  config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration, 
-  systemPrompt, onChangeSystemPrompt, 
+export const TopNavigation: React.FC<TopNavigationProps> = ({
+  config, selectedModel, selectedProvider, userEmail, theme, onThemeToggle, onSettingsClick, onLogout, onSelectModel, onChangeGeneration,
+  systemPrompt, onChangeSystemPrompt,
   globalPrompt, onChangeGlobalPrompt, onSaveGlobalPrompt, globalPromptHasChanges,
   modelPrompt, modelPromptHasChanges, onSaveModelPrompt,
   tokenUsage, generationConfig, onCyclePreset, currentPreset,
   chatMode, selectedModelsForParallel, onSelectedModelsForParallelChange
 }) => {
   const effectiveConfig = generationConfig || config.generation;
-  
+
   // Local state for immediate UI updates
   const [localVerbosity, setLocalVerbosity] = useState<string>(() => (generationConfig?.verbosity as string) || 'off');
   const [localReasoning, setLocalReasoning] = useState<string>(() => (generationConfig?.reasoning_effort as string) || 'off');
-  
+
   // Handlers for generation controls - use local state only, no sync with props
   const handleVerbosityToggle = () => {
     const currentIndex = LEVELS.indexOf(localVerbosity);
@@ -68,7 +68,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
     setLocalVerbosity(nextValue);
     onChangeGeneration?.({ verbosity: nextValue === 'off' ? undefined : nextValue as any });
   };
-  
+
   const handleReasoningToggle = () => {
     const currentIndex = LEVELS.indexOf(localReasoning);
     const nextIndex = (currentIndex + 1) % LEVELS.length;
@@ -77,11 +77,11 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
     setLocalReasoning(nextValue);
     onChangeGeneration?.({ reasoning_effort: nextValue === 'off' ? undefined : nextValue as any });
   };
-  
+
   const handleStreamToggle = () => {
     onChangeGeneration?.({ stream: !effectiveConfig?.stream });
   };
-  
+
   const handleThinkingToggle = () => {
     onChangeGeneration?.({ include_thoughts: !effectiveConfig?.include_thoughts });
   };
@@ -93,15 +93,15 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
       </div>
       {/* Unified model & provider menu inline - all settings are here */}
       <div className="ml-0.5 sm:ml-2">
-        <UnifiedModelMenu 
-          config={config} 
-          activeModel={selectedModel} 
-          activeProvider={selectedProvider} 
-          onSelectModel={onSelectModel} 
-          onManageProviders={onSettingsClick} 
-          generationConfig={effectiveConfig} 
-          onChangeGeneration={onChangeGeneration} 
-          systemPrompt={systemPrompt} 
+        <UnifiedModelMenu
+          config={config}
+          activeModel={selectedModel}
+          activeProvider={selectedProvider}
+          onSelectModel={onSelectModel}
+          onManageProviders={onSettingsClick}
+          generationConfig={effectiveConfig}
+          onChangeGeneration={onChangeGeneration}
+          systemPrompt={systemPrompt}
           onChangeSystemPrompt={onChangeSystemPrompt}
           // Global system prompt props
           globalPrompt={globalPrompt}
@@ -118,81 +118,76 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
           onSelectedModelsForParallelChange={onSelectedModelsForParallelChange}
         />
       </div>
-      
+
       {/* Generation Config Controls - transparent buttons */}
       <div className="hidden lg:flex items-center gap-1 ml-2">
         <span className="text-muted-foreground/40 mx-1">|</span>
-        
+
         {/* Verbosity */}
         <button
           onClick={handleVerbosityToggle}
-          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${
-            localVerbosity !== 'off'
-              ? 'text-orange-500 dark:text-orange-400' 
+          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${localVerbosity !== 'off'
+              ? 'text-orange-500 dark:text-orange-400'
               : 'text-muted-foreground hover:text-foreground'
-          }`}
+            }`}
           title="Click to cycle: off → low → medium → high → off"
         >
           <MessageSquare size={12} className="inline mr-1" />
           {localVerbosity}
         </button>
-        
+
         {/* Reasoning */}
         <button
           onClick={handleReasoningToggle}
-          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${
-            localReasoning !== 'off'
-              ? 'text-purple-500 dark:text-purple-400' 
+          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${localReasoning !== 'off'
+              ? 'text-purple-500 dark:text-purple-400'
               : 'text-muted-foreground hover:text-foreground'
-          }`}
+            }`}
           title="Click to cycle: off → low → medium → high → off"
         >
           🧠 {localReasoning}
         </button>
-        
+
         {/* Stream */}
         <button
           onClick={handleStreamToggle}
-          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${
-            effectiveConfig?.stream 
-              ? 'text-green-500 dark:text-green-400' 
+          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 ${effectiveConfig?.stream
+              ? 'text-green-500 dark:text-green-400'
               : 'text-muted-foreground hover:text-foreground'
-          }`}
+            }`}
           title="Click to toggle streaming"
         >
           <Zap size={12} className="inline mr-1" />
           {effectiveConfig?.stream ? 'on' : 'off'}
         </button>
-        
+
         {/* Thinking Mode */}
         <button
           onClick={handleThinkingToggle}
-          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 flex items-center gap-1 ${
-            effectiveConfig?.include_thoughts
-              ? 'text-pink-500 dark:text-pink-400' 
+          className={`px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-accent/50 flex items-center gap-1 ${effectiveConfig?.include_thoughts
+              ? 'text-pink-500 dark:text-pink-400'
               : 'text-muted-foreground hover:text-foreground'
-          }`}
+            }`}
           title="Click to toggle thinking mode"
         >
           <Brain size={12} />
           {effectiveConfig?.include_thoughts ? 'ON' : 'OFF'}
         </button>
-        
+
         <span className="text-muted-foreground/40 mx-1">|</span>
-        
+
         {/* Preset Cycle Button - click to cycle through MAX → Balanced → MIN */}
         {onCyclePreset && (
           <button
             onClick={onCyclePreset}
-            className={`px-3 py-1 rounded text-xs font-bold transition-all hover:scale-105 shadow-sm hover:shadow-md flex items-center gap-1 ${
-              currentPreset === 'MAX' 
-                ? 'bg-gradient-to-r from-red-500 to-orange-500 text-white' 
+            className={`px-3 py-1 rounded text-xs font-bold transition-all hover:scale-105 shadow-sm hover:shadow-md flex items-center gap-1 ${currentPreset === 'MAX'
+                ? 'bg-gradient-to-r from-red-500 to-orange-500 text-white'
                 : currentPreset === 'Balanced'
-                ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
-                : currentPreset === 'MIN'
-                ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white'
-                : 'bg-gradient-to-r from-gray-500 to-gray-600 text-white'
-            }`}
+                  ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
+                  : currentPreset === 'MIN'
+                    ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white'
+                    : 'bg-gradient-to-r from-gray-500 to-gray-600 text-white'
+              }`}
             title={`Current: ${currentPreset || 'MAX'}. Click to cycle: MAX → Balanced → MIN → MAX`}
           >
             <Rocket size={12} />
@@ -200,7 +195,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
           </button>
         )}
       </div>
-      
+
       {/* Usage panel in the header */}
       <div className="ml-auto flex items-center gap-0.5 sm:gap-2">
         <div className="hidden sm:block">
@@ -210,12 +205,12 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
         <Button variant="ghost" size="sm" onClick={onThemeToggle} className="h-7 w-7 sm:h-8 sm:w-8 p-0" title={theme}>{themeIcon(theme)}</Button>
         {userEmail && (
           <div className="flex items-center gap-0.5 sm:gap-2">
-            <Avatar className="h-6 w-6 sm:h-8 sm:w-8"><AvatarFallback className="text-[10px] sm:text-xs">{userEmail.slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
+            <Avatar className="h-6 w-6 sm:h-8 sm:w-8"><AvatarFallback className="text-[10px] sm:text-xs">{userEmail.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
             <span className="text-xs text-muted-foreground hidden lg:inline">{userEmail}</span>
           </div>
         )}
         <Button variant="destructive" size="sm" onClick={onLogout} className="h-6 sm:h-8 px-1.5 sm:px-3 text-[10px] sm:text-xs flex items-center gap-0.5 sm:gap-1">
-          <LogOut size={12} className="sm:w-[14px] sm:h-[14px]"/>
+          <LogOut size={12} className="sm:w-[14px] sm:h-[14px]" />
           <span className="hidden sm:inline">Logout</span>
         </Button>
       </div>

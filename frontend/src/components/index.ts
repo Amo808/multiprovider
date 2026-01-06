@@ -18,6 +18,7 @@ export { Logo } from './Logo';
 
 // Document & RAG Components
 export { default as DocumentManager } from './DocumentManager';
+export { RAGSources, RAGStatusIndicator, RAGToggle } from './RAGSources';
 
 // Process & Multi-Model Components
 export { ProcessViewer, ProcessCard } from './ProcessViewer';
@@ -28,11 +29,11 @@ export { MultiModelChat } from './MultiModelChat';
 export * from '../hooks/useApi';
 export { useConversations } from '../hooks/useConversations';
 export { useConversationsContext, ConversationsProvider } from '../contexts/ConversationsContext';
-export { 
-  useProcessEvents, 
-  useConversationProcesses, 
-  useMultiModel, 
-  useMultiModelPresets 
+export {
+  useProcessEvents,
+  useConversationProcesses,
+  useMultiModel,
+  useMultiModelPresets
 } from '../hooks/useProcessEvents';
 export { useRAG } from '../hooks/useRAG';
 

@@ -137,6 +137,7 @@ class RAGStore:
         
         data = {
             "user_id": user_id,
+            "filename": name,  # DB column is 'filename', not 'name'
             "name": name,
             "content_type": content_type,
             "file_size": file_size,
@@ -474,9 +475,9 @@ class RAGStore:
         # Use filter_document_id if single document specified
         filter_doc_id = document_ids[0] if document_ids and len(document_ids) == 1 else None
         
-        # Call the match_documents function
+        # Call the search_document_chunks_v2 function
         result = self.client.rpc(
-            "match_documents",
+            "search_document_chunks_v2",
             {
                 "query_embedding": query_embedding,
                 "match_count": limit,
@@ -517,14 +518,14 @@ class RAGStore:
         query_embedding = self.create_embedding(query)
         
         result = self.client.rpc(
-            "hybrid_search",
+            "hybrid_search_chunks_v2",
             {
                 "query_text": query,
                 "query_embedding": query_embedding,
                 "match_count": limit,
                 "filter_user_id": user_id,
-                "keyword_weight": keyword_weight,
-                "semantic_weight": semantic_weight
+                "vector_weight": semantic_weight,
+                "keyword_weight": keyword_weight
             }
         ).execute()
         
@@ -544,6 +545,196 @@ class RAGStore:
         
         return results
     
+    # ==================== RERANKING ====================
+    
+    def rerank_results(
+        self,
+        query: str,
+        results: List[Dict[str, Any]],
+        top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Rerank search results using LLM for better relevance.
+        This provides more accurate results than pure vector similarity.
+        """
+        if not results or len(results) <= top_k:
+            return results
+        
+        try:
+            # Build prompt for reranking
+            docs_text = "\n\n".join([
+                f"[DOC_{i}] {r['content'][:500]}"
+                for i, r in enumerate(results)
+            ])
+            
+            rerank_prompt = f"""You are a relevance scoring assistant. Given a query and documents, 
+score each document's relevance from 0-10 where 10 is perfectly relevant.
+
+Query: {query}
+
+Documents:
+{docs_text}
+
+Return ONLY a JSON array of scores in order, like: [8, 3, 9, 5, ...]
+No explanation, just the array."""
+
+            response = self.embedding_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": rerank_prompt}],
+                temperature=0,
+                max_tokens=100
+            )
+            
+            import json
+            scores_text = response.choices[0].message.content.strip()
+            # Extract JSON array from response
+            if '[' in scores_text:
+                scores_text = scores_text[scores_text.index('['):scores_text.rindex(']')+1]
+            scores = json.loads(scores_text)
+            
+            # Add rerank scores and sort
+            for i, r in enumerate(results):
+                if i < len(scores):
+                    r['rerank_score'] = scores[i]
+                else:
+                    r['rerank_score'] = 0
+            
+            # Sort by rerank score
+            results.sort(key=lambda x: x.get('rerank_score', 0), reverse=True)
+            
+            return results[:top_k]
+            
+        except Exception as e:
+            logger.warning(f"Reranking failed, using original order: {e}")
+            return results[:top_k]
+    
+    def search_with_rerank(
+        self,
+        query: str,
+        user_email: str,
+        document_ids: Optional[List[str]] = None,
+        top_k: int = 5,
+        use_hybrid: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Advanced search with reranking for best results.
+        1. Get top 20 candidates via hybrid search
+        2. Rerank using LLM
+        3. Return top_k best matches
+        """
+        # Get more candidates for reranking
+        if use_hybrid:
+            candidates = self.hybrid_search(
+                query=query,
+                user_email=user_email,
+                limit=20
+            )
+        else:
+            candidates = self.search(
+                query=query,
+                user_email=user_email,
+                document_ids=document_ids,
+                limit=20
+            )
+        
+        if not candidates:
+            return []
+        
+        # Rerank and return top results
+        return self.rerank_results(query, candidates, top_k)
+    
+    # ==================== CITATION FORMATTING ====================
+    
+    def format_citation(self, result: Dict[str, Any]) -> str:
+        """Format a result as a proper citation with source info."""
+        doc_name = result.get('document_name', 'Unknown')
+        page = result.get('page_number')
+        section = result.get('section_title')
+        chunk_idx = result.get('chunk_index', 0)
+        
+        # Build citation string
+        citation_parts = [f"📄 {doc_name}"]
+        if section:
+            citation_parts.append(f"§ {section}")
+        if page:
+            citation_parts.append(f"стр. {page}")
+        else:
+            citation_parts.append(f"фрагмент {chunk_idx + 1}")
+        
+        return " | ".join(citation_parts)
+    
+    def build_cited_context(
+        self,
+        query: str,
+        user_email: str,
+        max_tokens: int = 4000,
+        use_rerank: bool = True,
+        include_citations: bool = True
+    ) -> Tuple[str, List[Dict]]:
+        """
+        Build context with proper citations for RAG.
+        Returns formatted context string and source list.
+        """
+        # Get results with reranking for best quality
+        if use_rerank:
+            results = self.search_with_rerank(
+                query=query,
+                user_email=user_email,
+                top_k=8
+            )
+        else:
+            results = self.hybrid_search(
+                query=query,
+                user_email=user_email,
+                limit=8
+            )
+        
+        if not results:
+            return "", []
+        
+        context_parts = []
+        sources = []
+        total_chars = 0
+        max_chars = max_tokens * 4
+        
+        for i, result in enumerate(results):
+            chunk_chars = len(result["content"])
+            
+            if total_chars + chunk_chars > max_chars:
+                break
+            
+            # Format with citation
+            citation = self.format_citation(result)
+            
+            if include_citations:
+                context_parts.append(f"[{i+1}] {citation}\n{result['content']}")
+            else:
+                context_parts.append(result['content'])
+            
+            sources.append({
+                "index": i + 1,
+                "document_id": result["document_id"],
+                "document_name": result.get("document_name"),
+                "section": result.get("section_title"),
+                "page": result.get("page_number"),
+                "chunk_index": result.get("chunk_index"),
+                "similarity": result.get("similarity") or result.get("combined_score") or result.get("rerank_score", 0),
+                "citation": citation
+            })
+            total_chars += chunk_chars
+        
+        # Build final context with instruction
+        header = """Используй следующие фрагменты документов для ответа на вопрос пользователя.
+Если информация из документов релевантна, обязательно укажи номер источника [1], [2] и т.д.
+Если в документах нет нужной информации, честно скажи об этом.
+
+---
+ДОКУМЕНТЫ:
+"""
+        context = header + "\n\n".join(context_parts)
+        
+        return context, sources
+
     # ==================== CONTEXT BUILDING ====================
     
     def build_rag_context(

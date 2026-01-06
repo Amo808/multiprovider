@@ -48,7 +48,7 @@ export const ModelMultiSelector: React.FC<ModelMultiSelectorProps> = ({
 
   // Filter models by search
   const filteredModelsByProvider = Object.entries(modelsByProvider).reduce((acc, [provider, models]) => {
-    const filtered = models.filter(m => 
+    const filtered = models.filter(m =>
       m.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       m.id.toLowerCase().includes(searchQuery.toLowerCase())
     );
@@ -58,12 +58,12 @@ export const ModelMultiSelector: React.FC<ModelMultiSelectorProps> = ({
     return acc;
   }, {} as Record<ModelProvider, ModelInfo[]>);
 
-  const isSelected = (model: ModelInfo) => 
+  const isSelected = (model: ModelInfo) =>
     selectedModels.some(m => m.id === model.id && m.provider === model.provider);
 
   const toggleModel = (model: ModelInfo) => {
     if (disabled) return;
-    
+
     if (isSelected(model)) {
       onSelectionChange(selectedModels.filter(m => !(m.id === model.id && m.provider === model.provider)));
     } else {
@@ -159,8 +159,8 @@ export const ModelMultiSelector: React.FC<ModelMultiSelectorProps> = ({
       {isExpanded && (
         <div className={cn(
           "absolute left-0 right-0 z-50",
-          dropdownDirection === 'up' 
-            ? "bottom-full mb-2 animate-in slide-in-from-bottom-2" 
+          dropdownDirection === 'up'
+            ? "bottom-full mb-2 animate-in slide-in-from-bottom-2"
             : "top-full mt-2 animate-in slide-in-from-top-2",
           "bg-background/95 dark:bg-[#1a1a1a]/95 text-foreground border border-white/10 rounded-xl shadow-2xl backdrop-blur-xl",
           "max-h-80 overflow-hidden duration-200"

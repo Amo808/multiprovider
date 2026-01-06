@@ -1,7 +1,7 @@
 // Core Types
-export type ModelProvider = 
+export type ModelProvider =
   | 'deepseek'
-  | 'openai' 
+  | 'openai'
   | 'chatgpt_pro'
   | 'anthropic'
   | 'gemini'
@@ -42,6 +42,9 @@ export interface ExtendedMessageMeta {
   thought_content?: string; // Full thought content at end
   thinking?: string; // Thinking/reasoning content chunk
   total_latency?: number; // Total response time in seconds
+  // RAG sources
+  rag_sources?: RAGSource[];
+  rag_enabled?: boolean;
 }
 
 export interface Message {
@@ -204,6 +207,26 @@ export interface ModelCard {
 }
 
 // API Request/Response Types
+export interface RAGConfig {
+  enabled?: boolean;
+  mode?: 'auto' | 'manual' | 'off';
+  document_ids?: string[];
+  max_chunks?: number;
+  min_similarity?: number;
+  use_rerank?: boolean;
+}
+
+export interface RAGSource {
+  index: number;
+  document_id: string;
+  document_name?: string;
+  section?: string;
+  page?: number;
+  chunk_index?: number;
+  similarity: number;
+  citation: string;
+}
+
 export interface SendMessageRequest {
   message: string;
   provider: ModelProvider;
@@ -211,6 +234,7 @@ export interface SendMessageRequest {
   conversation_id?: string;
   config?: Partial<GenerationConfig>;
   system_prompt?: string;
+  rag?: RAGConfig;
 }
 
 export interface ProviderListResponse {

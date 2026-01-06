@@ -358,17 +358,28 @@ class SupabaseConversationStore:
         self,
         conversation_id: str,
         user_email: str = None,
-        limit: int = 100
+        limit: int = 100,
+        offset: int = 0
     ) -> List:
-        """Load messages for a conversation - returns Message-like objects"""
+        """Load messages for a conversation - returns Message-like objects.
+        
+        Optimized for large conversations with offset support.
+        """
         db_conversation_id = self._to_db_id(conversation_id)
         
-        result = self.client.table("messages")\
-            .select("*")\
+        # Use range for efficient pagination
+        query = self.client.table("messages")\
+            .select("id, role, content, created_at, model, provider, reasoning_content, tokens_input, tokens_output, metadata")\
             .eq("conversation_id", db_conversation_id)\
-            .order("created_at", desc=False)\
-            .limit(limit)\
-            .execute()
+            .order("created_at", desc=False)
+        
+        # Apply pagination using range (more efficient than limit+offset for large datasets)
+        if offset > 0:
+            query = query.range(offset, offset + limit - 1)
+        else:
+            query = query.limit(limit)
+        
+        result = query.execute()
         
         # Convert to Message-like objects for API compatibility
         from adapters import Message

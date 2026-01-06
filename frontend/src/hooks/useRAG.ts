@@ -2,13 +2,15 @@
  * useRAG Hook
  * Provides RAG functionality for chat components
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import ragService, { Document, SearchResult, RAGContextResponse } from '../services/rag';
+import { RAGConfig } from '../types';
 
 interface UseRAGOptions {
   autoSearch?: boolean;
   maxTokens?: number;
   useHybrid?: boolean;
+  defaultEnabled?: boolean;
 }
 
 interface UseRAGReturn {
@@ -18,7 +20,11 @@ interface UseRAGReturn {
   isLoading: boolean;
   error: string | null;
   ragContext: RAGContextResponse | null;
-  
+
+  // RAG Config for requests
+  ragConfig: RAGConfig;
+  ragEnabled: boolean;
+
   // Actions
   loadDocuments: () => Promise<void>;
   selectDocument: (documentId: string) => void;
@@ -26,14 +32,17 @@ interface UseRAGReturn {
   clearSelection: () => void;
   buildContext: (query: string) => Promise<string>;
   search: (query: string) => Promise<SearchResult[]>;
-  
+  setRagEnabled: (enabled: boolean) => void;
+  setRagMode: (mode: 'auto' | 'manual' | 'off') => void;
+
   // Status
   isConfigured: boolean;
+  documentsCount: number;
 }
 
 export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
-  const { maxTokens = 4000, useHybrid = true } = options;
-  
+  const { maxTokens = 4000, useHybrid = true, defaultEnabled = true } = options;
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -41,15 +50,29 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
   const [ragContext, setRagContext] = useState<RAGContextResponse | null>(null);
   const [isConfigured, setIsConfigured] = useState(false);
 
+  // RAG configuration state
+  const [ragEnabled, setRagEnabled] = useState(defaultEnabled);
+  const [ragMode, setRagMode] = useState<'auto' | 'manual' | 'off'>('auto');
+
+  // Build RAG config for API requests
+  const ragConfig: RAGConfig = {
+    enabled: ragEnabled && documents.length > 0,
+    mode: ragMode,
+    document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
+    max_chunks: 5,
+    min_similarity: 0.5,
+    use_rerank: true
+  };
+
   const loadDocuments = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-    
+
     try {
       // Check if RAG is configured
       const status = await ragService.getStatus();
       setIsConfigured(status.configured);
-      
+
       if (status.configured) {
         const docs = await ragService.listDocuments('ready');
         setDocuments(docs);
@@ -62,8 +85,13 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
     }
   }, []);
 
+  // Load documents on mount
+  useEffect(() => {
+    loadDocuments();
+  }, []);
+
   const selectDocument = useCallback((documentId: string) => {
-    setSelectedDocumentIds(prev => 
+    setSelectedDocumentIds(prev =>
       prev.includes(documentId) ? prev : [...prev, documentId]
     );
   }, []);
@@ -92,7 +120,7 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
         return '';
       }
     }
-    
+
     try {
       const response = await ragService.buildContext(query, {
         documentIds: selectedDocumentIds,
@@ -126,13 +154,18 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
     isLoading,
     error,
     ragContext,
+    ragConfig,
+    ragEnabled,
     loadDocuments,
     selectDocument,
     deselectDocument,
     clearSelection,
     buildContext,
     search,
-    isConfigured
+    setRagEnabled,
+    setRagMode,
+    isConfigured,
+    documentsCount: documents.length
   };
 }
 

@@ -61,7 +61,7 @@ export const useParallelChat = (): UseParallelChatReturn => {
     });
     abortControllersRef.current.clear();
     setIsLoading(false);
-    
+
     // Mark all streaming responses as stopped
     setResponses(prev => prev.map(r => ({
       ...r,
@@ -102,7 +102,7 @@ export const useParallelChat = (): UseParallelChatReturn => {
       try {
         // Get per-model settings if available
         const modelSettings = perModelConfigs?.[modelKey];
-        
+
         // Build model-specific config by merging global config with per-model settings
         const modelConfig: GenerationConfig = {
           ...config,
@@ -118,10 +118,10 @@ export const useParallelChat = (): UseParallelChatReturn => {
           ...(modelSettings?.streaming !== undefined && { stream: modelSettings.streaming }),
           ...(modelSettings?.stopSequences !== undefined && { stop_sequences: modelSettings.stopSequences }),
         };
-        
+
         // Determine system prompt: per-model > global > none
         const effectiveSystemPrompt = modelSettings?.systemPrompt || systemPrompt;
-        
+
         console.log(`[ParallelChat] Sending request for ${modelKey}:`, {
           hasPerModelConfig: !!modelSettings,
           effectiveSystemPrompt: effectiveSystemPrompt?.substring(0, 50) + '...',
@@ -180,8 +180,8 @@ export const useParallelChat = (): UseParallelChatReturn => {
               if (data.meta?.thinking || data.meta?.reasoning_content) {
                 const thinkingChunk = data.meta.thinking || data.meta.reasoning_content || '';
                 accumulatedThinking += thinkingChunk;
-                
-                setResponses(prev => prev.map((r, i) => 
+
+                setResponses(prev => prev.map((r, i) =>
                   i === index ? {
                     ...r,
                     thinkingContent: accumulatedThinking,
@@ -193,8 +193,8 @@ export const useParallelChat = (): UseParallelChatReturn => {
               // Handle content
               if (data.content) {
                 accumulatedContent += data.content;
-                
-                setResponses(prev => prev.map((r, i) => 
+
+                setResponses(prev => prev.map((r, i) =>
                   i === index ? {
                     ...r,
                     content: accumulatedContent,
@@ -217,7 +217,7 @@ export const useParallelChat = (): UseParallelChatReturn => {
               // Handle done
               if (data.done) {
                 const totalLatency = (Date.now() - startTime) / 1000;
-                setResponses(prev => prev.map((r, i) => 
+                setResponses(prev => prev.map((r, i) =>
                   i === index ? {
                     ...r,
                     isStreaming: false,
@@ -232,7 +232,7 @@ export const useParallelChat = (): UseParallelChatReturn => {
 
               // Handle errors
               if (data.error) {
-                setResponses(prev => prev.map((r, i) => 
+                setResponses(prev => prev.map((r, i) =>
                   i === index ? {
                     ...r,
                     error: data.error,
@@ -249,7 +249,7 @@ export const useParallelChat = (): UseParallelChatReturn => {
 
         // Finalize if not already done
         const totalLatency = (Date.now() - startTime) / 1000;
-        setResponses(prev => prev.map((r, i) => 
+        setResponses(prev => prev.map((r, i) =>
           i === index && r.isStreaming ? {
             ...r,
             isStreaming: false,
@@ -265,9 +265,9 @@ export const useParallelChat = (): UseParallelChatReturn => {
         if ((error as Error).name === 'AbortError') {
           return; // Request was cancelled
         }
-        
+
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        setResponses(prev => prev.map((r, i) => 
+        setResponses(prev => prev.map((r, i) =>
           i === index ? {
             ...r,
             error: errorMessage,
