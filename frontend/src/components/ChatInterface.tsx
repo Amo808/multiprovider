@@ -77,7 +77,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // RAG hook for document search integration
   const {
-    ragConfig,
     ragEnabled,
     setRagEnabled,
     documentsCount,
@@ -631,8 +630,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       conversation_id: conversationId,
       config: generationConfig,
       ...(systemPrompt && systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
-      // Include RAG config if enabled and documents exist
-      ...(ragEnabled && documentsCount > 0 ? { rag: ragConfig } : {})
+      // Always send RAG config to ensure it's properly disabled when not needed
+      rag: {
+        enabled: ragEnabled && documentsCount > 0,
+        mode: ragEnabled ? 'auto' : 'off',
+        document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
+        max_chunks: 5,
+        min_similarity: 0.5,
+        use_rerank: true
+      }
     };
 
     // Debug logging for system prompt and RAG
@@ -645,6 +651,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       ragEnabled,
       documentsCount,
       ragConfig: request.rag,
+      selectedDocumentIds: selectedDocumentIds.length,
       messageLength: messageText.length,
       isHiddenMode
     });

@@ -609,7 +609,7 @@
       "frequency_penalty": 0,
       "presence_penalty": 0,
       "stream": true,
-      "system_prompt": "You are a senior software engineer. Write clean, efficient, well-documented code with best practices.",
+      "system_prompt": "",
       "thinking_budget": -1,
       "include_thoughts": true,
       "verbosity": "high",

@@ -237,7 +237,7 @@ async def debug_auth_public():
 # Pydantic models
 class RAGConfig(BaseModel):
     """RAG configuration for chat requests"""
-    enabled: bool = True  # Enable RAG by default
+    enabled: bool = False  # RAG disabled by default - must be explicitly enabled
     mode: str = "auto"  # "auto", "manual", "off"
     document_ids: Optional[List[str]] = None  # Specific documents to search
     max_chunks: int = 5  # Max chunks to include
@@ -1330,7 +1330,9 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         # Search documents for relevant context (if RAG is enabled)
         rag_context = ""
         rag_sources = []
-        rag_config = request.rag or RAGConfig()  # Default RAG config
+        rag_config = request.rag or RAGConfig()  # Default RAG config (disabled by default)
+        
+        logger.info(f"[RAG] Config received: enabled={rag_config.enabled}, mode={rag_config.mode}, document_ids={rag_config.document_ids}")
         
         if rag_config.enabled and rag_config.mode != "off":
             try:
