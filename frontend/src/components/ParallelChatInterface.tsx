@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Square, Bot, Layers, X, GitMerge, GitBranch, User, Trash2, Eye, EyeOff, RefreshCw, Copy, FolderOpen, ChevronDown, Plus, Check, AlertCircle, Loader2, ArrowUp, ArrowDown, Sparkles, GripVertical, Brain, Edit2 } from 'lucide-react';
+import { Send, Square, Bot, Layers, X, GitMerge, GitBranch, User, Trash2, Eye, EyeOff, RefreshCw, Copy, FolderOpen, ChevronDown, Plus, Check, AlertCircle, Loader2, ArrowUp, ArrowDown, Sparkles, GripVertical, Brain, Edit2, Maximize2 } from 'lucide-react';
 import { ModelInfo, GenerationConfig, Message } from '../types';
 import { Button } from './ui/button';
 import { ModelMultiSelector } from './ModelMultiSelector';
@@ -152,6 +152,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
   // Inline Edit state for user messages
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const [editingMessage, setEditingMessage] = useState('');
+  
+  // Expanded response modal state
+  const [expandedResponse, setExpandedResponse] = useState<{
+    turnId: string;
+    responseIndex: number;
+    content: string;
+    model: ModelInfo;
+  } | null>(null);
   
   // Custom context popup for smart regenerate
   const [smartRegeneratePopup, setSmartRegeneratePopup] = useState<{
@@ -835,15 +843,25 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
 
   // Touch start - begin dragging
   const handleTouchStart = (e: React.TouchEvent, turnId: string, responseIndex: number) => {
+    // Prevent text selection immediately
+    e.preventDefault();
+    
     // Long press to start drag (300ms)
     const touch = e.touches[0];
     const startX = touch.clientX;
     const startY = touch.clientY;
     const element = e.currentTarget as HTMLElement;
     
+    // Store initial position for movement detection
+    (element as any)._startX = startX;
+    (element as any)._startY = startY;
+    
     const longPressTimer = setTimeout(() => {
       // Vibrate if supported
       if (navigator.vibrate) navigator.vibrate(50);
+      
+      // Disable text selection on body
+      document.body.classList.add('touch-dragging');
       
       setTouchDragging({
         turnId,
@@ -857,6 +875,7 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
       
       // Prevent scrolling while dragging
       document.body.style.overflow = 'hidden';
+      document.body.style.touchAction = 'none';
     }, 300);
     
     // Store timer to cancel on touchend/touchmove (short distance)
@@ -915,8 +934,10 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     
     if (!touchDragging) return;
     
-    // Restore scrolling
+    // Restore scrolling and text selection
     document.body.style.overflow = '';
+    document.body.style.touchAction = '';
+    document.body.classList.remove('touch-dragging');
     
     // Perform drop if we have a target
     if (touchDropTarget) {
@@ -933,6 +954,8 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
     if (timer) clearTimeout(timer);
     
     document.body.style.overflow = '';
+    document.body.style.touchAction = '';
+    document.body.classList.remove('touch-dragging');
     setTouchDragging(null);
     setTouchDropTarget(null);
   };
@@ -1531,8 +1554,13 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                           onTouchMove={handleTouchMove}
                           onTouchEnd={handleTouchEnd}
                           onTouchCancel={handleTouchCancel}
+                          style={{ touchAction: 'pan-y pinch-zoom' }}
                           className={cn(
-                            "rounded-lg border px-3 py-2 group/resp relative transition-all max-h-[250px] sm:max-h-[300px] overflow-hidden flex flex-col",
+                            "rounded-lg border px-3 py-2 group/resp relative transition-all overflow-hidden flex flex-col select-none",
+                            // Last turn gets more space, others are compact
+                            turnIndex === conversationHistory.length - 1 
+                              ? "max-h-[400px] sm:max-h-[500px]" 
+                              : "max-h-[200px] sm:max-h-[250px]",
                             "md:cursor-grab md:active:cursor-grabbing",
                             resp.enabled 
                               ? providerColors[resp.model.provider] || providerColors.ollama
@@ -1590,6 +1618,20 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                               "flex items-center gap-0.5 transition-opacity",
                               "opacity-100 sm:opacity-0 sm:group-hover/resp:opacity-100"
                             )}>
+                              {/* Expand button */}
+                              <button
+                                onClick={() => setExpandedResponse({
+                                  turnId: turn.id,
+                                  responseIndex: idx,
+                                  content: resp.content,
+                                  model: resp.model
+                                })}
+                                className="p-1.5 sm:p-1 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground transition-colors touch-manipulation"
+                                title="Expand response"
+                              >
+                                <Maximize2 size={14} className="sm:w-3 sm:h-3" />
+                              </button>
+                              
                               {/* Copy button */}
                               <button
                                 onClick={() => copyResponse(resp.content)}
@@ -1707,11 +1749,14 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
                             />
                           )}
                           
-                          {/* Response content - scrollable */}
-                          <div className={cn(
-                            "text-sm whitespace-pre-wrap break-words flex-1 overflow-y-auto min-h-0",
-                            resp.enabled ? "text-foreground" : "text-muted-foreground"
-                          )}>
+                          {/* Response content - scrollable with contained overscroll */}
+                          <div 
+                            className={cn(
+                              "text-sm whitespace-pre-wrap break-words flex-1 overflow-y-auto min-h-0",
+                              resp.enabled ? "text-foreground" : "text-muted-foreground"
+                            )}
+                            style={{ overscrollBehavior: 'contain' }}
+                          >
                             {resp.content}
                           </div>
                           
@@ -1891,6 +1936,58 @@ export const ParallelChatInterface: React.FC<ParallelChatInterfaceProps> = ({
           </div>
         </div>
       </div>
+      
+      {/* Expanded Response Modal */}
+      {expandedResponse && (
+        <div 
+          className="fixed inset-0 z-[200] bg-background/95 backdrop-blur-sm flex flex-col animate-in fade-in duration-200"
+          onClick={() => setExpandedResponse(null)}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Bot size={18} />
+              <span className="font-medium">{expandedResponse.model.display_name}</span>
+              <span className={cn(
+                "px-2 py-0.5 text-xs rounded-full",
+                providerColors[expandedResponse.model.provider] || providerColors.ollama
+              )}>
+                {expandedResponse.model.provider}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyResponse(expandedResponse.content);
+                }}
+                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                title="Copy"
+              >
+                <Copy size={18} />
+              </button>
+              <button
+                onClick={() => setExpandedResponse(null)}
+                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+          
+          {/* Content - scrollable */}
+          <div 
+            className="flex-1 overflow-y-auto p-4 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="max-w-4xl mx-auto">
+              <pre className="whitespace-pre-wrap break-words text-sm text-foreground font-sans leading-relaxed">
+                {expandedResponse.content}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Touch drag ghost overlay */}
       {touchDragging && (

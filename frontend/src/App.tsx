@@ -706,7 +706,7 @@ interface GoogleCredentialResponse {
 
   if (configLoading || !config) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+      <div className="h-full bg-background text-foreground flex items-center justify-center">
         <div className="text-center">
           {configError ? (
             <>
@@ -727,7 +727,7 @@ interface GoogleCredentialResponse {
 
   // ========================= Main UI =========================
   return (
-    <div className="h-screen h-[100dvh] bg-background text-foreground flex flex-col overflow-hidden">
+    <div className="h-full bg-background text-foreground flex flex-col overflow-hidden">
       <ToastProvider />
       <TopNavigation
         config={config}

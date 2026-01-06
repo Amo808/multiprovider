@@ -82,12 +82,12 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
   };
 
   return (
-    <header className="flex items-center h-12 sm:h-14 px-2 sm:px-4 gap-2 sm:gap-3 bg-background border-b border-border flex-shrink-0">
+    <header className="flex items-center h-11 sm:h-14 px-2 sm:px-4 gap-1.5 sm:gap-3 bg-background border-b border-border flex-shrink-0 sticky top-0 z-30" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
       <div className="flex items-center">
-        <Logo width={80} height={12} className="text-foreground sm:w-[100px] sm:h-[14px]" />
+        <Logo width={70} height={10} className="text-foreground sm:w-[100px] sm:h-[14px]" />
       </div>
       {/* Unified model & provider menu inline - all settings are here */}
-      <div className="ml-1 sm:ml-2">
+      <div className="ml-0.5 sm:ml-2">
         <UnifiedModelMenu 
           config={config} 
           activeModel={selectedModel} 
@@ -193,20 +193,20 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
       </div>
       
       {/* Usage panel in the header */}
-      <div className="ml-auto flex items-center gap-1 sm:gap-2">
+      <div className="ml-auto flex items-center gap-0.5 sm:gap-2">
         <div className="hidden sm:block">
           <TokenCounter usage={tokenUsage || null} model={selectedModel?.display_name} contextLength={selectedModel?.context_length} />
         </div>
-        <Button variant="ghost" size="sm" onClick={onSettingsClick} className="px-2 sm:px-3 h-8 text-xs hidden sm:flex">Settings</Button>
-        <Button variant="ghost" size="sm" onClick={onThemeToggle} className="h-8 w-8 p-0" title={theme}>{themeIcon(theme)}</Button>
+        <Button variant="ghost" size="sm" onClick={onSettingsClick} className="px-2 sm:px-3 h-7 sm:h-8 text-xs hidden sm:flex">Settings</Button>
+        <Button variant="ghost" size="sm" onClick={onThemeToggle} className="h-7 w-7 sm:h-8 sm:w-8 p-0" title={theme}>{themeIcon(theme)}</Button>
         {userEmail && (
-          <div className="flex items-center gap-1 sm:gap-2">
-            <Avatar className="h-7 w-7 sm:h-8 sm:w-8"><AvatarFallback>{userEmail.slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
+          <div className="flex items-center gap-0.5 sm:gap-2">
+            <Avatar className="h-6 w-6 sm:h-8 sm:w-8"><AvatarFallback className="text-[10px] sm:text-xs">{userEmail.slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
             <span className="text-xs text-muted-foreground hidden lg:inline">{userEmail}</span>
           </div>
         )}
-        <Button variant="destructive" size="sm" onClick={onLogout} className="h-7 sm:h-8 px-2 sm:px-3 text-xs flex items-center gap-1">
-          <LogOut size={14}/>
+        <Button variant="destructive" size="sm" onClick={onLogout} className="h-6 sm:h-8 px-1.5 sm:px-3 text-[10px] sm:text-xs flex items-center gap-0.5 sm:gap-1">
+          <LogOut size={12} className="sm:w-[14px] sm:h-[14px]"/>
           <span className="hidden sm:inline">Logout</span>
         </Button>
       </div>
