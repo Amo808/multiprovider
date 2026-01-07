@@ -148,11 +148,11 @@ async def lifespan(app: FastAPI):
         # Try Supabase first, fall back to SQLite
         logger.info(f"[STARTUP] USE_SUPABASE={USE_SUPABASE}, is_supabase_configured()={is_supabase_configured()}")
         if USE_SUPABASE and is_supabase_configured():
-            logger.info("[STARTUP] ✅ Using SUPABASE for conversation storage")
+            logger.info("[STARTUP] [OK] Using SUPABASE for conversation storage")
             conversation_store = get_supabase_conversation_store()
             logger.info(f"[STARTUP] conversation_store type: {type(conversation_store).__name__}")
         else:
-            logger.warning(f"[STARTUP] ⚠️ Using SQLite for conversation storage (Supabase configured: {is_supabase_configured()})")
+            logger.warning(f"[STARTUP] [WARN] Using SQLite for conversation storage (Supabase configured: {is_supabase_configured()})")
             logger.info(f"[STARTUP] Storage path: {storage_path}")
             db_path = str(storage_path / "conversations.db")
             conversation_store = DatabaseConversationStore(db_path=db_path)
@@ -1105,7 +1105,7 @@ async def test_provider_connection(provider_id: str, _: str = Depends(get_curren
             status.error = error if not is_valid else None
             status.loading = False
             
-        logger.info(f"Connection test for provider {provider_id}: {'✓' if is_valid else '✗'} {error or 'Success'}")
+        logger.info(f"Connection test for provider {provider_id}: {'[OK]' if is_valid else '[FAIL]'} {error or 'Success'}")
         
         return {
             "success": is_valid,
