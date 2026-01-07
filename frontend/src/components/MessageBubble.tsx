@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useReducer, memo } from 'react';
-import { Bot, Copy, Brain, Zap, ChevronDown, Trash2, Clock, Sparkles, Eye, EyeOff, GitBranch, Check, X, RotateCcw } from 'lucide-react';
-import { Message, ModelInfo } from '../types';
+import { Bot, Copy, Brain, Zap, ChevronDown, Trash2, Clock, Sparkles, Eye, EyeOff, GitBranch, Check, X, RotateCcw, FileText, BookOpen } from 'lucide-react';
+import { Message, ModelInfo, RAGSource } from '../types';
 import { cn } from '../lib/utils';
 
 interface MessageBubbleProps {
@@ -70,6 +70,102 @@ const ThinkingSection = memo<{
   );
 });
 ThinkingSection.displayName = 'ThinkingSection';
+
+// RAG Context Section - shows document sources used for the response
+const RAGContextSection = memo<{
+  sources: RAGSource[];
+  contextPreview?: string;
+}>(({ sources, contextPreview }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [showFullContext, setShowFullContext] = useState(false);
+
+  if (!sources || sources.length === 0) return null;
+
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <BookOpen className="w-4 h-4 text-blue-500" />
+        <span>Document context</span>
+        <span className="text-xs bg-blue-500/20 text-blue-500 px-1.5 py-0.5 rounded">
+          {sources.length} {sources.length === 1 ? 'chunk' : 'chunks'}
+        </span>
+        <ChevronDown className={cn("w-4 h-4 transition-transform", isOpen && "rotate-180")} />
+      </button>
+
+      {isOpen && (
+        <div className="mt-2 pl-6 border-l-2 border-blue-500/30 space-y-3">
+          {/* Source documents */}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Sources used:</p>
+            {sources.map((source, idx) => (
+              <div
+                key={`${source.document_id}-${source.chunk_index || idx}`}
+                className="flex items-start gap-2 p-2 bg-blue-500/5 rounded-lg border border-blue-500/10"
+              >
+                <span className="flex-shrink-0 w-5 h-5 rounded bg-blue-500/20 text-blue-500 text-xs font-medium flex items-center justify-center">
+                  {idx + 1}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <FileText className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-xs font-medium text-foreground truncate">
+                      {source.document_name || 'Document'}
+                    </span>
+                    {source.section && (
+                      <span className="text-xs text-muted-foreground">§ {source.section}</span>
+                    )}
+                    {source.page && (
+                      <span className="text-xs text-muted-foreground">p. {source.page}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={cn(
+                      "text-xs px-1.5 py-0.5 rounded",
+                      source.similarity >= 0.8 ? "bg-green-500/10 text-green-500" :
+                      source.similarity >= 0.6 ? "bg-yellow-500/10 text-yellow-500" :
+                      "bg-orange-500/10 text-orange-500"
+                    )}>
+                      {Math.round(source.similarity * 100)}% match
+                    </span>
+                    {source.citation && (
+                      <span className="text-xs text-muted-foreground truncate">
+                        [{source.citation}]
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Context preview */}
+          {contextPreview && (
+            <div className="mt-3">
+              <button
+                onClick={() => setShowFullContext(!showFullContext)}
+                className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 transition-colors mb-2"
+              >
+                {showFullContext ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                {showFullContext ? 'Hide context' : 'Show context sent to model'}
+              </button>
+              {showFullContext && (
+                <div className="p-3 bg-secondary/50 rounded-lg">
+                  <p className="text-xs text-muted-foreground font-mono whitespace-pre-wrap break-words">
+                    {contextPreview}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+RAGContextSection.displayName = 'RAGContextSection';
 
 // OPTIMIZED: Lightweight code block - no syntax highlighting by default
 const CodeBlock = memo<{
@@ -500,6 +596,14 @@ export const MessageBubble = memo<MessageBubbleProps>(({
               content={reasoningContent || 'Thinking...'}
               isStreaming={isThinking}
               tokens={message.meta?.thought_tokens}
+            />
+          )}
+
+          {/* RAG Context section - shows document sources */}
+          {message.meta?.rag_sources && message.meta.rag_sources.length > 0 && (
+            <RAGContextSection
+              sources={message.meta.rag_sources}
+              contextPreview={message.meta.rag_context_preview}
             />
           )}
 

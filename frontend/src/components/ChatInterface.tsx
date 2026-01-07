@@ -62,11 +62,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     text: string;
     totalLength: number;
   } | null>(null);
-  
+
   // Actual message content - either inputValue or hiddenContent
   const actualContent = hiddenContent || inputValue;
   const isHiddenMode = hiddenContent !== null;
-  
+
   const conversationId = incomingConversationId || `conversation-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -79,6 +79,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const {
     ragEnabled,
     setRagEnabled,
+    ragMode,
+    setRagMode,
     documentsCount,
     loadDocuments,
     documents,
@@ -285,7 +287,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (hiddenContent) {
       setHiddenContent(null);
     }
-    
+
     const value = e.target.value;
     const len = value.length;
 
@@ -377,7 +379,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     const truncatedText = pendingPaste.text.slice(0, maxPaste);
     const newContent = currentContent + truncatedText;
-    
+
     if (newContent.length > PROMPT_DISPLAY_LIMIT) {
       setHiddenContent(newContent);
       setInputValue(`[Large content: ${(newContent.length / 1000).toFixed(1)}k chars]\n\n${newContent.slice(0, 500)}...`);
@@ -385,7 +387,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setHiddenContent(null);
       setInputValue(newContent);
     }
-    
+
     setPromptSizeWarning(`Pasted ${(truncatedText.length / 1000).toFixed(1)}k of ${(pendingPaste.text.length / 1000).toFixed(1)}k characters (truncated to recommended size)`);
     setPendingPaste(null);
   }, [pendingPaste, inputValue, hiddenContent]);
@@ -633,11 +635,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       // Always send RAG config to ensure it's properly disabled when not needed
       rag: {
         enabled: ragEnabled && documentsCount > 0,
-        mode: ragEnabled ? 'auto' : 'off',
+        mode: ragEnabled ? ragMode : 'off',
         document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
-        max_chunks: 5,
-        min_similarity: 0.5,
-        use_rerank: true
+        max_chunks: ragMode === 'agentic' ? 10 : 5,
+        min_similarity: ragMode === 'hyde' ? 0.3 : 0.5,
+        use_rerank: ragMode !== 'basic'
       }
     };
 
@@ -1089,6 +1091,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     onDocumentToggle={handleDocumentToggle}
                     onSelectAll={handleSelectAllDocuments}
                     onDeselectAll={handleDeselectAllDocuments}
+                    mode={ragMode}
+                    onModeChange={setRagMode}
                   />
                 )}
               </div>
@@ -1201,7 +1205,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </div>
               <h3 className="text-lg font-semibold">Large Content Detected</h3>
             </div>
-            
+
             <div className="space-y-3 mb-6">
               <p className="text-sm text-muted-foreground">
                 You're about to paste <span className="font-medium text-foreground">{(pendingPaste.text.length / 1000).toFixed(1)}k characters</span>.

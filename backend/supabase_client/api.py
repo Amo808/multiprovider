@@ -332,3 +332,137 @@ async def reprocess_document(document_id: str, user_email: str):
     except Exception as e:
         logger.error(f"Reprocessing failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== CHAPTER ENDPOINTS ====================
+
+class ChapterInfo(BaseModel):
+    chapter_number: str
+    title: str
+    start_chunk: int
+    end_chunk: int
+    preview: str
+
+
+class ChaptersResponse(BaseModel):
+    document_id: str
+    document_name: str
+    chapters: List[ChapterInfo]
+    total_chapters: int
+
+
+@router.get("/documents/{document_id}/chapters")
+async def get_document_chapters(
+    document_id: str,
+    user_email: str
+):
+    """
+    Get list of detected chapters/sections in a document.
+    Useful for 'chapter' mode RAG.
+    """
+    check_supabase()
+    
+    try:
+        rag_store = get_rag_store()
+        
+        # Verify document exists and belongs to user
+        doc = rag_store.get_document(document_id, user_email)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        chapters = rag_store.get_document_chapters(user_email, document_id)
+        
+        return ChaptersResponse(
+            document_id=document_id,
+            document_name=doc["name"],
+            chapters=[ChapterInfo(**ch) for ch in chapters],
+            total_chapters=len(chapters)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get chapters: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/documents/{document_id}/chapter/{chapter_number}")
+async def get_chapter_content(
+    document_id: str,
+    chapter_number: str,
+    user_email: str
+):
+    """
+    Get full content of a specific chapter.
+    """
+    check_supabase()
+    
+    try:
+        rag_store = get_rag_store()
+        
+        # Verify document exists
+        doc = rag_store.get_document(document_id, user_email)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        content, sources = rag_store.get_chapter_content(user_email, document_id, chapter_number)
+        
+        if not content:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_number} not found")
+        
+        return {
+            "document_id": document_id,
+            "document_name": doc["name"],
+            "chapter_number": chapter_number,
+            "content": content,
+            "sources": sources,
+            "char_count": len(content),
+            "estimated_tokens": len(content) // 4
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get chapter content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/documents/{document_id}/full")
+async def get_full_document(
+    document_id: str,
+    user_email: str,
+    max_tokens: int = 100000
+):
+    """
+    Get full document content.
+    WARNING: Can be very large! Use with models that support large context.
+    """
+    check_supabase()
+    
+    try:
+        rag_store = get_rag_store()
+        
+        # Verify document exists
+        doc = rag_store.get_document(document_id, user_email)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        context, sources, debug_info = rag_store.build_full_document_context(
+            user_email=user_email,
+            document_ids=[document_id],
+            max_tokens=max_tokens
+        )
+        
+        return {
+            "document_id": document_id,
+            "document_name": doc["name"],
+            "content": context,
+            "sources": sources,
+            "debug": debug_info
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get full document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

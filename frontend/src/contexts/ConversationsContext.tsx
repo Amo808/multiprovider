@@ -291,13 +291,41 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         }
 
         // Handle heartbeat
-        if (chunk.heartbeat) {
+        if (chunk.heartbeat || chunk.ping) {
           setConversations(prev => ({
             ...prev,
             [conversationId]: {
               ...prev[conversationId],
               lastHeartbeat: Date.now(),
               connectionLost: false
+            }
+          }));
+          return;
+        }
+
+        // Handle RAG context info (sent at start of generation)
+        if (chunk.type === 'rag_context' && chunk.rag_sources) {
+          console.log(`[ConversationsContext] RAG context received: ${chunk.chunks_count} chunks, ${chunk.rag_context_length} chars`);
+          
+          // Update the assistant message with RAG sources
+          setConversations(prev => ({
+            ...prev,
+            [conversationId]: {
+              ...prev[conversationId],
+              deepResearchStage: `📚 Found ${chunk.chunks_count} relevant document chunks...`,
+              messages: prev[conversationId].messages.map(msg =>
+                msg.id === assistantMessage.id
+                  ? {
+                    ...msg,
+                    meta: {
+                      ...msg.meta,
+                      rag_sources: chunk.rag_sources,
+                      rag_enabled: true,
+                      rag_context_preview: chunk.rag_context_preview
+                    }
+                  }
+                  : msg
+              )
             }
           }));
           return;

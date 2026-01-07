@@ -45,6 +45,7 @@ export interface ExtendedMessageMeta {
   // RAG sources
   rag_sources?: RAGSource[];
   rag_enabled?: boolean;
+  rag_context_preview?: string; // Preview of the context sent to model
 }
 
 export interface Message {
@@ -60,11 +61,17 @@ export interface ChatResponse {
   id?: string;
   done?: boolean;
   error?: string;
-  type?: string; // Error type (e.g., "API_KEY_MISSING")
+  type?: string; // Error type (e.g., "API_KEY_MISSING") or event type (e.g., "rag_context")
   stage_message?: string; // For Deep Research stages
   heartbeat?: string; // For heartbeat/keepalive messages
+  ping?: boolean; // For heartbeat ping events
   streaming_ready?: boolean; // Backend ready to stream
   first_content?: boolean; // First content chunk signal
+  // RAG context info (sent at start of generation)
+  rag_sources?: RAGSource[];
+  rag_context_preview?: string;
+  rag_context_length?: number;
+  chunks_count?: number;
   meta?: {
     tokens_in?: number;
     tokens_out?: number;
@@ -81,6 +88,10 @@ export interface ChatResponse {
     reasoning_content?: string; // DeepSeek reasoning content
     thought_content?: string; // Full thought content at end
     tool_calls?: { call_id: string; name?: string; input?: string }[]; // Responses API tool calls
+    // RAG sources in final response
+    rag_sources?: RAGSource[];
+    rag_enabled?: boolean;
+    rag_context_preview?: string;
   };
 }
 

@@ -6,11 +6,16 @@ import { useState, useCallback, useEffect } from 'react';
 import ragService, { Document, SearchResult, RAGContextResponse } from '../services/rag';
 import { RAGConfig } from '../types';
 
+// RAG search modes (when RAG is enabled)
+// 'off' is handled separately via ragEnabled flag
+export type RAGSearchMode = 'basic' | 'advanced' | 'ultimate' | 'hyde' | 'agentic';
+
 interface UseRAGOptions {
   autoSearch?: boolean;
   maxTokens?: number;
   useHybrid?: boolean;
   defaultEnabled?: boolean;
+  defaultMode?: RAGSearchMode;
 }
 
 interface UseRAGReturn {
@@ -24,6 +29,7 @@ interface UseRAGReturn {
   // RAG Config for requests
   ragConfig: RAGConfig;
   ragEnabled: boolean;
+  ragMode: RAGSearchMode;
 
   // Actions
   loadDocuments: () => Promise<void>;
@@ -33,7 +39,7 @@ interface UseRAGReturn {
   buildContext: (query: string) => Promise<string>;
   search: (query: string) => Promise<SearchResult[]>;
   setRagEnabled: (enabled: boolean) => void;
-  setRagMode: (mode: 'auto' | 'manual' | 'off') => void;
+  setRagMode: (mode: RAGSearchMode) => void;
 
   // Status
   isConfigured: boolean;
@@ -41,7 +47,7 @@ interface UseRAGReturn {
 }
 
 export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
-  const { maxTokens = 4000, useHybrid = true, defaultEnabled = true } = options;
+  const { maxTokens = 4000, useHybrid = true, defaultEnabled = true, defaultMode = 'ultimate' } = options;
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
@@ -52,16 +58,16 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
 
   // RAG configuration state
   const [ragEnabled, setRagEnabled] = useState(defaultEnabled);
-  const [ragMode, setRagMode] = useState<'auto' | 'manual' | 'off'>('auto');
+  const [ragMode, setRagMode] = useState<RAGSearchMode>(defaultMode);
 
   // Build RAG config for API requests
   const ragConfig: RAGConfig = {
     enabled: ragEnabled && documents.length > 0,
     mode: ragMode,
     document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
-    max_chunks: 5,
-    min_similarity: 0.5,
-    use_rerank: true
+    max_chunks: ragMode === 'agentic' ? 10 : 5, // More chunks for agentic mode
+    min_similarity: ragMode === 'hyde' ? 0.3 : 0.5, // Lower threshold for HyDE
+    use_rerank: ragMode !== 'basic' // Rerank for all except basic
   };
 
   const loadDocuments = useCallback(async () => {
@@ -156,6 +162,7 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
     ragContext,
     ragConfig,
     ragEnabled,
+    ragMode,
     loadDocuments,
     selectDocument,
     deselectDocument,

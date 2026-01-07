@@ -237,12 +237,18 @@ async def debug_auth_public():
 # Pydantic models
 class RAGConfig(BaseModel):
     """RAG configuration for chat requests"""
-    enabled: bool = False  # RAG disabled by default - must be explicitly enabled
-    mode: str = "auto"  # "auto", "manual", "off"
-    document_ids: Optional[List[str]] = None  # Specific documents to search
-    max_chunks: int = 5  # Max chunks to include
+    enabled: bool = True  # RAG enabled by default - auto-searches user's documents
+    mode: str = "auto"  # "off", "auto", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
+    document_ids: Optional[List[str]] = None  # Specific documents to search (None = all)
+    max_chunks: int = 10  # Increased from 5 to 10 for better context
     min_similarity: float = 0.5  # Minimum similarity threshold
     use_rerank: bool = True  # Use LLM reranking for better results
+    # Advanced options (like n8n Supabase tool)
+    include_metadata: bool = True  # Include document metadata in results
+    keyword_weight: float = 0.3  # Weight for keyword/BM25 search (0-1)
+    semantic_weight: float = 0.7  # Weight for semantic/vector search (0-1)
+    # Debug option - shows FULL prompt sent to model
+    debug_mode: bool = False  # When True, returns full system prompt in response
 
 class ChatRequest(BaseModel):
     message: str
@@ -1158,6 +1164,10 @@ async def get_history(user_email: str = Depends(get_current_user)):
 async def send_message(request: ChatRequest, http_request: Request, user_email: str = Depends(get_current_user)):
     """Send a chat message and get streaming response (scoped to user)."""
     
+    # DEBUG: Log incoming request with RAG config
+    logger.info(f"[CHAT] Incoming request: provider={request.provider}, model={request.model}, user={user_email}")
+    logger.info(f"[CHAT] RAG config in request: {request.rag}")
+    
     def generate_error_stream(error_message: str, error_type: str = "error"):
         """Generate SSE stream with error message."""
         yield f"data: {json.dumps({'error': error_message, 'type': error_type, 'done': True})}\n\n"
@@ -1334,6 +1344,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         
         logger.info(f"[RAG] Config received: enabled={rag_config.enabled}, mode={rag_config.mode}, document_ids={rag_config.document_ids}")
         
+        rag_debug_info = {}  # For UI transparency
         if rag_config.enabled and rag_config.mode != "off":
             try:
                 from supabase_client.rag import get_rag_store
@@ -1345,27 +1356,144 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                 if user_docs:
                     logger.info(f"[RAG] Searching documents for user {user_email}")
                     
-                    # Build context with citations
-                    if rag_config.use_rerank:
-                        rag_context, rag_sources = rag_store.build_cited_context(
+                    # Determine RAG strategy based on mode
+                    # Modes: "off", "auto", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
+                    rag_mode = rag_config.mode or "auto"
+                    
+                    # Extract advanced options
+                    max_chunks = rag_config.max_chunks or 10  # Increased default from 5 to 10
+                    min_similarity = rag_config.min_similarity or 0.5
+                    use_rerank = rag_config.use_rerank
+                    keyword_weight = rag_config.keyword_weight or 0.3
+                    semantic_weight = rag_config.semantic_weight or 0.7
+                    
+                    logger.info(f"[RAG] Config: mode={rag_mode}, max_chunks={max_chunks}, min_sim={min_similarity}, rerank={use_rerank}, kw_weight={keyword_weight}, sem_weight={semantic_weight}")
+                    
+                    # Check which methods are available in RAG store
+                    has_ultimate = hasattr(rag_store, 'ultimate_rag_search')
+                    has_advanced = hasattr(rag_store, 'advanced_rag_search')
+                    has_full = hasattr(rag_store, 'build_full_document_context')
+                    has_chapter = hasattr(rag_store, 'build_chapter_context')
+                    has_smart = hasattr(rag_store, 'smart_rag_search')
+                    
+                    # === SMART MODE - Universal AI-powered retrieval ===
+                    if rag_mode == "smart" and has_smart:
+                        # 🧠 SMART RAG: AI analyzes query intent and retrieves optimally
+                        # Understands: chapters, ranges, full doc, comparisons, legal loopholes, etc.
+                        logger.info(f"[RAG] Using SMART mode - AI intent analysis")
+                        rag_context, rag_sources, rag_debug_info = rag_store.smart_rag_search(
                             query=request.message,
                             user_email=user_email,
-                            max_tokens=4000,
-                            use_rerank=True,
-                            include_citations=True
+                            document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
+                            max_tokens=100000
                         )
+                    
+                    # === AUTO MODE - Let AI decide best approach ===
+                    elif rag_mode == "auto" and has_smart:
+                        # Auto mode now uses smart RAG for better results
+                        logger.info(f"[RAG] Using AUTO mode with SMART RAG")
+                        rag_context, rag_sources, rag_debug_info = rag_store.smart_rag_search(
+                            query=request.message,
+                            user_email=user_email,
+                            document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
+                            max_tokens=50000
+                        )
+                    
+                    # === FULL MODE - Entire document ===
+                    elif rag_mode == "full" and has_full:
+                        # Load ENTIRE document(s) into context
+                        # Best for: "summarize the whole book", "analyze entire document"
+                        logger.info(f"[RAG] Using FULL mode - loading entire document(s)")
+                        
+                        # Check document size first
+                        has_stats = hasattr(rag_store, 'get_document_stats')
+                        if has_stats:
+                            stats = rag_store.get_document_stats(user_email, rag_config.document_ids)
+                            logger.info(f"[RAG] Document stats: {stats}")
+                            
+                            # If document is too large, suggest iterative mode
+                            if stats.get("recommended_approach") == "iterative":
+                                logger.warning(f"[RAG] Document too large for full mode ({stats.get('estimated_tokens', 0):,} tokens). Consider iterative mode.")
+                        
+                        rag_context, rag_sources, rag_debug_info = rag_store.build_full_document_context(
+                            user_email=user_email,
+                            document_ids=rag_config.document_ids,
+                            max_tokens=100000  # ~400K chars - fits Gemini 1M / Claude 200K
+                        )
+                    
+                    # === ITERATIVE MODE - Process large documents in batches ===
+                    elif rag_mode == "iterative" and hasattr(rag_store, 'build_iterative_summary_context'):
+                        # Process large documents in batches
+                        # batch_number should be passed in rag_config or default to 0
+                        batch_number = getattr(rag_config, 'batch_number', 0)
+                        logger.info(f"[RAG] Using ITERATIVE mode - batch {batch_number}")
+                        rag_context, rag_sources, rag_debug_info = rag_store.build_iterative_summary_context(
+                            user_email=user_email,
+                            document_ids=rag_config.document_ids,
+                            batch_size_chars=20000,
+                            batch_number=batch_number
+                        )
+                        
+                    elif rag_mode == "chapter" and has_chapter:
+                        # Work with specific chapter
+                        # Auto-detects chapter from query like "перескажи главу 3"
+                        logger.info(f"[RAG] Using CHAPTER mode - working with specific chapter")
+                        rag_context, rag_sources, rag_debug_info = rag_store.build_chapter_context(
+                            query=request.message,
+                            user_email=user_email,
+                            document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
+                            max_tokens=30000  # ~120K chars per chapter
+                        )
+                    
+                    elif rag_mode in ["ultimate", "hyde", "agentic"] and has_ultimate:
+                        # Ultimate RAG with auto-strategy selection or specific strategy
+                        # NOW with smart intent detection for chapters
+                        # Use large token limit - smart intent will decide actual scope
+                        strategy = "auto" if rag_mode == "ultimate" else rag_mode
+                        rag_result = rag_store.ultimate_rag_search(
+                            query=request.message,
+                            user_email=user_email,
+                            max_tokens=50000,  # Large limit, smart intent decides actual scope
+                            strategy=strategy,
+                            document_id=rag_config.document_ids[0] if rag_config.document_ids else None
+                        )
+                        rag_context = rag_result["context"]
+                        rag_sources = rag_result["sources"]
+                        rag_debug_info = rag_result.get("debug", {})
+                        
+                    elif rag_mode == "advanced" and has_advanced:
+                        # Advanced search with multi-query, hybrid, and reranking
+                        rag_result = rag_store.advanced_rag_search(
+                            query=request.message,
+                            user_email=user_email,
+                            max_tokens=max_chunks * 800,
+                            use_multi_query=True,
+                            use_rerank=use_rerank,
+                            include_debug=True
+                        )
+                        rag_context = rag_result["context"]
+                        rag_sources = rag_result["sources"]
+                        rag_debug_info = rag_result.get("debug", {})
+                        
                     else:
+                        # auto/basic/fallback: hybrid search with configurable weights
+                        # This is always available
                         rag_context, rag_sources = rag_store.build_rag_context(
                             query=request.message,
                             user_email=user_email,
                             document_ids=rag_config.document_ids,
-                            max_tokens=4000,
-                            threshold=rag_config.min_similarity,
-                            use_hybrid=True
+                            max_tokens=max_chunks * 800,
+                            threshold=min_similarity,
+                            use_hybrid=True,
+                            keyword_weight=keyword_weight,
+                            semantic_weight=semantic_weight
                         )
+                        rag_debug_info = {"mode": rag_mode, "strategy": "hybrid_search"}
                     
                     if rag_sources:
-                        logger.info(f"[RAG] Found {len(rag_sources)} relevant chunks from documents")
+                        logger.info(f"[RAG] Found {len(rag_sources)} relevant chunks from documents (mode={rag_mode})")
+                        if rag_debug_info:
+                            logger.info(f"[RAG] Debug: strategy={rag_debug_info.get('strategy')}, techniques={rag_debug_info.get('techniques_used')}, tokens={rag_debug_info.get('estimated_tokens')}")
                 else:
                     logger.debug(f"[RAG] No documents available for user {user_email}")
                     
@@ -1380,11 +1508,12 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         logger.info(f"[CHAT] System prompt from request: length={len(system_prompt_content)}, preview={system_prompt_content[:100] if system_prompt_content else 'EMPTY'}...")
         
         # Inject memory context into system prompt if available
-        if memory_context:
-            if system_prompt_content:
-                system_prompt_content = f"{system_prompt_content}\n\n{memory_context}"
-            else:
-                system_prompt_content = f"You are a helpful AI assistant.\n\n{memory_context}"
+        # DISABLED: Memory context adds noise to RAG queries and uses extra tokens
+        # if memory_context:
+        #     if system_prompt_content:
+        #         system_prompt_content = f"{system_prompt_content}\n\n{memory_context}"
+        #     else:
+        #         system_prompt_content = f"You are a helpful AI assistant.\n\n{memory_context}"
         
         # Inject RAG context into system prompt if available
         if rag_context:
@@ -1477,6 +1606,43 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                 }
             )
             await process_emitter.start_process(process)
+            
+            # === EMIT RAG CONTEXT INFO AT START ===
+            # Send RAG sources info to frontend before generation starts
+            # This allows UI to show "Searching documents..." style RAG context visualization
+            if rag_sources and len(rag_sources) > 0:
+                # In debug mode, show FULL prompt; otherwise just preview
+                debug_mode = rag_config.debug_mode if rag_config else False
+                
+                # Build full history for debug mode
+                history_for_debug = None
+                if debug_mode:
+                    history_for_debug = [
+                        {"role": msg.role, "content": msg.content[:1000] + "..." if len(msg.content) > 1000 else msg.content}
+                        for msg in history
+                    ]
+                
+                rag_info_event = {
+                    'type': 'rag_context',
+                    'rag_sources': rag_sources,
+                    'rag_context_preview': rag_context[:500] + '...' if len(rag_context) > 500 else rag_context,
+                    'rag_context_full': rag_context,  # Full context for debug mode
+                    'rag_context_length': len(rag_context),
+                    'chunks_count': len(rag_sources),
+                    'debug': rag_debug_info,  # Include debug info (generated queries, search method, etc)
+                    # Full system prompt in debug mode
+                    'system_prompt_preview': system_prompt_content if debug_mode else (system_prompt_content[:300] + '...' if len(system_prompt_content) > 300 else system_prompt_content),
+                    'system_prompt_full': system_prompt_content if debug_mode else None,
+                    'system_prompt_length': len(system_prompt_content),
+                    # History in debug mode
+                    'history_messages': history_for_debug,
+                    'history_count': len(history),
+                    'debug_mode': debug_mode,
+                    'done': False
+                }
+                logger.info(f"[RAG] Emitting RAG context info: {len(rag_sources)} chunks, {len(rag_context)} chars, debug_mode={debug_mode}")
+                yield f"data: {json.dumps(rag_info_event)}\n\n"
+            # === END RAG CONTEXT INFO ===
 
             async def heartbeat():
                 nonlocal last_emit_ts

@@ -133,8 +133,18 @@ export const RAGStatusIndicator: React.FC<{ active: boolean; documentsCount?: nu
 };
 
 /**
- * RAG Toggle - allows user to enable/disable RAG with document selection
+ * RAG Toggle - allows user to enable/disable RAG with document selection and mode
  */
+export type RAGMode = 'basic' | 'advanced' | 'ultimate' | 'hyde' | 'agentic';
+
+const RAG_MODES: { value: RAGMode; label: string; description: string; icon: string }[] = [
+    { value: 'basic', label: 'Basic', description: 'Fast hybrid search', icon: '⚡' },
+    { value: 'advanced', label: 'Advanced', description: 'Multi-query + rerank', icon: '🔍' },
+    { value: 'ultimate', label: 'Auto', description: 'Auto-detect best strategy', icon: '🎯' },
+    { value: 'hyde', label: 'HyDE', description: 'For structural queries', icon: '📖' },
+    { value: 'agentic', label: 'Agentic', description: 'AI agent iterative search', icon: '🤖' },
+];
+
 interface RAGToggleProps {
     enabled: boolean;
     onChange: (enabled: boolean) => void;
@@ -144,6 +154,8 @@ interface RAGToggleProps {
     onDocumentToggle?: (docId: string) => void;
     onSelectAll?: () => void;
     onDeselectAll?: () => void;
+    mode?: RAGMode;
+    onModeChange?: (mode: RAGMode) => void;
 }
 
 export const RAGToggle: React.FC<RAGToggleProps> = ({
@@ -154,7 +166,9 @@ export const RAGToggle: React.FC<RAGToggleProps> = ({
     selectedDocumentIds = [],
     onDocumentToggle,
     onSelectAll,
-    onDeselectAll
+    onDeselectAll,
+    mode = 'ultimate',
+    onModeChange
 }) => {
     const [showPopup, setShowPopup] = useState(false);
     const popupRef = useRef<HTMLDivElement>(null);
@@ -214,7 +228,7 @@ export const RAGToggle: React.FC<RAGToggleProps> = ({
             {showPopup && hasDocuments && (
                 <div
                     ref={popupRef}
-                    className="absolute bottom-full mb-2 left-0 w-72 bg-card border border-border rounded-xl shadow-2xl z-50 animate-in fade-in slide-in-from-bottom-2 duration-200"
+                    className="absolute bottom-full mb-2 left-0 w-80 bg-card border border-border rounded-xl shadow-2xl z-50 animate-in fade-in slide-in-from-bottom-2 duration-200"
                 >
                     <div className="p-3 border-b border-border">
                         <div className="flex items-center justify-between">
@@ -222,8 +236,8 @@ export const RAGToggle: React.FC<RAGToggleProps> = ({
                             <button
                                 onClick={() => onChange(!enabled)}
                                 className={`px-2 py-1 text-xs rounded-md transition-colors ${enabled
-                                        ? 'bg-purple-500 text-white'
-                                        : 'bg-secondary text-muted-foreground'
+                                    ? 'bg-purple-500 text-white'
+                                    : 'bg-secondary text-muted-foreground'
                                     }`}
                             >
                                 {enabled ? 'ON' : 'OFF'}
@@ -250,6 +264,32 @@ export const RAGToggle: React.FC<RAGToggleProps> = ({
                         )}
                     </div>
 
+                    {/* RAG Mode Selector */}
+                    {enabled && onModeChange && (
+                        <div className="p-3 border-b border-border">
+                            <span className="text-xs font-medium text-muted-foreground mb-2 block">Search Mode</span>
+                            <div className="grid grid-cols-2 gap-1.5">
+                                {RAG_MODES.map((m) => (
+                                    <button
+                                        key={m.value}
+                                        onClick={() => onModeChange(m.value)}
+                                        className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-left transition-all text-xs ${mode === m.value
+                                                ? 'bg-purple-500/20 border border-purple-500/50 text-purple-400'
+                                                : 'bg-secondary/50 border border-transparent hover:border-border text-muted-foreground hover:text-foreground'
+                                            }`}
+                                        title={m.description}
+                                    >
+                                        <span>{m.icon}</span>
+                                        <span className="font-medium">{m.label}</span>
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="text-[10px] text-muted-foreground mt-2">
+                                {RAG_MODES.find(m => m.value === mode)?.description}
+                            </p>
+                        </div>
+                    )}
+
                     {enabled && (
                         <div className="max-h-60 overflow-y-auto p-2 space-y-1">
                             {documents.map((doc) => {
@@ -259,8 +299,8 @@ export const RAGToggle: React.FC<RAGToggleProps> = ({
                                         key={doc.id}
                                         onClick={() => onDocumentToggle?.(doc.id)}
                                         className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-all ${isSelected
-                                                ? 'bg-purple-500/20 border border-purple-500/30'
-                                                : 'bg-secondary/30 border border-transparent hover:border-border'
+                                            ? 'bg-purple-500/20 border border-purple-500/30'
+                                            : 'bg-secondary/30 border border-transparent hover:border-border'
                                             }`}
                                     >
                                         <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-purple-500 text-white' : 'bg-secondary border border-border'

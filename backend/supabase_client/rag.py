@@ -283,6 +283,9 @@ class RAGStore:
         chunk_index = 0
         text_len = len(text)
         
+        # Ensure chunk_overlap is smaller than chunk_size
+        chunk_overlap = min(chunk_overlap, chunk_size // 2)
+        
         while start < text_len:
             end = min(start + chunk_size, text_len)
             
@@ -300,19 +303,27 @@ class RAGStore:
                 
                 end = best_break
             
-            chunk_text = text[start:end].strip()
-            if chunk_text:
+            chunk_content = text[start:end].strip()
+            if chunk_content:
                 chunks.append({
                     "chunk_index": chunk_index,
-                    "content": chunk_text,
+                    "content": chunk_content,
                     "start_char": start,
                     "end_char": end,
                     "metadata": {}
                 })
                 chunk_index += 1
             
-            # Move start with overlap
-            start = max(start + 1, end - chunk_overlap)
+            # Move start forward: advance by (chunk_size - overlap) but at least 1
+            # This ensures we make progress and don't create overlapping micro-chunks
+            step = max(chunk_size - chunk_overlap, 1)
+            new_start = start + step
+            
+            # If we didn't advance past 'end', force progress to avoid infinite loop
+            if new_start <= start:
+                new_start = end
+            
+            start = new_start
         
         return chunks
     
@@ -685,6 +696,589 @@ No explanation, just the array."""
         # Rerank and return top results
         return self.rerank_results(query, candidates, top_k)
     
+    # ==================== ADVANCED RAG TECHNIQUES ====================
+    
+    def hyde_search(
+        self,
+        query: str,
+        user_email: str,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        HyDE (Hypothetical Document Embeddings) - generate a hypothetical answer
+        first, then search for documents similar to that answer.
+        
+        This helps when the query doesn't match document language
+        (e.g., "what is chapter 14 about" -> generates content-like text to search)
+        """
+        try:
+            # Step 1: Generate hypothetical document/answer
+            hyde_prompt = f"""Given this question, write a detailed passage that would answer it.
+Write as if you are quoting directly from a document that contains this information.
+Be specific and detailed. Write 2-3 paragraphs.
+
+Question: {query}
+
+Hypothetical document passage:"""
+
+            response = self.embedding_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": hyde_prompt}],
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            hypothetical_doc = response.choices[0].message.content.strip()
+            logger.info(f"[RAG] HyDE generated hypothetical doc: {hypothetical_doc[:100]}...")
+            
+            # Step 2: Search using the hypothetical document embedding
+            hyde_embedding = self.create_embedding(hypothetical_doc)
+            
+            user_id = self._get_user_id(user_email)
+            result = self.client.rpc(
+                "search_document_chunks_v2",
+                {
+                    "query_embedding": hyde_embedding,
+                    "match_count": limit,
+                    "filter_user_id": user_id,
+                    "filter_document_id": None,
+                    "similarity_threshold": 0.3  # Lower threshold for HyDE
+                }
+            ).execute()
+            
+            results = result.data or []
+            
+            # Enrich with document names
+            if results:
+                doc_ids = list(set(r["document_id"] for r in results))
+                docs = self.client.table("documents")\
+                    .select("id, name")\
+                    .in_("id", doc_ids)\
+                    .execute()
+                doc_names = {d["id"]: d["name"] for d in (docs.data or [])}
+                for r in results:
+                    r["document_name"] = doc_names.get(r["document_id"], "Unknown")
+                    r["hyde_generated"] = True
+            
+            return results
+            
+        except Exception as e:
+            logger.warning(f"HyDE search failed, falling back to standard: {e}")
+            return self.hybrid_search(query, user_email, limit)
+    
+    def contextual_chunk_text(
+        self,
+        text: str,
+        document_name: str,
+        chunk_size: int = CHUNK_SIZE,
+        chunk_overlap: int = CHUNK_OVERLAP
+    ) -> List[Dict[str, Any]]:
+        """
+        Enhanced chunking that detects and preserves document structure.
+        Adds metadata about chapters, sections, page numbers.
+        """
+        chunks = []
+        
+        # Detect chapter/section patterns
+        chapter_patterns = [
+            r'(?:^|\n)(?:Глава|Chapter|ГЛАВА|CHAPTER)\s*(\d+)[:\.\s]*(.*?)(?=\n)',
+            r'(?:^|\n)(\d+)\.\s+([A-ZА-Я][^\.]+)',  # "1. Title"
+            r'(?:^|\n)(?:Раздел|Section|РАЗДЕЛ)\s*(\d+)[:\.\s]*(.*?)(?=\n)',
+        ]
+        
+        # Find all chapter/section markers
+        structure_markers = []
+        for pattern in chapter_patterns:
+            for match in re.finditer(pattern, text, re.MULTILINE | re.IGNORECASE):
+                structure_markers.append({
+                    "position": match.start(),
+                    "chapter": match.group(1),
+                    "title": match.group(2).strip() if match.group(2) else "",
+                    "full_match": match.group(0).strip()
+                })
+        
+        # Sort markers by position
+        structure_markers.sort(key=lambda x: x["position"])
+        logger.info(f"[RAG] Found {len(structure_markers)} structure markers in document")
+        
+        # Function to find current chapter for a position
+        def get_chapter_info(pos: int) -> Dict:
+            current_chapter = None
+            for marker in structure_markers:
+                if marker["position"] <= pos:
+                    current_chapter = marker
+                else:
+                    break
+            return current_chapter
+        
+        # Standard chunking with metadata enrichment
+        start = 0
+        chunk_index = 0
+        text_len = len(text)
+        
+        while start < text_len:
+            end = min(start + chunk_size, text_len)
+            
+            # Try to break at sentence/paragraph boundary
+            if end < text_len:
+                search_start = max(start, end - int(chunk_size * 0.2))
+                best_break = end
+                
+                for sep in ['\n\n', '\n', '. ', '? ', '! ', '; ', ', ', ' ']:
+                    pos = text.rfind(sep, search_start, end)
+                    if pos != -1:
+                        best_break = pos + len(sep)
+                        break
+                end = best_break
+            
+            chunk_text = text[start:end].strip()
+            if chunk_text:
+                # Get structural metadata
+                chapter_info = get_chapter_info(start)
+                
+                metadata = {
+                    "document_name": document_name,
+                    "position_percent": round(start / text_len * 100, 1),
+                }
+                
+                if chapter_info:
+                    metadata["chapter_number"] = chapter_info["chapter"]
+                    metadata["chapter_title"] = chapter_info["title"]
+                    metadata["section_header"] = chapter_info["full_match"]
+                
+                # Create contextual prefix for better retrieval
+                context_prefix = f"[{document_name}"
+                if chapter_info:
+                    context_prefix += f" | Глава {chapter_info['chapter']}"
+                    if chapter_info["title"]:
+                        context_prefix += f": {chapter_info['title']}"
+                context_prefix += "]"
+                
+                chunks.append({
+                    "chunk_index": chunk_index,
+                    "content": chunk_text,
+                    "content_with_context": f"{context_prefix}\n{chunk_text}",
+                    "start_char": start,
+                    "end_char": end,
+                    "metadata": metadata
+                })
+                chunk_index += 1
+            
+            start = max(start + 1, end - chunk_overlap)
+        
+        return chunks
+    
+    def step_back_prompting(self, query: str) -> str:
+        """
+        Step-back prompting: generate a more general question first,
+        then use both for retrieval. Helps with specific questions.
+        """
+        try:
+            prompt = f"""Given a specific question, generate a more general "step-back" question 
+that would help understand the broader context needed to answer the original question.
+
+Specific question: {query}
+
+Step-back question (more general):"""
+
+            response = self.embedding_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=100
+            )
+            
+            step_back_query = response.choices[0].message.content.strip()
+            logger.info(f"[RAG] Step-back query: {step_back_query}")
+            return step_back_query
+            
+        except Exception as e:
+            logger.warning(f"Step-back prompting failed: {e}")
+            return query
+    
+    def agentic_retrieval(
+        self,
+        query: str,
+        user_email: str,
+        max_iterations: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Agentic RAG: LLM decides what to search for iteratively.
+        Similar to how n8n's Vector Store Tool works with an AI Agent.
+        
+        The agent can:
+        1. Reformulate the query
+        2. Search for specific information
+        3. Ask follow-up questions to fill gaps
+        4. Decide when it has enough information
+        """
+        all_results = []
+        search_history = []
+        
+        agent_prompt = f"""You are a research agent helping to find information in documents.
+Your task is to find information to answer: "{query}"
+
+You have access to a document search tool. For each iteration:
+1. Analyze what information you still need
+2. Generate a specific search query
+3. Review results and decide if you need more searches
+
+Current search history:
+{{history}}
+
+Based on what you've found, what should be the next search query?
+If you have enough information, respond with "DONE".
+
+Next search query (or DONE):"""
+
+        for iteration in range(max_iterations):
+            # Build history string
+            history_str = "\n".join([
+                f"- Query: {h['query']} -> Found {h['results_count']} results"
+                for h in search_history
+            ]) or "No searches yet"
+            
+            # Ask agent what to search
+            try:
+                response = self.embedding_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{
+                        "role": "user", 
+                        "content": agent_prompt.format(history=history_str)
+                    }],
+                    temperature=0.3,
+                    max_tokens=100
+                )
+                
+                next_query = response.choices[0].message.content.strip()
+                
+                if "DONE" in next_query.upper():
+                    logger.info(f"[RAG] Agent finished after {iteration} iterations")
+                    break
+                
+                # Perform search
+                results = self.hybrid_search(
+                    query=next_query,
+                    user_email=user_email,
+                    limit=5
+                )
+                
+                search_history.append({
+                    "query": next_query,
+                    "results_count": len(results)
+                })
+                
+                # Deduplicate and add results
+                for r in results:
+                    chunk_id = f"{r['document_id']}_{r['chunk_index']}"
+                    if not any(f"{x['document_id']}_{x['chunk_index']}" == chunk_id for x in all_results):
+                        all_results.append(r)
+                
+                logger.info(f"[RAG] Agent iteration {iteration+1}: query='{next_query}', found={len(results)}")
+                
+            except Exception as e:
+                logger.warning(f"Agent iteration failed: {e}")
+                break
+        
+        # If agent found nothing, fall back to original query
+        if not all_results:
+            all_results = self.hybrid_search(query, user_email, limit=10)
+        
+        return {
+            "results": all_results[:10],
+            "search_history": search_history,
+            "iterations": len(search_history)
+        }
+    
+    def ultimate_rag_search(
+        self,
+        query: str,
+        user_email: str,
+        max_tokens: int = 4000,
+        strategy: str = "auto",
+        document_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Ultimate RAG search that combines all techniques intelligently.
+        NOW WITH SMART INTENT ANALYSIS: automatically detects when user asks
+        for specific chapters and loads full chapter content.
+        
+        Strategy options:
+        - "auto": Automatically select best approach based on query
+        - "hyde": Use HyDE for content-seeking queries
+        - "multi_query": Use multi-query for broad searches
+        - "agentic": Use agentic retrieval for complex questions
+        - "step_back": Use step-back prompting for specific questions
+        """
+        debug_info = {
+            "original_query": query,
+            "strategy": strategy,
+            "techniques_used": [],
+            "total_candidates": 0,
+            "search_history": []
+        }
+        
+        # ====== NEW: SMART INTENT DETECTION ======
+        # Detect if user wants specific chapter(s) and load them fully
+        if strategy == "auto":
+            try:
+                logger.info(f"[ULTIMATE-RAG] Starting intent analysis for query: '{query[:100]}...'")
+                
+                # Get document info for intent analysis
+                if not document_id:
+                    docs = self.list_documents(user_email, status="ready", limit=1)
+                    if docs:
+                        document_id = docs[0]["id"]
+                        logger.info(f"[ULTIMATE-RAG] Auto-selected document: {document_id}")
+                
+                if document_id:
+                    # Get document structure
+                    chapters = self.get_document_chapters(user_email, document_id)
+                    all_chunks = self.get_all_document_chunks(user_email, [document_id])
+                    
+                    logger.info(f"[ULTIMATE-RAG] Document has {len(chapters)} chapters, {len(all_chunks)} total chunks")
+                    
+                    document_structure = {
+                        "type": "book",
+                        "chapters": [ch["chapter_number"] for ch in chapters],
+                        "chapter_details": chapters,
+                        "total_chunks": len(all_chunks)
+                    }
+                    
+                    # Analyze intent using AI
+                    intent = self.analyze_query_intent(query, document_structure)
+                    scope = intent.get("scope", "search")
+                    sections = intent.get("sections", [])
+                    task = intent.get("task", "search")
+                    
+                    logger.info(f"[ULTIMATE-RAG] Intent analysis result: scope={scope}, sections={sections}, task={task}")
+                    
+                    debug_info["intent_analysis"] = intent
+                    
+                    # If user wants specific chapter(s), load full chapter content
+                    if scope == "single_section" and sections:
+                        debug_info["techniques_used"].append("chapter_load")
+                        logger.info(f"[ULTIMATE-RAG] Loading full chapter {sections[0]} based on intent analysis")
+                        
+                        context, sources = self.get_chapter_content(user_email, document_id, sections[0])
+                        
+                        # Add chapter header
+                        chapter_info = next((ch for ch in chapters if str(ch["chapter_number"]) == sections[0]), None)
+                        if chapter_info:
+                            header = f"📖 ГЛАВА {sections[0]}: {chapter_info.get('title', '')}\n\n"
+                            context = header + context
+                        
+                        # Add task instruction
+                        task_instruction = self._get_task_instructions(task, intent)
+                        if task_instruction:
+                            context = task_instruction + "\n\n" + context
+                        
+                        debug_info["scope"] = "single_section"
+                        debug_info["loaded_chapter"] = sections[0]
+                        debug_info["total_chars"] = len(context)
+                        debug_info["estimated_tokens"] = len(context) // 4
+                        
+                        return {
+                            "context": context,
+                            "sources": sources,
+                            "debug": debug_info
+                        }
+                    
+                    elif scope == "multiple_sections" and sections:
+                        debug_info["techniques_used"].append("multi_chapter_load")
+                        logger.info(f"[ULTIMATE-RAG] Loading multiple chapters {sections} based on intent analysis")
+                        
+                        context_parts = []
+                        all_sources = []
+                        
+                        for section_num in sections:
+                            section_content, section_sources = self.get_chapter_content(
+                                user_email, document_id, section_num
+                            )
+                            if section_content:
+                                chapter_info = next((ch for ch in chapters if str(ch["chapter_number"]) == section_num), None)
+                                header = f"\n{'='*60}\n📖 ГЛАВА {section_num}"
+                                if chapter_info:
+                                    header += f": {chapter_info.get('title', '')}"
+                                header += f"\n{'='*60}\n\n"
+                                
+                                context_parts.append(header + section_content)
+                                all_sources.extend(section_sources)
+                        
+                        context = "\n".join(context_parts)
+                        
+                        # Add task instruction
+                        task_instruction = self._get_task_instructions(task, intent)
+                        if task_instruction:
+                            context = task_instruction + "\n\n" + context
+                        
+                        debug_info["scope"] = "multiple_sections"
+                        debug_info["loaded_chapters"] = sections
+                        debug_info["total_chars"] = len(context)
+                        debug_info["estimated_tokens"] = len(context) // 4
+                        
+                        return {
+                            "context": context,
+                            "sources": all_sources,
+                            "debug": debug_info
+                        }
+                    
+                    elif scope == "full_document":
+                        debug_info["techniques_used"].append("full_document_load")
+                        logger.info(f"[ULTIMATE-RAG] Loading full document based on intent analysis")
+                        
+                        # For full document, use much larger limit (ignore passed max_tokens)
+                        # DeepSeek/Gemini can handle 100K+ tokens
+                        full_doc_max_tokens = 100000  # ~400K chars
+                        
+                        context, sources, _ = self.build_full_document_context(
+                            user_email=user_email,
+                            document_ids=[document_id],
+                            max_tokens=full_doc_max_tokens
+                        )
+                        
+                        # Add task instruction
+                        task_instruction = self._get_task_instructions(task, intent)
+                        if task_instruction:
+                            context = task_instruction + "\n\n" + context
+                        
+                        debug_info["scope"] = "full_document"
+                        debug_info["total_chars"] = len(context)
+                        debug_info["estimated_tokens"] = len(context) // 4
+                        
+                        return {
+                            "context": context,
+                            "sources": sources,
+                            "debug": debug_info
+                        }
+                    
+                    # For search scope, continue with regular retrieval strategies below
+                    
+            except Exception as e:
+                logger.warning(f"[ULTIMATE-RAG] Intent analysis failed: {e}, falling back to standard retrieval")
+        
+        # ====== STANDARD RETRIEVAL STRATEGIES ======
+        # Auto-detect best strategy
+        if strategy == "auto":
+            # Analyze query type for retrieval strategy
+            is_specific = any(kw in query.lower() for kw in [
+                "страница", "page", "цитат", "quote",
+                "абзац", "параграф"
+            ])
+            is_broad = any(kw in query.lower() for kw in [
+                "о чем", "what is", "summarize", "резюме", "обзор",
+                "explain", "объясни"
+            ])
+            
+            if is_specific:
+                strategy = "hyde"  # HyDE works better for specific structure queries
+            elif is_broad:
+                strategy = "multi_query"  # Multi-query for broad understanding
+            else:
+                strategy = "multi_query"  # Default to multi-query
+            
+            debug_info["auto_detected_strategy"] = strategy
+        
+        candidates = []
+        
+        # Execute selected strategy
+        if strategy == "hyde":
+            debug_info["techniques_used"].append("HyDE")
+            
+            # Also do step-back for context
+            step_back_query = self.step_back_prompting(query)
+            debug_info["step_back_query"] = step_back_query
+            debug_info["techniques_used"].append("step_back")
+            
+            # HyDE search
+            hyde_results = self.hyde_search(query, user_email, limit=10)
+            candidates.extend(hyde_results)
+            
+            # Also search with step-back query
+            step_back_results = self.hybrid_search(step_back_query, user_email, limit=5)
+            for r in step_back_results:
+                chunk_id = f"{r['document_id']}_{r['chunk_index']}"
+                if not any(f"{c['document_id']}_{c['chunk_index']}" == chunk_id for c in candidates):
+                    candidates.append(r)
+        
+        elif strategy == "agentic":
+            debug_info["techniques_used"].append("agentic")
+            agent_result = self.agentic_retrieval(query, user_email)
+            candidates = agent_result["results"]
+            debug_info["search_history"] = agent_result["search_history"]
+            debug_info["agent_iterations"] = agent_result["iterations"]
+        
+        else:  # multi_query or default
+            debug_info["techniques_used"].append("multi_query")
+            debug_info["techniques_used"].append("hybrid")
+            candidates = self.multi_query_search(
+                query=query,
+                user_email=user_email,
+                num_queries=4,
+                results_per_query=7,
+                use_hybrid=True
+            )
+        
+        debug_info["total_candidates"] = len(candidates)
+        
+        if not candidates:
+            return {
+                "context": "",
+                "sources": [],
+                "debug": debug_info
+            }
+        
+        # Always rerank for best precision
+        debug_info["techniques_used"].append("rerank")
+        candidates = self.rerank_results(query, candidates, top_k=10)
+        debug_info["after_rerank"] = len(candidates)
+        
+        # Build context with citations
+        context_parts = []
+        sources = []
+        total_chars = 0
+        max_chars = max_tokens * 4
+        
+        for i, result in enumerate(candidates):
+            chunk_chars = len(result["content"])
+            
+            if total_chars + chunk_chars > max_chars:
+                break
+            
+            citation = self.format_citation(result)
+            context_parts.append(f"[{i+1}] {citation}\n{result['content']}")
+            
+            source_info = {
+                "index": i + 1,
+                "document_id": result["document_id"],
+                "document_name": result.get("document_name"),
+                "chunk_index": result.get("chunk_index"),
+                "similarity": round(result.get("similarity", 0), 3),
+                "rerank_score": result.get("rerank_score"),
+                "matching_queries": result.get("matching_queries", []),
+                "citation": citation,
+                "content_preview": result["content"][:200] + "..." if len(result["content"]) > 200 else result["content"],
+                "metadata": result.get("metadata", {})
+            }
+            sources.append(source_info)
+            total_chars += chunk_chars
+        
+        # Build final context
+        header = """Используй следующие фрагменты документов для ответа на вопрос пользователя.
+Если информация из документов релевантна, обязательно укажи номер источника [1], [2] и т.д.
+Если в документах нет нужной информации, честно скажи об этом.
+
+---
+НАЙДЕННЫЕ ДОКУМЕНТЫ:
+"""
+        context = header + "\n\n".join(context_parts)
+        
+        return {
+            "context": context,
+            "sources": sources,
+            "debug": debug_info
+        }
+
     # ==================== CITATION FORMATTING ====================
     
     def format_citation(self, result: Dict[str, Any]) -> str:
@@ -777,8 +1371,961 @@ No explanation, just the array."""
         
         return context, sources
 
-    # ==================== CONTEXT BUILDING ====================
+    def get_all_document_chunks(
+        self,
+        user_email: str,
+        document_ids: Optional[List[str]] = None,
+        order_by: str = "chunk_index"
+    ) -> List[Dict[str, Any]]:
+        """
+        Get ALL chunks for specified documents in order.
+        Used for 'full' mode to load entire document into context.
+        
+        Args:
+            user_email: User email
+            document_ids: List of document IDs (if None, gets all user's documents)
+            order_by: Order chunks by 'chunk_index' or 'created_at'
+        
+        Returns:
+            List of all chunks in order
+        """
+        user_id = self._get_user_id(user_email)
+        
+        # If no specific documents, get all ready documents
+        if not document_ids:
+            docs = self.list_documents(user_email, status="ready")
+            document_ids = [d["id"] for d in docs]
+        
+        if not document_ids:
+            return []
+        
+        all_chunks = []
+        
+        for doc_id in document_ids:
+            # Get all chunks for this document
+            result = self.client.table("document_chunks")\
+                .select("*, documents!inner(name, user_id)")\
+                .eq("document_id", doc_id)\
+                .eq("documents.user_id", user_id)\
+                .order("chunk_index", desc=False)\
+                .execute()
+            
+            chunks = result.data or []
+            
+            # Add document name to each chunk
+            for chunk in chunks:
+                if chunk.get("documents"):
+                    chunk["document_name"] = chunk["documents"].get("name", "Unknown")
+                    del chunk["documents"]  # Clean up nested data
+            
+            all_chunks.extend(chunks)
+        
+        return all_chunks
+
+    def get_document_chapters(
+        self,
+        user_email: str,
+        document_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get list of detected chapters/sections in a document.
+        
+        Returns:
+            List of chapters with their chunk ranges
+        """
+        user_id = self._get_user_id(user_email)
+        
+        # Get all chunks with metadata
+        result = self.client.table("document_chunks")\
+            .select("chunk_index, metadata, content")\
+            .eq("document_id", document_id)\
+            .order("chunk_index", desc=False)\
+            .execute()
+        
+        chunks = result.data or []
+        
+        if not chunks:
+            return []
+        
+        chapters = []
+        current_chapter = None
+        
+        # Detect chapter/section/article headers in chunks
+        # Supports: books (chapters), laws (articles, статьи), regulations (sections, пункты)
+        chapter_patterns = [
+            # Books: Глава 1, Chapter 1
+            r'(?:^|\n)(?:Глава|Chapter|ГЛАВА|CHAPTER)\s*(\d+)[:\.\s]*(.*?)(?=\n|$)',
+            # Laws: Статья 1, Article 1
+            r'(?:^|\n)(?:Статья|Article|СТАТЬЯ|ARTICLE)\s*(\d+)[:\.\s]*(.*?)(?=\n|$)',
+            # Sections: Раздел 1, Section 1
+            r'(?:^|\n)(?:Раздел|Section|РАЗДЕЛ|SECTION)\s*(\d+)[:\.\s]*(.*?)(?=\n|$)',
+            # Пункт 1, Параграф 1
+            r'(?:^|\n)(?:Пункт|Параграф|§)\s*(\d+)[:\.\s]*(.*?)(?=\n|$)',
+            # Part: Часть 1
+            r'(?:^|\n)(?:Часть|Part|ЧАСТЬ|PART)\s*(\d+)[:\.\s]*(.*?)(?=\n|$)',
+            # Numbered sections: 1. Title
+            r'(?:^|\n)(\d+)\.\s+([A-ZА-ЯЁ][^\n]+)',
+            # Numbered with dot-notation: 1.1, 1.2.3
+            r'(?:^|\n)(\d+(?:\.\d+)+)\s+([A-ZА-ЯЁ][^\n]*)',
+        ]
+        
+        for chunk in chunks:
+            content = chunk.get("content", "")
+            metadata = chunk.get("metadata", {}) or {}
+            chunk_idx = chunk.get("chunk_index", 0)
+            
+            # Check if this chunk starts a new chapter
+            for pattern in chapter_patterns:
+                match = re.search(pattern, content[:500], re.IGNORECASE)
+                if match:
+                    # Save previous chapter
+                    if current_chapter:
+                        current_chapter["end_chunk"] = chunk_idx - 1
+                        chapters.append(current_chapter)
+                    
+                    # Start new chapter
+                    chapter_num = match.group(1)
+                    chapter_title = match.group(2).strip() if match.group(2) else ""
+                    
+                    current_chapter = {
+                        "chapter_number": chapter_num,
+                        "title": chapter_title,
+                        "start_chunk": chunk_idx,
+                        "end_chunk": None,
+                        "preview": content[:200]
+                    }
+                    break
+            
+            # Also check metadata for chapter info
+            if metadata.get("chapter") and not current_chapter:
+                current_chapter = {
+                    "chapter_number": metadata.get("chapter"),
+                    "title": metadata.get("section_title", ""),
+                    "start_chunk": chunk_idx,
+                    "end_chunk": None,
+                    "preview": content[:200]
+                }
+        
+        # Save last chapter
+        if current_chapter:
+            current_chapter["end_chunk"] = len(chunks) - 1
+            chapters.append(current_chapter)
+        
+        # If no chapters detected, treat entire document as one chapter
+        if not chapters:
+            chapters.append({
+                "chapter_number": "1",
+                "title": "Весь документ",
+                "start_chunk": 0,
+                "end_chunk": len(chunks) - 1,
+                "preview": chunks[0].get("content", "")[:200] if chunks else ""
+            })
+        
+        return chapters
+
+    def get_chapter_content(
+        self,
+        user_email: str,
+        document_id: str,
+        chapter_number: str
+    ) -> Tuple[str, List[Dict]]:
+        """
+        Get full content of a specific chapter.
+        
+        Args:
+            user_email: User email
+            document_id: Document ID
+            chapter_number: Chapter number to retrieve
+        
+        Returns:
+            Tuple of (chapter_content, sources)
+        """
+        chapters = self.get_document_chapters(user_email, document_id)
+        
+        # Find requested chapter
+        target_chapter = None
+        for ch in chapters:
+            if str(ch["chapter_number"]) == str(chapter_number):
+                target_chapter = ch
+                break
+        
+        if not target_chapter:
+            return "", []
+        
+        # Get all chunks for this chapter
+        all_chunks = self.get_all_document_chunks(user_email, [document_id])
+        
+        start_idx = target_chapter["start_chunk"]
+        end_idx = target_chapter["end_chunk"]
+        
+        chapter_chunks = [c for c in all_chunks if start_idx <= c.get("chunk_index", 0) <= end_idx]
+        
+        # Build content
+        content_parts = []
+        sources = []
+        
+        for i, chunk in enumerate(chapter_chunks):
+            content_parts.append(chunk["content"])
+            sources.append({
+                "index": i + 1,
+                "document_id": document_id,
+                "document_name": chunk.get("document_name"),
+                "chunk_index": chunk.get("chunk_index"),
+                "chapter": chapter_number,
+                "citation": f"Глава {chapter_number}, фрагмент {i + 1}"
+            })
+        
+        full_content = "\n\n".join(content_parts)
+        
+        return full_content, sources
+
+    def analyze_query_intent(self, query: str, document_structure: Dict) -> Dict[str, Any]:
+        """
+        🧠 UNIVERSAL QUERY INTENT ANALYZER
+        
+        Uses AI to understand ANY user query about documents:
+        - What to search for (chapter, article, paragraph, law, loophole, etc.)
+        - What scope (single section, multiple sections, full document, comparison)
+        - What task (summarize, analyze, find contradictions, find loopholes, compare)
+        
+        Args:
+            query: User's natural language query in any language
+            document_structure: Info about document (chapters, sections, type)
+        
+        Returns:
+            Dict with:
+                - scope: "single_section" | "multiple_sections" | "full_document" | "comparison" | "search"
+                - sections: Array of section identifiers to load (chapter numbers, article numbers, etc.)
+                - task: "summarize" | "analyze" | "find_loopholes" | "find_contradictions" | "compare" | "explain" | "search"
+                - search_query: Optional refined search query for semantic search
+                - reasoning: AI's explanation of why it chose this
+        """
+        try:
+            from openai import OpenAI
+            
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                # Fallback to simple chapter extraction
+                return self._fallback_intent_analysis(query, document_structure)
+            
+            client = OpenAI(api_key=api_key)
+            
+            # Build document structure description
+            structure_desc = self._describe_document_structure(document_structure)
+            
+            analysis_prompt = f"""Analyze this user query about a document and determine the best retrieval strategy.
+
+USER QUERY: "{query}"
+
+DOCUMENT STRUCTURE:
+{structure_desc}
+
+Analyze the query and return a JSON object with these fields:
+
+1. "scope": One of:
+   - "single_section": User wants a specific chapter/article/section/статья/пункт
+   - "multiple_sections": User wants several specific sections (e.g., "статьи 1-5", "articles 1 and 40")
+   - "full_document": User wants to analyze the entire document (summary, overview, themes)
+   - "comparison": User wants to compare different parts of the document
+   - "search": User is looking for specific information that could be anywhere
+
+2. "sections": Array of section identifiers the user wants. Examples:
+   - ["40"] for chapter/article 40
+   - ["1", "2", "3"] for sections 1-3
+   - ["1.1", "1.2"] for subsections
+   - [] for full document or search scope
+
+3. "task": One of:
+   - "summarize": Retell, summarize, explain content
+   - "analyze": Deep analysis, themes, meaning
+   - "find_loopholes": Find legal loopholes, exceptions, workarounds (for legal docs)
+   - "find_contradictions": Find contradictions, inconsistencies
+   - "find_penalties": Find penalties, sanctions, fines (штрафы, санкции)
+   - "find_requirements": Find requirements, obligations (требования, обязанности)
+   - "find_rights": Find rights, permissions (права, разрешения)
+   - "find_exceptions": Find exceptions, special cases (исключения, особые случаи)
+   - "find_deadlines": Find deadlines, terms (сроки, даты)
+   - "compare": Compare sections or analyze relationships
+   - "explain": Explain specific concept or term
+   - "search": Find specific information
+
+4. "search_query": If scope is "search", provide an optimized search query (can be different from original)
+
+5. "reasoning": Brief explanation of your analysis (1-2 sentences)
+
+EXAMPLES FOR BOOKS:
+- "расскажи о 40 главе" -> {{"scope": "single_section", "sections": ["40"], "task": "summarize"}}
+- "перескажи главы 1-5" -> {{"scope": "multiple_sections", "sections": ["1","2","3","4","5"], "task": "summarize"}}
+
+EXAMPLES FOR LEGAL DOCUMENTS:
+- "что говорит статья 228?" -> {{"scope": "single_section", "sections": ["228"], "task": "summarize"}}
+- "какие штрафы за нарушение?" -> {{"scope": "search", "sections": [], "task": "find_penalties", "search_query": "штраф санкция наказание ответственность"}}
+- "какие есть исключения в статье 10?" -> {{"scope": "single_section", "sections": ["10"], "task": "find_exceptions"}}
+- "найди лазейки в налоговом кодексе" -> {{"scope": "search", "sections": [], "task": "find_loopholes", "search_query": "исключение освобождение льгота уменьшение кроме случаев если не"}}
+- "сравни статьи 159 и 160" -> {{"scope": "comparison", "sections": ["159", "160"], "task": "compare"}}
+- "какие сроки давности?" -> {{"scope": "search", "sections": [], "task": "find_deadlines", "search_query": "срок давность период день месяц год"}}
+- "какие права у обвиняемого?" -> {{"scope": "search", "sections": [], "task": "find_rights", "search_query": "право обвиняемый подсудимый защита адвокат"}}
+- "противоречит ли статья 5 статье 10?" -> {{"scope": "comparison", "sections": ["5", "10"], "task": "find_contradictions"}}
+
+Respond with ONLY valid JSON, no markdown formatting."""
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": analysis_prompt}],
+                max_tokens=500,
+                temperature=0
+            )
+            
+            result_text = response.choices[0].message.content.strip()
+            
+            # Parse JSON response
+            import json
+            # Clean up markdown if present
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            result_text = result_text.strip()
+            
+            intent = json.loads(result_text)
+            intent["method"] = "ai_analysis"
+            
+            logger.info(f"[RAG] Intent analysis: query='{query[:50]}...' -> scope={intent.get('scope')}, sections={intent.get('sections')}, task={intent.get('task')}")
+            
+            return intent
+            
+        except Exception as e:
+            logger.warning(f"[RAG] AI intent analysis failed: {e}, using fallback")
+            return self._fallback_intent_analysis(query, document_structure)
     
+    def _describe_document_structure(self, structure: Dict) -> str:
+        """Build human-readable description of document structure for AI"""
+        parts = []
+        
+        doc_type = structure.get("type", "document")
+        parts.append(f"Document type: {doc_type}")
+        
+        if "chapters" in structure:
+            chapters = structure["chapters"]
+            parts.append(f"Total chapters: {len(chapters)}")
+            if chapters:
+                # Show first few and last few
+                sample = chapters[:5] + ["..."] + chapters[-3:] if len(chapters) > 8 else chapters
+                parts.append(f"Chapter numbers: {sample}")
+        
+        if "total_chunks" in structure:
+            parts.append(f"Total content chunks: {structure['total_chunks']}")
+        
+        return "\n".join(parts)
+    
+    def _fallback_intent_analysis(self, query: str, structure: Dict) -> Dict:
+        """Simple fallback intent analysis using regex patterns"""
+        import re
+        
+        result = {
+            "scope": "search",
+            "sections": [],
+            "task": "search",
+            "search_query": query,
+            "reasoning": "Fallback analysis",
+            "method": "regex_fallback"
+        }
+        
+        query_lower = query.lower()
+        
+        # Check for full document intent
+        full_doc_patterns = [
+            r'вс[яеюё]\s*(книг|документ|текст)',
+            r'whole\s*(book|document|text)',
+            r'entire',
+            r'полност',
+            r'целиком',
+            r'overview',
+            r'обзор',
+            r'о\s*чем\s*(книга|документ)',
+        ]
+        for pattern in full_doc_patterns:
+            if re.search(pattern, query_lower):
+                result["scope"] = "full_document"
+                result["task"] = "summarize"
+                result["reasoning"] = "Full document keywords detected"
+                return result
+        
+        # Check for comparison
+        if re.search(r'сравн|compar|vs\.?|против', query_lower):
+            result["scope"] = "comparison"
+            result["task"] = "compare"
+        
+        # Check for loopholes/contradictions (legal docs)
+        if re.search(r'лазейк|loophole|исключен|exception|обход', query_lower):
+            result["task"] = "find_loopholes"
+        if re.search(r'противореч|contradiction|inconsisten', query_lower):
+            result["task"] = "find_contradictions"
+        
+        # Try to extract chapter numbers
+        chapters = structure.get("chapters", [])
+        chapter_nums = [str(ch) for ch in chapters]
+        
+        # Range pattern: "главы 1-5", "chapters 1 through 5"
+        range_match = re.search(r'(\d+)\s*[-–—]\s*(\d+)', query)
+        if range_match:
+            start, end = int(range_match.group(1)), int(range_match.group(2))
+            found_sections = [str(i) for i in range(start, end + 1) if str(i) in chapter_nums]
+            if found_sections:
+                result["scope"] = "multiple_sections"
+                result["sections"] = found_sections
+                result["task"] = "summarize"
+                return result
+        
+        # Multiple chapters: "главы 1 и 40", "chapters 1, 5, and 10"
+        multi_match = re.findall(r'\b(\d+)\b', query)
+        if len(multi_match) > 1:
+            found_sections = [n for n in multi_match if n in chapter_nums]
+            if len(found_sections) > 1:
+                result["scope"] = "multiple_sections" if result["scope"] != "comparison" else "comparison"
+                result["sections"] = found_sections
+                return result
+        
+        # Single chapter
+        if multi_match:
+            for num in multi_match:
+                if num in chapter_nums:
+                    result["scope"] = "single_section"
+                    result["sections"] = [num]
+                    result["task"] = "summarize"
+                    return result
+        
+        return result
+
+    def smart_rag_search(
+        self,
+        query: str,
+        user_email: str,
+        document_id: Optional[str] = None,
+        max_tokens: int = 50000
+    ) -> Tuple[str, List[Dict], Dict]:
+        """
+        🚀 SMART RAG - Universal intelligent document retrieval
+        
+        Automatically understands any user query and retrieves the right content:
+        - Single chapter/section
+        - Multiple chapters
+        - Full document
+        - Semantic search
+        - Comparisons
+        
+        Args:
+            query: User's natural language query
+            user_email: User email
+            document_id: Optional specific document
+            max_tokens: Max tokens for context
+        
+        Returns:
+            Tuple of (context, sources, debug_info)
+        """
+        # Get document to work with
+        if not document_id:
+            docs = self.list_documents(user_email, status="ready", limit=1)
+            if not docs:
+                return "", [], {"error": "No documents found"}
+            document_id = docs[0]["id"]
+            document_name = docs[0]["name"]
+        else:
+            doc = self.get_document(document_id, user_email)
+            document_name = doc["name"] if doc else "Unknown"
+        
+        # Get document structure
+        chapters = self.get_document_chapters(user_email, document_id)
+        all_chunks = self.get_all_document_chunks(user_email, [document_id])
+        
+        document_structure = {
+            "type": "book",  # Could detect from metadata
+            "chapters": [ch["chapter_number"] for ch in chapters],
+            "chapter_details": chapters,
+            "total_chunks": len(all_chunks)
+        }
+        
+        # Analyze intent
+        intent = self.analyze_query_intent(query, document_structure)
+        
+        scope = intent.get("scope", "search")
+        sections = intent.get("sections", [])
+        task = intent.get("task", "search")
+        
+        context = ""
+        sources = []
+        
+        # Execute based on scope
+        if scope == "full_document":
+            logger.info(f"[SMART-RAG] Loading full document for task: {task}")
+            # --- NEW: check if document is too large for full context ---
+            if hasattr(self, 'get_document_stats') and hasattr(self, 'build_iterative_summary_context') and hasattr(self, 'build_synthesis_context'):
+                stats = self.get_document_stats(user_email, [document_id])
+                logger.info(f"[SMART-RAG] Document stats: {stats}")
+                if stats.get("recommended_approach") == "iterative":
+                    logger.info(f"[SMART-RAG] Switching to iterative mode for large document (auto full pipeline)")
+                    # Автоматически пройти по всем батчам, собрать summary, синтезировать итог
+                    batch_size_chars = 20000
+                    total_chars = stats.get("total_chars") or stats.get("total_length") or 0
+                    num_batches = (total_chars // batch_size_chars) + (1 if total_chars % batch_size_chars else 0)
+                    batch_summaries = []
+                    batch_sources = []
+                    batch_debugs = []
+                    for batch_number in range(num_batches):
+                        context, sources, debug = self.build_iterative_summary_context(
+                            user_email=user_email,
+                            document_ids=[document_id],
+                            batch_size_chars=batch_size_chars,
+                            batch_number=batch_number
+                        )
+                        batch_summaries.append(context)
+                        batch_sources.extend(sources)
+                        batch_debugs.append(debug)
+                    # Синтез финального ответа
+                    final_context, final_sources, final_debug = self.build_synthesis_context(
+                        user_email=user_email,
+                        document_ids=[document_id],
+                        batch_summaries=batch_summaries,
+                        batch_sources=batch_sources,
+                        batch_debugs=batch_debugs,
+                        task=task
+                    )
+                    # Добавим флаг и отладочную инфу
+                    if isinstance(final_debug, dict):
+                        final_debug["auto_iterative"] = True
+                        final_debug["num_batches"] = num_batches
+                        final_debug["batch_debugs"] = batch_debugs
+                    return final_context, final_sources, final_debug
+            # --- fallback: обычный full context ---
+            context, sources, _ = self.build_full_document_context(
+                user_email=user_email,
+                document_ids=[document_id],
+                max_tokens=max_tokens
+            )
+            
+        elif scope == "single_section" and sections:
+            logger.info(f"[SMART-RAG] Loading single section: {sections[0]}")
+            context, sources = self.get_chapter_content(user_email, document_id, sections[0])
+            
+            # Add chapter header
+            chapter_info = next((ch for ch in chapters if str(ch["chapter_number"]) == sections[0]), None)
+            if chapter_info:
+                header = f"📖 ГЛАВА {sections[0]}: {chapter_info.get('title', '')}\n\n"
+                context = header + context
+                
+        elif scope == "multiple_sections" and sections:
+            logger.info(f"[SMART-RAG] Loading multiple sections: {sections}")
+            context_parts = []
+            
+            for section_num in sections:
+                section_content, section_sources = self.get_chapter_content(
+                    user_email, document_id, section_num
+                )
+                if section_content:
+                    chapter_info = next((ch for ch in chapters if str(ch["chapter_number"]) == section_num), None)
+                    header = f"\n{'='*60}\n📖 ГЛАВА {section_num}"
+                    if chapter_info:
+                        header += f": {chapter_info.get('title', '')}"
+                    header += f"\n{'='*60}\n\n"
+                    
+                    context_parts.append(header + section_content)
+                    sources.extend(section_sources)
+            
+            context = "\n".join(context_parts)
+            
+        elif scope == "comparison" and len(sections) >= 2:
+            logger.info(f"[SMART-RAG] Comparison mode for sections: {sections}")
+            context_parts = [f"📊 СРАВНИТЕЛЬНЫЙ АНАЛИЗ ГЛАВ {', '.join(sections)}\n"]
+            
+            for section_num in sections:
+                section_content, section_sources = self.get_chapter_content(
+                    user_email, document_id, section_num
+                )
+                if section_content:
+                    chapter_info = next((ch for ch in chapters if str(ch["chapter_number"]) == section_num), None)
+                    header = f"\n{'='*60}\n📖 ГЛАВА {section_num}"
+                    if chapter_info:
+                        header += f": {chapter_info.get('title', '')}"
+                    header += f"\n{'='*60}\n\n"
+                    
+                    context_parts.append(header + section_content)
+                    sources.extend(section_sources)
+            
+            context = "\n".join(context_parts)
+            
+        else:
+            # Default: semantic search
+            search_query = intent.get("search_query", query)
+            logger.info(f"[SMART-RAG] Semantic search: '{search_query[:50]}...'")
+            
+            # Use advanced search if available
+            if hasattr(self, 'ultimate_rag_search'):
+                result = self.ultimate_rag_search(
+                    query=search_query,
+                    user_email=user_email,
+                    max_tokens=max_tokens
+                )
+                context = result["context"]
+                sources = result["sources"]
+            else:
+                context, sources = self.build_rag_context(
+                    query=search_query,
+                    user_email=user_email,
+                    document_ids=[document_id],
+                    max_tokens=max_tokens
+                )
+        
+        # Build task-specific instructions BEFORE compression
+        task_instructions = self._get_task_instructions(task, intent)
+        if task_instructions:
+            context = task_instructions + "\n\n" + context
+        
+        # Adaptive context compression - automatically handles model limits
+        # This prevents "context too large" errors
+        original_len = len(context)
+        context = self.adaptive_context_compression(
+            context=context,
+            max_tokens=max_tokens,
+            model_name="gpt-4o"  # можно сделать параметром если нужно
+        )
+        
+        debug_info = {
+            "mode": "smart_rag",
+            "intent": intent,
+            "scope": scope,
+            "sections_loaded": sections,
+            "task": task,
+            "document_name": document_name,
+            "original_chars": original_len,
+            "compressed_chars": len(context),
+            "compression_ratio": f"{len(context)/original_len*100:.1f}%" if original_len > 0 else "100%",
+            "estimated_tokens": len(context) // 4,
+            "sources_count": len(sources)
+        }
+        
+        return context, sources, debug_info
+    
+    def _get_task_instructions(self, task: str, intent: Dict) -> str:
+        """Get task-specific instructions for the AI"""
+        instructions = {
+            "summarize": "📝 ЗАДАЧА: Перескажи/суммаризируй содержание ниже.",
+            "analyze": "🔍 ЗАДАЧА: Проведи глубокий анализ текста - темы, смысл, подтекст.",
+            "find_loopholes": """⚖️ ЗАДАЧА: Найди лазейки, исключения и способы обхода в тексте.
+Обрати внимание на:
+- Фразы типа "за исключением", "кроме случаев", "если не..."
+- Размытые формулировки
+- Отсутствие четких определений
+- Противоречия с другими нормами""",
+            "find_contradictions": """⚡ ЗАДАЧА: Найди противоречия и несоответствия в тексте.
+Ищи:
+- Взаимоисключающие утверждения
+- Логические нестыковки
+- Разночтения в терминах""",
+            "compare": "📊 ЗАДАЧА: Сравни указанные разделы. Найди общее и различия.",
+            "explain": "💡 ЗАДАЧА: Объясни запрошенное понятие или термин.",
+            "search": ""  # No special instructions for search
+        }
+        return instructions.get(task, "")
+
+    def _extract_chapter_with_ai(self, query: str, available_chapters: List) -> Optional[str]:
+        """
+        Use AI to intelligently extract chapter number from user query.
+        Works with any language, phrasing, or format.
+        
+        Args:
+            query: User's natural language query
+            available_chapters: List of available chapter numbers (can be strings or ints)
+        
+        Returns:
+            Chapter number as string if detected, None otherwise
+        """
+        # Normalize available chapters to strings for comparison
+        available_str = [str(ch) for ch in available_chapters]
+        
+        try:
+            from openai import OpenAI
+            
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                logger.warning("[RAG] OpenAI API key not found, falling back to regex")
+                result = self._extract_chapter_with_regex(query)
+                return str(result) if result else None
+            
+            client = OpenAI(api_key=api_key)
+            
+            # Fast, cheap extraction prompt
+            extraction_prompt = f"""Extract the chapter number from this user query about a book/document.
+User query: "{query}"
+
+Available chapters: {available_str[:20]}{'...' if len(available_str) > 20 else ''}
+
+Rules:
+- Return ONLY the number (e.g., "40")
+- If the user mentions a specific chapter number, extract it
+- If no chapter is mentioned or you're unsure, return "NONE"
+- Handle any language (Russian, English, etc.)
+- Handle various formats: "глава 40", "40 глава", "chapter 40", "40-я глава", "сороковая глава", etc.
+
+Chapter number:"""
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",  # Fast and cheap
+                messages=[{"role": "user", "content": extraction_prompt}],
+                max_tokens=10,
+                temperature=0
+            )
+            
+            result = response.choices[0].message.content.strip()
+            logger.info(f"[RAG] AI chapter extraction: query='{query[:50]}...' -> result='{result}'")
+            
+            if result and result != "NONE" and result.isdigit():
+                if result in available_str:
+                    return result  # Return as string
+                else:
+                    logger.warning(f"[RAG] AI extracted chapter {result} but it's not in available chapters: {available_str}")
+                    return None
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"[RAG] AI chapter extraction failed: {e}, falling back to regex")
+            result = self._extract_chapter_with_regex(query)
+            return str(result) if result else None
+    
+    def _extract_chapter_with_regex(self, query: str) -> Optional[int]:
+        """
+        Fallback regex-based chapter extraction.
+        Used when AI is not available.
+        """
+        import re
+        
+        patterns = [
+            r'(?:глав[аеуыой]|chapter)\s*(\d+)',  # глава 40, chapter 40
+            r'(\d+)[\s\-]*(?:ая|ой|я)?\s*глав[аеуыой]',  # 40 глава, 40-я глава
+            r'(?:о|про|в|из)\s*(\d+)\s*глав',  # о 40 главе
+            r'(\d+)\s*(?:й|ой|ая|ую)\s*глав',  # 40-й главе
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        
+        return None
+
+    def build_full_document_context(
+        self,
+        user_email: str,
+        document_ids: Optional[List[str]] = None,
+        max_tokens: int = 100000
+    ) -> Tuple[str, List[Dict], Dict]:
+        """
+        Build context with FULL document content.
+        Use this when user wants to analyze entire book/document.
+        
+        WARNING: This can be very large! Use with models that have large context windows
+        (Gemini 1.5 Pro 1M, Claude 200K, GPT-4o 128K)
+        
+        Args:
+            user_email: User email
+            document_ids: Specific documents (None = all user's documents)
+            max_tokens: Maximum tokens to include
+        
+        Returns:
+            Tuple of (context, sources, debug_info)
+        """
+        logger.info(f"[FULL-DOC] build_full_document_context called: user={user_email}, doc_ids={document_ids}, max_tokens={max_tokens}")
+        
+        all_chunks = self.get_all_document_chunks(user_email, document_ids)
+        
+        logger.info(f"[FULL-DOC] get_all_document_chunks returned {len(all_chunks)} chunks")
+        
+        if not all_chunks:
+            logger.warning(f"[FULL-DOC] No chunks found!")
+            return "", [], {"error": "No documents found"}
+        
+        # Group by document
+        docs_content = {}
+        for chunk in all_chunks:
+            doc_id = chunk["document_id"]
+            doc_name = chunk.get("document_name", "Unknown")
+            
+            if doc_id not in docs_content:
+                docs_content[doc_id] = {
+                    "name": doc_name,
+                    "chunks": []
+                }
+            docs_content[doc_id]["chunks"].append(chunk)
+        
+        # Build full content
+        context_parts = []
+        sources = []
+        total_chars = 0
+        max_chars = max_tokens * 4  # Rough token estimate
+        truncated = False
+        
+        for doc_id, doc_data in docs_content.items():
+            doc_name = doc_data["name"]
+            chunks = doc_data["chunks"]
+            
+            # Add document header
+            doc_header = f"\n{'='*60}\n📚 ДОКУМЕНТ: {doc_name}\n{'='*60}\n"
+            context_parts.append(doc_header)
+            total_chars += len(doc_header)
+            
+            # Add all chunks
+            for chunk in chunks:
+                chunk_content = chunk["content"]
+                chunk_chars = len(chunk_content)
+                
+                if total_chars + chunk_chars > max_chars:
+                    # Add truncation notice
+                    context_parts.append(f"\n... [Документ обрезан из-за лимита токенов. Загружено {total_chars} символов из {sum(len(c['content']) for c in all_chunks)}] ...")
+                    truncated = True
+                    break
+                
+                context_parts.append(chunk_content)
+                total_chars += chunk_chars
+            
+            if truncated:
+                break
+            
+            # Add source info
+            sources.append({
+                "document_id": doc_id,
+                "document_name": doc_name,
+                "total_chunks": len(chunks),
+                "citation": f"📚 {doc_name} (полный документ)"
+            })
+        
+        logger.info(f"[FULL-DOC] Built context: {total_chars} chars, truncated={truncated}")
+        
+        # Build final context
+        header = """Ниже представлен ПОЛНЫЙ текст документа(ов) пользователя.
+Ты можешь анализировать, пересказывать, отвечать на вопросы по всему содержимому.
+
+"""
+        context = header + "\n".join(context_parts)
+        
+        debug_info = {
+            "mode": "full",
+            "total_documents": len(docs_content),
+            "total_chunks": len(all_chunks),
+            "total_chars": total_chars,
+            "estimated_tokens": total_chars // 4
+        }
+        
+        return context, sources, debug_info
+
+    def build_chapter_context(
+        self,
+        query: str,
+        user_email: str,
+        document_id: Optional[str] = None,
+        chapter_number: Optional[str] = None,
+        max_tokens: int = 30000
+    ) -> Tuple[str, List[Dict], Dict]:
+        """
+        Build context for working with specific chapter(s).
+        Auto-detects relevant chapter if not specified.
+        
+        Args:
+            query: User's query (used to auto-detect chapter if not specified)
+            user_email: User email
+            document_id: Specific document (None = use first document)
+            chapter_number: Specific chapter (None = auto-detect from query)
+            max_tokens: Maximum tokens
+        
+        Returns:
+            Tuple of (context, sources, debug_info)
+        """
+        # Get document to work with
+        if not document_id:
+            docs = self.list_documents(user_email, status="ready", limit=1)
+            if not docs:
+                return "", [], {"error": "No documents found"}
+            document_id = docs[0]["id"]
+            document_name = docs[0]["name"]
+        else:
+            doc = self.get_document(document_id, user_email)
+            document_name = doc["name"] if doc else "Unknown"
+        
+        # Get chapters
+        chapters = self.get_document_chapters(user_email, document_id)
+        
+        if not chapters:
+            return "", [], {"error": "No chapters detected"}
+        
+        # Auto-detect chapter from query if not specified
+        target_chapter = None
+        detected_from_query = False
+        detection_method = None
+        
+        if chapter_number:
+            for ch in chapters:
+                if str(ch["chapter_number"]) == str(chapter_number):
+                    target_chapter = ch
+                    break
+        else:
+            # Use AI to extract chapter number from query (works for any language/phrasing)
+            extracted_chapter = self._extract_chapter_with_ai(query, [ch["chapter_number"] for ch in chapters])
+            
+            if extracted_chapter:
+                for ch in chapters:
+                    if str(ch["chapter_number"]) == str(extracted_chapter):
+                        target_chapter = ch
+                        detected_from_query = True
+                        detection_method = "ai"
+                        logger.info(f"[RAG] AI extracted chapter {extracted_chapter} from query: '{query}'")
+                        break
+        
+        if not target_chapter:
+            # Return list of available chapters
+            chapters_list = "\n".join([
+                f"  • Глава {ch['chapter_number']}: {ch['title'][:50]}..."
+                for ch in chapters
+            ])
+            return f"Не удалось определить главу. Доступные главы:\n{chapters_list}", [], {
+                "mode": "chapter",
+                "available_chapters": [ch["chapter_number"] for ch in chapters]
+            }
+        
+        # Get chapter content
+        content, sources = self.get_chapter_content(user_email, document_id, target_chapter["chapter_number"])
+        
+        if not content:
+            return "", [], {"error": f"Chapter {target_chapter['chapter_number']} is empty"}
+        
+        # Truncate if needed
+        max_chars = max_tokens * 4
+        if len(content) > max_chars:
+            content = content[:max_chars] + "\n\n... [Глава обрезана из-за лимита токенов] ..."
+        
+        # Build context
+        header = f"""📖 ГЛАВА {target_chapter['chapter_number']}: {target_chapter['title']}
+Документ: {document_name}
+
+---
+
+"""
+        context = header + content
+        
+        debug_info = {
+            "mode": "chapter",
+            "document_id": document_id,
+            "document_name": document_name,
+            "chapter_number": target_chapter["chapter_number"],
+            "chapter_title": target_chapter["title"],
+            "auto_detected": detected_from_query,
+            "detection_method": detection_method or "explicit",  # "ai", "explicit"
+            "total_chunks": target_chapter["end_chunk"] - target_chapter["start_chunk"] + 1,
+            "total_chars": len(content),
+            "estimated_tokens": len(content) // 4,
+            "available_chapters": [ch["chapter_number"] for ch in chapters]
+        }
+        
+        return context, sources, debug_info
+
     def build_rag_context(
         self,
         query: str,
@@ -786,17 +2333,34 @@ No explanation, just the array."""
         document_ids: Optional[List[str]] = None,
         max_tokens: int = 4000,
         threshold: float = 0.5,
-        use_hybrid: bool = True
+        use_hybrid: bool = True,
+        keyword_weight: float = 0.3,
+        semantic_weight: float = 0.7
     ) -> Tuple[str, List[Dict]]:
         """
-        Build context string from relevant documents for RAG
-        Returns (context_string, source_documents)
+        Build context string from relevant documents for RAG.
+        Supports configurable hybrid search weights (like n8n).
+        
+        Args:
+            query: Search query
+            user_email: User email for filtering
+            document_ids: Optional list of document IDs to search
+            max_tokens: Maximum tokens for context
+            threshold: Minimum similarity threshold
+            use_hybrid: Use hybrid (keyword + semantic) search
+            keyword_weight: Weight for BM25/keyword search (0-1)
+            semantic_weight: Weight for vector/semantic search (0-1)
+        
+        Returns:
+            Tuple of (context_string, source_documents)
         """
         if use_hybrid:
             results = self.hybrid_search(
                 query=query,
                 user_email=user_email,
-                limit=10
+                limit=10,
+                keyword_weight=keyword_weight,
+                semantic_weight=semantic_weight
             )
         else:
             results = self.search(
@@ -815,33 +2379,299 @@ No explanation, just the array."""
         total_chars = 0
         max_chars = max_tokens * 4  # Rough token estimate
         
-        for result in results:
+        for i, result in enumerate(results):
             chunk_chars = len(result["content"])
             
             if total_chars + chunk_chars > max_chars:
                 break
             
-            context_parts.append(
-                f"[Source: {result.get('document_name', 'Unknown')}]\n{result['content']}"
-            )
+            # Format with citation
+            citation = self.format_citation(result)
+            context_parts.append(f"[{i+1}] {citation}\n{result['content']}")
+            
             sources.append({
+                "index": i + 1,
                 "document_id": result["document_id"],
                 "document_name": result.get("document_name"),
-                "chunk_index": result["chunk_index"],
-                "similarity": result.get("similarity") or result.get("combined_score", 0)
+                "section": result.get("section_title"),
+                "page": result.get("page_number"),
+                "chunk_index": result.get("chunk_index"),
+                "similarity": result.get("similarity") or result.get("combined_score", 0),
+                "citation": citation
             })
             total_chars += chunk_chars
         
-        context = "\n\n---\n\n".join(context_parts)
+        # Build final context with instruction
+        header = """Используй следующие фрагменты документов для ответа на вопрос пользователя.
+Ссылайся на источники используя номера [1], [2] и т.д.
+Если в документах нет нужной информации, честно скажи об этом.
+
+---
+ДОКУМЕНТЫ:
+"""
+        context = header + "\n\n".join(context_parts)
+        
         return context, sources
 
 
-# Singleton instance
-_store: Optional[RAGStore] = None
+    # ==================== ITERATIVE PROCESSING FOR LARGE DOCUMENTS ====================
+    
+    def get_document_stats(
+        self,
+        user_email: str,
+        document_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Get statistics about document(s) to determine processing strategy.
+        
+        Returns:
+            Dict with total_chars, total_chunks, estimated_tokens, recommended_approach
+        """
+        all_chunks = self.get_all_document_chunks(user_email, document_ids)
+        
+        total_chars = sum(len(chunk.get("content", "")) for chunk in all_chunks)
+        total_chunks = len(all_chunks)
+        estimated_tokens = total_chars // 4  # rough estimate
+        
+        # Recommend approach based on size
+        if estimated_tokens < 30000:
+            approach = "full"  # fits in one context
+        elif estimated_tokens < 100000:
+            approach = "full"  # still manageable for large context models
+        else:
+            approach = "iterative"  # too large, need batching
+        
+        return {
+            "total_chars": total_chars,
+            "total_chunks": total_chunks,
+            "estimated_tokens": estimated_tokens,
+            "recommended_approach": approach
+        }
+    
+    def build_iterative_summary_context(
+        self,
+        user_email: str,
+        document_ids: List[str],
+        batch_size_chars: int = 20000,
+        batch_number: int = 0
+    ) -> Tuple[str, List[Dict], Dict]:
+        """
+        Build context for ONE batch of a large document for iterative processing.
+        
+        Args:
+            user_email: User email
+            document_ids: Document IDs to process
+            batch_size_chars: Characters per batch
+            batch_number: Which batch to return (0-indexed)
+        
+        Returns:
+            Tuple of (batch_context, sources, debug_info)
+        """
+        all_chunks = self.get_all_document_chunks(user_email, document_ids)
+        
+        if not all_chunks:
+            return "", [], {"error": "No chunks found"}
+        
+        # Calculate batch boundaries
+        total_chars = sum(len(chunk.get("content", "")) for chunk in all_chunks)
+        num_batches = (total_chars // batch_size_chars) + (1 if total_chars % batch_size_chars else 0)
+        
+        if batch_number >= num_batches:
+            return "", [], {"error": f"Batch {batch_number} out of range (total: {num_batches})"}
+        
+        # Collect chunks for this batch
+        current_chars = 0
+        batch_start_char = batch_number * batch_size_chars
+        batch_end_char = (batch_number + 1) * batch_size_chars
+        
+        batch_chunks = []
+        char_counter = 0
+        
+        for chunk in all_chunks:
+            chunk_len = len(chunk.get("content", ""))
+            chunk_end = char_counter + chunk_len
+            
+            # Check if this chunk overlaps with our batch
+            if chunk_end > batch_start_char and char_counter < batch_end_char:
+                batch_chunks.append(chunk)
+            
+            char_counter = chunk_end
+            
+            if char_counter >= batch_end_char:
+                break
+        
+        # Build context from batch chunks
+        context_parts = []
+        sources = []
+        
+        for i, chunk in enumerate(batch_chunks):
+            content = chunk.get("content", "")
+            context_parts.append(content)
+            sources.append({
+                "index": i + 1,
+                "document_id": chunk.get("document_id"),
+                "document_name": chunk.get("document_name"),
+                "chunk_index": chunk.get("chunk_index"),
+                "batch_number": batch_number
+            })
+        
+        context = "\n\n".join(context_parts)
+        
+        # Add batch header
+        header = f"""📦 BATCH {batch_number + 1} of {num_batches}
+Content range: ~{batch_start_char:,} to ~{batch_end_char:,} characters
+
+---
+
+"""
+        context = header + context
+        
+        debug_info = {
+            "mode": "iterative_batch",
+            "batch_number": batch_number,
+            "total_batches": num_batches,
+            "batch_size_chars": batch_size_chars,
+            "chunks_in_batch": len(batch_chunks),
+            "context_chars": len(context),
+            "estimated_tokens": len(context) // 4
+        }
+        
+        return context, sources, debug_info
+    
+    def build_synthesis_context(
+        self,
+        user_email: str,
+        document_ids: List[str],
+        batch_summaries: List[str],
+        batch_sources: List[List[Dict]],
+        batch_debugs: List[Dict],
+        task: str = "summarize"
+    ) -> Tuple[str, List[Dict], Dict]:
+        """
+        Synthesize final answer from multiple batch summaries.
+        
+        Args:
+            user_email: User email
+            document_ids: Document IDs
+            batch_summaries: List of summaries from each batch
+            batch_sources: List of sources from each batch
+            batch_debugs: List of debug info from each batch
+            task: Task type (summarize, analyze, etc.)
+        
+        Returns:
+            Tuple of (final_context, combined_sources, debug_info)
+        """
+        # Combine all summaries
+        combined_summary = "\n\n=== BATCH SEPARATOR ===\n\n".join(batch_summaries)
+        
+        # Build synthesis instructions
+        synthesis_instructions = {
+            "summarize": "📝 Объедини следующие summary из разных частей документа в один связный summary всего документа.",
+            "analyze": "🔍 Проведи общий анализ документа на основе анализов его частей ниже.",
+            "find_loopholes": "⚖️ Объедини найденные лазейки из разных частей документа.",
+            "find_contradictions": "⚡ Объедини найденные противоречия из всего документа.",
+        }.get(task, "📄 Объедини информацию из следующих частей документа:")
+        
+        context = f"""{synthesis_instructions}
+
+---
+
+{combined_summary}
+
+---
+
+📊 ФИНАЛЬНЫЙ СИНТЕЗ:
+Теперь дай итоговый ответ, объединяющий всю информацию выше."""
+        
+        # Combine all sources
+        combined_sources = []
+        for batch_idx, sources in enumerate(batch_sources):
+            for source in sources:
+                source["batch_number"] = batch_idx
+                combined_sources.append(source)
+        
+        debug_info = {
+            "mode": "synthesis",
+            "num_batches": len(batch_summaries),
+            "total_sources": len(combined_sources),
+            "synthesis_chars": len(context),
+            "estimated_tokens": len(context) // 4,
+            "batch_debugs": batch_debugs
+        }
+        
+        return context, combined_sources, debug_info
+    
+    def adaptive_context_compression(
+        self,
+        context: str,
+        max_tokens: int,
+        model_name: str = "gpt-4"
+    ) -> str:
+        """
+        Адаптивное сжатие контекста если он не помещается в лимит модели.
+        
+        Args:
+            context: Исходный контекст
+            max_tokens: Максимальное количество токенов для completion
+            model_name: Название модели (для определения лимитов)
+        
+        Returns:
+            Сжатый контекст
+        """
+        # Определяем лимиты для разных моделей (ОБЩИЙ лимит context)
+        model_limits = {
+            "gpt-4": 8192,
+            "gpt-4-turbo": 128000,
+            "gpt-4o": 128000,
+            "gpt-4o-mini": 128000,
+            "claude-3": 200000,
+            "claude-3-opus": 200000,
+            "gemini-1.5-pro": 1000000,
+            "deepseek": 64000,
+        }
+        
+        # Найдем лимит для модели
+        total_context_limit = model_limits.get(model_name, 8192)
+        for key in model_limits:
+            if key in model_name.lower():
+                total_context_limit = model_limits[key]
+                break
+        
+        # Оставляем запас для completion + system prompt + history
+        # Берем 70% от лимита для RAG контекста, остальное для completion и прочего
+        available_tokens = int(total_context_limit * 0.7) - 5000  # -5000 для запаса
+        
+        current_tokens = len(context) // 4  # грубая оценка (1 token ≈ 4 chars)
+        
+        if current_tokens <= available_tokens:
+            return context  # помещается, ничего не делаем
+        
+        # Нужно сжатие
+        logger.warning(f"[RAG] Context too large: {current_tokens:,} tokens, available: {available_tokens:,}. Compressing...")
+        
+        # Стратегия сжатия: обрезаем до лимита, оставляя начало и конец
+        target_chars = available_tokens * 4
+        
+        if len(context) <= target_chars:
+            return context
+        
+        # Берем 60% с начала, 40% с конца (чтобы сохранить контекст и выводы)
+        start_chars = int(target_chars * 0.6)
+        end_chars = int(target_chars * 0.4)
+        
+        compressed = context[:start_chars] + "\n\n... [СРЕДНЯЯ ЧАСТЬ УДАЛЕНА ДЛЯ СООТВЕТСТВИЯ ЛИМИТУ ТОКЕНОВ] ...\n\n" + context[-end_chars:]
+        
+        logger.info(f"[RAG] Context compressed: {len(context):,} -> {len(compressed):,} chars ({current_tokens:,} -> {len(compressed)//4:,} tokens)")
+        
+        return compressed
+
+# ==================== SINGLETON INSTANCE ====================
+
+_rag_store_instance = None
 
 def get_rag_store() -> RAGStore:
-    """Get singleton RAG store instance"""
-    global _store
-    if _store is None:
-        _store = RAGStore()
-    return _store
+    """Get singleton instance of RAGStore"""
+    global _rag_store_instance
+    if _rag_store_instance is None:
+        _rag_store_instance = RAGStore()
+    return _rag_store_instance
