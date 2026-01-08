@@ -49,6 +49,7 @@ export interface ExtendedMessageMeta {
   rag_context_full?: string; // Full context for debug mode
   rag_debug?: RAGDebugInfo; // Debug info about search queries and methods
   system_prompt_preview?: string; // Preview of the full system prompt
+  system_prompt_full?: string; // Full system prompt with RAG context for debug
 }
 
 export interface Message {
@@ -78,6 +79,7 @@ export interface ChatResponse {
   chunks_count?: number;
   debug?: RAGDebugInfo; // Debug info about search queries and methods
   system_prompt_preview?: string; // Preview of the system prompt
+  system_prompt_full?: string; // Full system prompt with RAG context for debug
   system_prompt_length?: number;
   meta?: {
     tokens_in?: number;

@@ -69,48 +69,68 @@ interface JsonNodeProps {
 }
 
 const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth = 0, isLast = true }) => {
-  // Auto-expand important keys at any depth
-  const shouldAutoExpand = () => {
-    if (depth < 2) return true;
-    // Always expand messages array and its contents
-    if (keyName === 'messages') return true;
-    if (keyName === 'content' || keyName === 'role') return true;
-    // Expand objects inside messages
-    if (depth <= 4 && typeof value === 'object') return true;
-    return false;
-  };
-  
-  const [isExpanded, setIsExpanded] = useState(shouldAutoExpand());
-
   const isObject = value !== null && typeof value === 'object';
   const isArray = Array.isArray(value);
   const isEmpty = isObject && Object.keys(value).length === 0;
 
+  // Smart initial expand - COLLAPSED by default for better UX
+  const getInitialExpanded = () => {
+    // Root object - expanded
+    if (depth === 0) return true;
+    // Everything else - COLLAPSED (user clicks to expand)
+    return false;
+  };
+
+  const [isExpanded, setIsExpanded] = useState(getInitialExpanded);
+  const [showFullText, setShowFullText] = useState(false);
+
   const indent = depth * 16;
 
-  // Render primitive values - NO TRUNCATION in tree view for full visibility
+  // Render primitive values with smart truncation
   const renderValue = (val: any) => {
     if (val === null) return <span className="text-rose-400">null</span>;
     if (typeof val === 'boolean') return <span className="text-violet-400">{String(val)}</span>;
     if (typeof val === 'number') return <span className="text-amber-400">{val}</span>;
     if (typeof val === 'string') {
-      // For very long strings, show them in a scrollable pre block
-      if (val.length > 1000) {
+      // Always truncate long strings for preview
+      const isLong = val.length > 100;
+      
+      // For long strings - show preview with expand button
+      if (isLong && !showFullText) {
         return (
-          <div className="flex flex-col">
-            <span className="text-gray-500 text-xs mb-1">({val.length} chars)</span>
-            <pre className="text-emerald-400 whitespace-pre-wrap break-all text-xs bg-gray-800/50 p-2 rounded max-h-96 overflow-y-auto">
-              "{val}"
-            </pre>
+          <div className="inline-flex flex-col gap-1">
+            <span className="text-emerald-400">
+              "{val.slice(0, 80)}..."
+              <span className="text-gray-500 text-xs ml-1">({val.length} chars)</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowFullText(true); }}
+                className="text-xs text-blue-400 hover:text-blue-300 ml-2 px-2 py-0.5 bg-blue-500/10 rounded inline"
+              >
+                expand
+              </button>
+            </span>
           </div>
         );
       }
-      return (
-        <span className="text-emerald-400 break-all whitespace-pre-wrap">
-          "{val}"
-          {val.length > 200 && <span className="text-gray-500 text-xs ml-1">({val.length} chars)</span>}
-        </span>
-      );
+      
+      // Full text (expanded)
+      if (isLong && showFullText) {
+        return (
+          <div className="flex flex-col gap-1 mt-1">
+            <pre className="text-emerald-400 whitespace-pre-wrap break-all text-xs bg-gray-800/50 p-2 rounded max-h-[400px] overflow-y-auto border border-gray-700">
+              "{val}"
+            </pre>
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowFullText(false); }}
+              className="text-xs text-gray-400 hover:text-gray-300 self-start px-2 py-0.5 bg-gray-500/10 rounded"
+            >
+              collapse
+            </button>
+          </div>
+        );
+      }
+      
+      return <span className="text-emerald-400">"{val}"</span>;
     }
     return <span className="text-gray-400">{String(val)}</span>;
   };
@@ -147,24 +167,28 @@ const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth = 0, isLast =
   // Generate preview for collapsed objects
   const getCollapsedPreview = () => {
     if (isArray) {
-      // For message arrays, show role preview
+      // For message arrays, show detailed role preview
       if (entries.length > 0 && entries[0][1]?.role) {
-        const roles = entries.map(e => e[1]?.role).filter(Boolean).slice(0, 3);
-        return `${entries.length} messages: ${roles.join(', ')}${entries.length > 3 ? '...' : ''}`;
+        const roles = entries.map(e => e[1]?.role).filter(Boolean);
+        const roleCount: Record<string, number> = {};
+        roles.forEach(r => { roleCount[r] = (roleCount[r] || 0) + 1; });
+        const summary = Object.entries(roleCount).map(([r, c]) => `${c} ${r}`).join(', ');
+        return `${entries.length} msgs (${summary})`;
       }
       return `${entries.length} items`;
     }
-    // For objects, show keys preview
-    const keys = Object.keys(value).slice(0, 4);
+    // For objects - show type and key preview
+    const keys = Object.keys(value);
     if (keys.includes('role') && keys.includes('content')) {
-      // This is a message object
+      // This is a message object - show role and content preview
       const role = value.role || '';
-      const contentPreview = typeof value.content === 'string' 
-        ? value.content.slice(0, 50) + (value.content.length > 50 ? '...' : '')
-        : '';
+      const content = typeof value.content === 'string' ? value.content : '';
+      const contentPreview = content.slice(0, 60).replace(/\n/g, ' ') + (content.length > 60 ? '...' : '');
       return `${role}: "${contentPreview}"`;
     }
-    return keys.join(', ') + (Object.keys(value).length > 4 ? '...' : '');
+    // Default - show keys
+    const keyPreview = keys.slice(0, 5).join(', ');
+    return keyPreview + (keys.length > 5 ? ` +${keys.length - 5} more` : '');
   };
 
   return (
@@ -374,6 +398,29 @@ const JsonSection: React.FC<JsonSectionProps> = ({
 
 // ==================== MAIN CONTEXT VIEWER COMPONENT ====================
 
+// Helper function to extract RAG context from system message
+const extractRagContextFromSystemMessage = (content: string): string => {
+  const startMarker = '--- RETRIEVED CONTEXT FROM DOCUMENTS ---';
+  const endMarker = '--- END CONTEXT ---';
+  
+  const startIdx = content.indexOf(startMarker);
+  const endIdx = content.indexOf(endMarker);
+  
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    return content.slice(startIdx + startMarker.length, endIdx).trim();
+  }
+  
+  // Try alternative marker format
+  const altStartMarker = '📚 ДОКУМЕНТ:';
+  const altStartIdx = content.indexOf(altStartMarker);
+  if (altStartIdx !== -1) {
+    // Return everything from marker to end (or to end context marker if present)
+    return content.slice(altStartIdx).trim();
+  }
+  
+  return '';
+};
+
 export const ContextViewer: React.FC<ContextViewerProps> = ({
   messages,
   currentInput = '',
@@ -386,16 +433,66 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Find RAG context from various sources
+  const effectiveRagContext = useMemo(() => {
+    // 1. Use provided ragContext prop if available
+    if (ragContext && ragContext.trim()) {
+      return ragContext;
+    }
+    
+    // 2. Try to extract from ragDebugInfo
+    if (ragDebugInfo?.context?.context_text) {
+      return ragDebugInfo.context.context_text;
+    }
+    
+    // 3. Try to extract from last assistant message's meta
+    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+    if (lastAssistant?.meta?.rag_context_full) {
+      return lastAssistant.meta.rag_context_full as string;
+    }
+    
+    // 4. Try to extract from system_prompt_full in last assistant message meta
+    const systemPromptFull = lastAssistant?.meta?.system_prompt_full as string | undefined;
+    if (systemPromptFull && systemPromptFull.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---')) {
+      return extractRagContextFromSystemMessage(systemPromptFull);
+    }
+    
+    // 5. Try to extract from system prompt prop if it already contains RAG context
+    if (systemPrompt && systemPrompt.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---')) {
+      return extractRagContextFromSystemMessage(systemPrompt);
+    }
+    
+    return '';
+  }, [ragContext, ragDebugInfo, messages, systemPrompt]);
+
+  // Find the full system prompt (with RAG context) from various sources
+  const effectiveSystemPrompt = useMemo(() => {
+    // 1. Try to get full system prompt from last assistant message's meta
+    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+    if (lastAssistant?.meta?.system_prompt_full) {
+      return lastAssistant.meta.system_prompt_full as string;
+    }
+    
+    // 2. Use the provided system prompt as base
+    let basePrompt = systemPrompt || 'You are a helpful AI assistant.';
+    
+    // 3. If we have RAG context and system prompt doesn't already contain it, add it
+    const systemAlreadyHasRag = basePrompt.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---') || 
+                                basePrompt.includes('📚 ДОКУМЕНТ:');
+    
+    if (effectiveRagContext && !systemAlreadyHasRag) {
+      basePrompt += `\n\n--- RETRIEVED CONTEXT FROM DOCUMENTS ---\n${effectiveRagContext}\n--- END CONTEXT ---`;
+    }
+    
+    return basePrompt;
+  }, [systemPrompt, effectiveRagContext, messages]);
+
   // Build the EXACT API request that will be sent
   const apiRequest = useMemo(() => {
     const apiMessages: Array<{ role: string; content: string }> = [];
 
-    // 1. System message with RAG context embedded
-    let fullSystemPrompt = systemPrompt || 'You are a helpful AI assistant.';
-    if (ragContext) {
-      fullSystemPrompt += `\n\n--- RETRIEVED CONTEXT FROM DOCUMENTS ---\n${ragContext}\n--- END CONTEXT ---`;
-    }
-    apiMessages.push({ role: 'system', content: fullSystemPrompt });
+    // 1. System message with RAG context embedded (using effective system prompt)
+    apiMessages.push({ role: 'system', content: effectiveSystemPrompt });
 
     // 2. Conversation history
     messages.forEach(msg => {
@@ -415,7 +512,7 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
       top_p: generationConfig.top_p,
       stream: generationConfig.stream
     };
-  }, [messages, currentInput, generationConfig, systemPrompt, ragContext]);
+  }, [messages, currentInput, generationConfig, effectiveSystemPrompt]);
 
   // Token estimates
   const tokenStats = useMemo(() => {
@@ -425,7 +522,8 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
     const systemChars = apiRequest.messages[0]?.content?.length || 0;
     const systemTokens = Math.round(systemChars / 4);
 
-    const ragChars = ragContext?.length || 0;
+    // Calculate RAG tokens from effective context (either from prop or extracted)
+    const ragChars = effectiveRagContext?.length || 0;
     const ragTokens = Math.round(ragChars / 4);
 
     return {
@@ -434,7 +532,7 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
       rag: ragTokens,
       messages: apiRequest.messages.length
     };
-  }, [apiRequest, ragContext]);
+  }, [apiRequest, effectiveRagContext]);
 
   // Full debug payload
   const fullDebugPayload = useMemo(() => ({
@@ -514,10 +612,10 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
                       <Hash size={12} />
                       ~{tokenStats.total.toLocaleString()} tokens
                     </span>
-                    {ragContext && (
+                    {effectiveRagContext && (
                       <span className="flex items-center gap-1 px-2 py-1 rounded bg-green-500/20 text-green-400 border border-green-500/30">
                         <Database size={12} />
-                        RAG включён
+                        RAG ({Math.round(effectiveRagContext.length / 4).toLocaleString()} tok)
                       </span>
                     )}
                   </div>

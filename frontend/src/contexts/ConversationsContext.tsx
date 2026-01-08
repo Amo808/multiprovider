@@ -325,7 +325,8 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
                       rag_context_preview: chunk.rag_context_preview,
                       rag_context_full: chunk.rag_context_full,
                       rag_debug: chunk.debug,
-                      system_prompt_preview: chunk.system_prompt_preview
+                      system_prompt_preview: chunk.system_prompt_preview,
+                      system_prompt_full: chunk.system_prompt_full  // Full system prompt with RAG context for debug
                     }
                   }
                   : msg

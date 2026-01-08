@@ -1182,7 +1182,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       total_ms: lastDebugInfo.summary?.total_latency_ms
                     }
                   } : undefined}
-                  ragContext={lastDebugInfo?.rag_pipeline?.context_building?.full_context || lastDebugInfo?.rag_pipeline?.context_building?.context_preview}
+                  ragContext={
+                    // Try to get RAG context from various sources
+                    // 1. From debug collector's context_building
+                    lastDebugInfo?.rag_pipeline?.context_building?.full_context
+                    // 2. From context_building preview
+                    || lastDebugInfo?.rag_pipeline?.context_building?.context_preview
+                    // 3. From last assistant message's meta (set during streaming)
+                    || messages.slice().reverse().find(m => m.role === 'assistant' && m.meta?.rag_context_full)?.meta?.rag_context_full as string
+                    // 4. Empty string - ContextViewer will try to extract from systemPrompt
+                    || ''
+                  }
                 />
 
                 {/* Debug Panel Button - show when RAG is enabled and we have debug info */}
