@@ -498,11 +498,18 @@ class GeminiAdapter(BaseAdapter):
                                 regular_text = ""
                                 for part in parts:
                                     self.logger.info(f"[Gemini] Part keys: {part.keys()}")
-                                    if part.get("thought"):
-                                        thought_text += part.get("thought", "")
+                                    # The "thought" field can be a boolean flag indicating the "text" is thinking content
+                                    thought_flag = part.get("thought")
+                                    if thought_flag is True and "text" in part:
+                                        # When thought=True, the text field contains the thinking content
+                                        thought_text += part.get("text", "")
+                                    elif isinstance(thought_flag, str) and thought_flag:
+                                        # If thought is a string (legacy format), use it directly
+                                        thought_text += thought_flag
                                     elif part.get("thoughtContent"):
                                         thought_text += part.get("thoughtContent", "")
-                                    elif "text" in part:
+                                    elif "text" in part and not thought_flag:
+                                        # Regular text content (not thinking)
                                         regular_text += part["text"]
                                 
                                 tokens_in = usage_metadata.get("promptTokenCount", input_tokens)
@@ -684,9 +691,16 @@ class GeminiAdapter(BaseAdapter):
                                                     
                                                     for part in parts:
                                                         # Check for thought/thinking content - multiple possible field names
-                                                        if part.get("thought"):
-                                                            thought_text += part.get("thought", "")
-                                                            self.logger.info(f"[Gemini] Found 'thought' field: {len(part.get('thought', ''))} chars")
+                                                        # The "thought" field can be a boolean flag indicating the "text" is thinking content
+                                                        thought_flag = part.get("thought")
+                                                        if thought_flag is True and "text" in part:
+                                                            # When thought=True, the text field contains the thinking content
+                                                            thought_text += part.get("text", "")
+                                                            self.logger.info(f"[Gemini] Found thought via flag, text length: {len(part.get('text', ''))} chars")
+                                                        elif isinstance(thought_flag, str) and thought_flag:
+                                                            # If thought is a string (legacy format), use it directly
+                                                            thought_text += thought_flag
+                                                            self.logger.info(f"[Gemini] Found 'thought' string field: {len(thought_flag)} chars")
                                                         elif part.get("thoughtContent"):
                                                             thought_text += part.get("thoughtContent", "")
                                                             self.logger.info(f"[Gemini] Found 'thoughtContent' field: {len(part.get('thoughtContent', ''))} chars")
@@ -696,7 +710,7 @@ class GeminiAdapter(BaseAdapter):
                                                         elif part.get("reasoning"):
                                                             thought_text += part.get("reasoning", "")
                                                             self.logger.info(f"[Gemini] Found 'reasoning' field: {len(part.get('reasoning', ''))} chars")
-                                                        elif "text" in part:
+                                                        elif "text" in part and not thought_flag:
                                                             # Check if this text part has a "role" indicating it's thinking
                                                             part_role = content_part.get("role", "")
                                                             if part_role == "thought" or part_role == "thinking":

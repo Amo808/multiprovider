@@ -561,8 +561,8 @@ class RAGStore:
         self,
         query: str,
         user_email: str,
-        num_queries: int = 4,
-        results_per_query: int = 7,
+        num_queries: int = 3,
+        results_per_query: int = 4,
         use_hybrid: bool = True,
         document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
@@ -768,6 +768,12 @@ No explanation, just the array."""
             # Sort by rerank score
             results.sort(key=lambda x: x.get('rerank_score', 0), reverse=True)
             
+            # Filter out low-quality results (score < 5 out of 10)
+            quality_results = [r for r in results if r.get('rerank_score', 0) >= 5]
+            if quality_results:
+                return quality_results[:top_k]
+            
+            # If no high-quality results, return best available
             return results[:top_k]
             
         except Exception as e:
@@ -1373,8 +1379,8 @@ Next search query (or DONE):"""
             candidates = self.multi_query_search(
                 query=query,
                 user_email=user_email,
-                num_queries=4,
-                results_per_query=7,
+                num_queries=3,  # Reduced from 4 for more focused search
+                results_per_query=4,  # Reduced from 7 to avoid context overload
                 use_hybrid=True
             )
         
@@ -1389,7 +1395,7 @@ Next search query (or DONE):"""
         
         # Always rerank for best precision
         debug_info["techniques_used"].append("rerank")
-        candidates = self.rerank_results(query, candidates, top_k=10)
+        candidates = self.rerank_results(query, candidates, top_k=5)  # Reduced from 10 to keep only best matches
         debug_info["after_rerank"] = len(candidates)
         
         # Build context with citations

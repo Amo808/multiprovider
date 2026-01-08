@@ -94,7 +94,7 @@ const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth = 0, isLast =
     if (typeof val === 'string') {
       // Always truncate long strings for preview
       const isLong = val.length > 100;
-      
+
       // For long strings - show preview with expand button
       if (isLong && !showFullText) {
         return (
@@ -112,7 +112,7 @@ const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth = 0, isLast =
           </div>
         );
       }
-      
+
       // Full text (expanded)
       if (isLong && showFullText) {
         return (
@@ -129,7 +129,7 @@ const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth = 0, isLast =
           </div>
         );
       }
-      
+
       return <span className="text-emerald-400">"{val}"</span>;
     }
     return <span className="text-gray-400">{String(val)}</span>;
@@ -402,14 +402,14 @@ const JsonSection: React.FC<JsonSectionProps> = ({
 const extractRagContextFromSystemMessage = (content: string): string => {
   const startMarker = '--- RETRIEVED CONTEXT FROM DOCUMENTS ---';
   const endMarker = '--- END CONTEXT ---';
-  
+
   const startIdx = content.indexOf(startMarker);
   const endIdx = content.indexOf(endMarker);
-  
+
   if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
     return content.slice(startIdx + startMarker.length, endIdx).trim();
   }
-  
+
   // Try alternative marker format
   const altStartMarker = '📚 ДОКУМЕНТ:';
   const altStartIdx = content.indexOf(altStartMarker);
@@ -417,7 +417,7 @@ const extractRagContextFromSystemMessage = (content: string): string => {
     // Return everything from marker to end (or to end context marker if present)
     return content.slice(altStartIdx).trim();
   }
-  
+
   return '';
 };
 
@@ -439,29 +439,29 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
     if (ragContext && ragContext.trim()) {
       return ragContext;
     }
-    
+
     // 2. Try to extract from ragDebugInfo
     if (ragDebugInfo?.context?.context_text) {
       return ragDebugInfo.context.context_text;
     }
-    
+
     // 3. Try to extract from last assistant message's meta
     const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
     if (lastAssistant?.meta?.rag_context_full) {
       return lastAssistant.meta.rag_context_full as string;
     }
-    
+
     // 4. Try to extract from system_prompt_full in last assistant message meta
     const systemPromptFull = lastAssistant?.meta?.system_prompt_full as string | undefined;
     if (systemPromptFull && systemPromptFull.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---')) {
       return extractRagContextFromSystemMessage(systemPromptFull);
     }
-    
+
     // 5. Try to extract from system prompt prop if it already contains RAG context
     if (systemPrompt && systemPrompt.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---')) {
       return extractRagContextFromSystemMessage(systemPrompt);
     }
-    
+
     return '';
   }, [ragContext, ragDebugInfo, messages, systemPrompt]);
 
@@ -472,18 +472,18 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
     if (lastAssistant?.meta?.system_prompt_full) {
       return lastAssistant.meta.system_prompt_full as string;
     }
-    
+
     // 2. Use the provided system prompt as base
     let basePrompt = systemPrompt || 'You are a helpful AI assistant.';
-    
+
     // 3. If we have RAG context and system prompt doesn't already contain it, add it
-    const systemAlreadyHasRag = basePrompt.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---') || 
-                                basePrompt.includes('📚 ДОКУМЕНТ:');
-    
+    const systemAlreadyHasRag = basePrompt.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---') ||
+      basePrompt.includes('📚 ДОКУМЕНТ:');
+
     if (effectiveRagContext && !systemAlreadyHasRag) {
       basePrompt += `\n\n--- RETRIEVED CONTEXT FROM DOCUMENTS ---\n${effectiveRagContext}\n--- END CONTEXT ---`;
     }
-    
+
     return basePrompt;
   }, [systemPrompt, effectiveRagContext, messages]);
 
