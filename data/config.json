@@ -1,6 +1,6 @@
 {
-  "activeProvider": "deepseek",
-  "activeModel": "deepseek-reasoner",
+  "activeProvider": "gemini",
+  "activeModel": "gemini-2.5-pro",
   "providers": {
     "deepseek": {
       "id": "deepseek",

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useReducer, memo } from 'react';
 import { Bot, Copy, Brain, Zap, ChevronDown, Trash2, Clock, Sparkles, Eye, EyeOff, GitBranch, Check, X, RotateCcw, FileText, BookOpen } from 'lucide-react';
-import { Message, ModelInfo, RAGSource } from '../types';
+import { Message, ModelInfo, RAGSource, RAGDebugInfo } from '../types';
 import { cn } from '../lib/utils';
 
 interface MessageBubbleProps {
@@ -32,14 +32,28 @@ const ThinkingSection = memo<{
   const isLong = content.length > 1000;
   const displayContent = showFull || !isLong ? content : content.substring(0, 1000) + '...';
 
+  // Handle click with event stop to prevent any parent interference during streaming
+  const handleToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsOpen(!isOpen);
+  };
+
+  const handleShowFullToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShowFull(!showFull);
+  };
+
   return (
     <div className="mb-3">
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={handleToggle}
         className={cn(
-          "flex items-center gap-2 text-sm transition-colors",
+          "flex items-center gap-2 text-sm transition-colors cursor-pointer select-none",
           isStreaming ? "text-purple-500" : "text-muted-foreground hover:text-foreground"
         )}
+        type="button"
       >
         <Brain className={cn("w-4 h-4", isStreaming && "animate-pulse")} />
         <span>{isStreaming ? "Thinking..." : "Thought process"}</span>
@@ -51,14 +65,16 @@ const ThinkingSection = memo<{
 
       {isOpen && (
         <div className="mt-2 pl-6 border-l-2 border-purple-500/30">
-          <div className="text-sm text-muted-foreground whitespace-pre-wrap font-mono text-xs leading-relaxed">
+          <div className="text-sm text-muted-foreground whitespace-pre-wrap font-mono text-xs leading-relaxed max-h-[500px] overflow-y-auto">
             {displayContent}
             {isStreaming && <span className="inline-block w-1.5 h-4 bg-purple-500 animate-pulse ml-0.5" />}
           </div>
-          {isLong && !isStreaming && (
+          {/* Show expand/collapse button even during streaming */}
+          {isLong && (
             <button
-              onClick={() => setShowFull(!showFull)}
-              className="mt-2 text-xs text-primary hover:underline flex items-center gap-1"
+              onClick={handleShowFullToggle}
+              className="mt-2 text-xs text-primary hover:underline flex items-center gap-1 cursor-pointer"
+              type="button"
             >
               {showFull ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
               {showFull ? 'Show less' : 'Show more'}
@@ -75,17 +91,48 @@ ThinkingSection.displayName = 'ThinkingSection';
 const RAGContextSection = memo<{
   sources: RAGSource[];
   contextPreview?: string;
-}>(({ sources, contextPreview }) => {
+  contextFull?: string;
+  debug?: RAGDebugInfo;
+  systemPromptPreview?: string;
+}>(({ sources, contextPreview, contextFull, debug, systemPromptPreview }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [showFullContext, setShowFullContext] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
 
   if (!sources || sources.length === 0) return null;
+
+  // Handle clicks with event stop to prevent interference
+  const handleToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsOpen(!isOpen);
+  };
+
+  const handleDebugToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShowDebug(!showDebug);
+  };
+
+  const handleFullContextToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShowFullContext(!showFullContext);
+  };
+
+  const handleSystemPromptToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShowSystemPrompt(!showSystemPrompt);
+  };
 
   return (
     <div className="mb-3">
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        onClick={handleToggle}
+        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer select-none"
+        type="button"
       >
         <BookOpen className="w-4 h-4 text-blue-500" />
         <span>Document context</span>
@@ -97,6 +144,101 @@ const RAGContextSection = memo<{
 
       {isOpen && (
         <div className="mt-2 pl-6 border-l-2 border-blue-500/30 space-y-3">
+          {/* Debug info section */}
+          {debug && (
+            <div className="space-y-2">
+              <button
+                onClick={handleDebugToggle}
+                className="flex items-center gap-1 text-xs text-purple-500 hover:text-purple-400 transition-colors cursor-pointer"
+                type="button"
+              >
+                <Sparkles className="w-3 h-3" />
+                {showDebug ? 'Hide search debug' : 'Show search debug'}
+              </button>
+              {showDebug && (
+                <div className="p-3 bg-purple-500/5 rounded-lg border border-purple-500/10 space-y-2">
+                  {/* Strategy & Techniques */}
+                  {debug.strategy && (
+                    <div className="text-xs space-y-1">
+                      <p className="font-medium text-purple-500">Strategy:</p>
+                      <p className="text-muted-foreground">
+                        {debug.strategy}
+                        {debug.auto_detected_strategy && debug.strategy === 'auto' && (
+                          <span className="text-green-500"> → {debug.auto_detected_strategy}</span>
+                        )}
+                      </p>
+                    </div>
+                  )}
+
+                  {debug.techniques_used && debug.techniques_used.length > 0 && (
+                    <div className="text-xs space-y-1">
+                      <p className="font-medium text-purple-500">Techniques Used:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {debug.techniques_used.map((tech, i) => (
+                          <span key={i} className="px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">
+                            {tech}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Search Method (legacy) */}
+                  {debug.search_method && debug.search_method.length > 0 && !debug.techniques_used && (
+                    <div className="text-xs space-y-1">
+                      <p className="font-medium text-purple-500">Search Method:</p>
+                      <p className="text-muted-foreground">{debug.search_method.join(' → ')}</p>
+                    </div>
+                  )}
+
+                  {/* Step-back query */}
+                  {debug.step_back_query && (
+                    <div className="text-xs space-y-1">
+                      <p className="font-medium text-purple-500">Step-back Query:</p>
+                      <p className="text-muted-foreground italic">"{debug.step_back_query}"</p>
+                    </div>
+                  )}
+
+                  {/* Multi-query expansion */}
+                  {debug.generated_queries && debug.generated_queries.length > 1 && (
+                    <div className="text-xs space-y-1">
+                      <p className="font-medium text-purple-500">Multi-Query Expansion:</p>
+                      <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                        {debug.generated_queries.map((q, i) => (
+                          <li key={i} className={i === 0 ? 'font-medium' : ''}>
+                            {i === 0 ? `Original: "${q}"` : `"${q}"`}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Agentic search history */}
+                  {debug.search_history && debug.search_history.length > 0 && (
+                    <div className="text-xs space-y-1">
+                      <p className="font-medium text-purple-500">Agent Search History ({debug.agent_iterations || debug.search_history.length} iterations):</p>
+                      <ul className="list-decimal list-inside text-muted-foreground space-y-0.5">
+                        {debug.search_history.map((h, i) => (
+                          <li key={i}>
+                            "{h.query}" → <span className="text-green-500">{h.results_count}</span> results
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Results stats */}
+                  <div className="text-xs text-muted-foreground pt-1 border-t border-purple-500/10">
+                    <span className="text-purple-500">{debug.total_candidates}</span> candidates found
+                    {debug.after_rerank > 0 && (
+                      <span> → <span className="text-green-500">{debug.after_rerank}</span> after rerank</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Source documents */}
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Sources used:</p>
@@ -106,7 +248,7 @@ const RAGContextSection = memo<{
                 className="flex items-start gap-2 p-2 bg-blue-500/5 rounded-lg border border-blue-500/10"
               >
                 <span className="flex-shrink-0 w-5 h-5 rounded bg-blue-500/20 text-blue-500 text-xs font-medium flex items-center justify-center">
-                  {idx + 1}
+                  {source.index || idx + 1}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -121,40 +263,73 @@ const RAGContextSection = memo<{
                       <span className="text-xs text-muted-foreground">p. {source.page}</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <span className={cn(
                       "text-xs px-1.5 py-0.5 rounded",
                       source.similarity >= 0.8 ? "bg-green-500/10 text-green-500" :
-                      source.similarity >= 0.6 ? "bg-yellow-500/10 text-yellow-500" :
-                      "bg-orange-500/10 text-orange-500"
+                        source.similarity >= 0.6 ? "bg-yellow-500/10 text-yellow-500" :
+                          "bg-orange-500/10 text-orange-500"
                     )}>
                       {Math.round(source.similarity * 100)}% match
                     </span>
-                    {source.citation && (
-                      <span className="text-xs text-muted-foreground truncate">
-                        [{source.citation}]
+                    {source.rerank_score !== undefined && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500">
+                        rerank: {source.rerank_score}
+                      </span>
+                    )}
+                    {source.matching_queries && source.matching_queries.length > 1 && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
+                        {source.matching_queries.length} query matches
                       </span>
                     )}
                   </div>
+                  {/* Content preview for each chunk */}
+                  {source.content_preview && (
+                    <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2 italic">
+                      "{source.content_preview}"
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
           </div>
 
           {/* Context preview */}
-          {contextPreview && (
+          {(contextPreview || contextFull) && (
             <div className="mt-3">
               <button
-                onClick={() => setShowFullContext(!showFullContext)}
-                className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 transition-colors mb-2"
+                onClick={handleFullContextToggle}
+                className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 transition-colors mb-2 cursor-pointer"
+                type="button"
               >
                 {showFullContext ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                 {showFullContext ? 'Hide context' : 'Show context sent to model'}
               </button>
               {showFullContext && (
-                <div className="p-3 bg-secondary/50 rounded-lg">
+                <div className="p-3 bg-secondary/50 rounded-lg max-h-96 overflow-auto">
                   <p className="text-xs text-muted-foreground font-mono whitespace-pre-wrap break-words">
-                    {contextPreview}
+                    {contextFull || contextPreview}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* System prompt preview */}
+          {systemPromptPreview && (
+            <div className="mt-3">
+              <button
+                onClick={handleSystemPromptToggle}
+                className="flex items-center gap-1 text-xs text-amber-500 hover:text-amber-400 transition-colors mb-2 cursor-pointer"
+                type="button"
+              >
+                {showSystemPrompt ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                {showSystemPrompt ? 'Hide system prompt' : 'Show full system prompt'}
+              </button>
+              {showSystemPrompt && (
+                <div className="p-3 bg-amber-500/5 rounded-lg border border-amber-500/10 max-h-96 overflow-auto">
+                  <p className="text-xs text-muted-foreground font-mono whitespace-pre-wrap break-words">
+                    {systemPromptPreview}
                   </p>
                 </div>
               )}
@@ -604,6 +779,9 @@ export const MessageBubble = memo<MessageBubbleProps>(({
             <RAGContextSection
               sources={message.meta.rag_sources}
               contextPreview={message.meta.rag_context_preview}
+              contextFull={message.meta.rag_context_full}
+              debug={message.meta.rag_debug}
+              systemPromptPreview={message.meta.system_prompt_preview}
             />
           )}
 

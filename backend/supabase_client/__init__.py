@@ -17,6 +17,12 @@ from .rag import (
     RAGStore,
     get_rag_store
 )
+from .debug_collector import (
+    RAGDebugCollector,
+    get_current_collector,
+    new_collector,
+    clear_collector
+)
 from .api import router as rag_router
 from .parallel_conversations import (
     SupabaseParallelStore,
@@ -39,6 +45,11 @@ __all__ = [
     # RAG
     "RAGStore",
     "get_rag_store",
+    # Debug Collector
+    "RAGDebugCollector",
+    "get_current_collector",
+    "new_collector",
+    "clear_collector",
     # API Router
     "rag_router"
 ]

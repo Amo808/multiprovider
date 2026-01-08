@@ -69,7 +69,10 @@ from auth_google import router as google_auth_router, get_current_user as origin
 # Supabase integration
 from supabase_client import (
     get_supabase_conversation_store,
-    is_supabase_configured
+    is_supabase_configured,
+    RAGDebugCollector,
+    new_collector,
+    clear_collector
 )
 from supabase_client.api import router as rag_router
 from supabase_client.parallel_conversations import get_parallel_store
@@ -1321,6 +1324,8 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             logger.warning(f"[CHAT] Context compression failed, using full history: {e}")
         # === END AUTO CONTEXT COMPRESSION ===
         
+        logger.info(f"[CHAT] === COMPRESSION DONE, proceeding to MEM0 ===")
+        
         # === MEM0 MEMORY CONTEXT ===
         # Get relevant memories for personalization (if Mem0 is enabled)
         memory_context = ""
@@ -1337,6 +1342,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         # === END MEM0 MEMORY CONTEXT ===
         
         # === DOCUMENT RAG CONTEXT ===
+        logger.info(f"[RAG] === STARTING RAG SECTION ===")
         # Search documents for relevant context (if RAG is enabled)
         rag_context = ""
         rag_sources = []
@@ -1346,9 +1352,12 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         
         rag_debug_info = {}  # For UI transparency
         if rag_config.enabled and rag_config.mode != "off":
+            logger.info(f"[RAG] RAG is enabled, starting search...")
             try:
                 from supabase_client.rag import get_rag_store
+                logger.info(f"[RAG] RAG store imported successfully")
                 rag_store = get_rag_store()
+                logger.info(f"[RAG] RAG store initialized")
                 
                 # Check if user has any documents
                 user_docs = rag_store.list_documents(user_email, status="ready", limit=1)
@@ -1376,28 +1385,55 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     has_chapter = hasattr(rag_store, 'build_chapter_context')
                     has_smart = hasattr(rag_store, 'smart_rag_search')
                     
+                    # Create debug collector for this request (used by all modes)
+                    from supabase_client.debug_collector import new_collector
+                    rag_debug_collector = new_collector()
+                    rag_debug_collector.log_input(
+                        user_message=request.message,
+                        conversation_id=request.conversation_id or "",
+                        model=request.model,
+                        rag_enabled=True,
+                        rag_mode=rag_mode
+                    )
+                    
                     # === SMART MODE - Universal AI-powered retrieval ===
                     if rag_mode == "smart" and has_smart:
                         # 🧠 SMART RAG: AI analyzes query intent and retrieves optimally
                         # Understands: chapters, ranges, full doc, comparisons, legal loopholes, etc.
                         logger.info(f"[RAG] Using SMART mode - AI intent analysis")
-                        rag_context, rag_sources, rag_debug_info = rag_store.smart_rag_search(
+                        result = rag_store.smart_rag_search(
                             query=request.message,
                             user_email=user_email,
                             document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
-                            max_tokens=100000
+                            max_tokens=100000,
+                            debug_collector=rag_debug_collector
                         )
+                        if isinstance(result, tuple):
+                            rag_context, rag_sources, rag_debug_info = result
+                        else:
+                            rag_context = result.get("context", "")
+                            rag_sources = result.get("sources", [])
+                            rag_debug_info = result.get("debug", {})
+                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
                     
                     # === AUTO MODE - Let AI decide best approach ===
                     elif rag_mode == "auto" and has_smart:
                         # Auto mode now uses smart RAG for better results
                         logger.info(f"[RAG] Using AUTO mode with SMART RAG")
-                        rag_context, rag_sources, rag_debug_info = rag_store.smart_rag_search(
+                        result = rag_store.smart_rag_search(
                             query=request.message,
                             user_email=user_email,
                             document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
-                            max_tokens=50000
+                            max_tokens=50000,
+                            debug_collector=rag_debug_collector
                         )
+                        if isinstance(result, tuple):
+                            rag_context, rag_sources, rag_debug_info = result
+                        else:
+                            rag_context = result.get("context", "")
+                            rag_sources = result.get("sources", [])
+                            rag_debug_info = result.get("debug", {})
+                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
                     
                     # === FULL MODE - Entire document ===
                     elif rag_mode == "full" and has_full:
@@ -1420,6 +1456,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             document_ids=rag_config.document_ids,
                             max_tokens=100000  # ~400K chars - fits Gemini 1M / Claude 200K
                         )
+                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
                     
                     # === ITERATIVE MODE - Process large documents in batches ===
                     elif rag_mode == "iterative" and hasattr(rag_store, 'build_iterative_summary_context'):
@@ -1433,6 +1470,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             batch_size_chars=20000,
                             batch_number=batch_number
                         )
+                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
                         
                     elif rag_mode == "chapter" and has_chapter:
                         # Work with specific chapter
@@ -1444,22 +1482,27 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
                             max_tokens=30000  # ~120K chars per chapter
                         )
+                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
                     
                     elif rag_mode in ["ultimate", "hyde", "agentic"] and has_ultimate:
                         # Ultimate RAG with auto-strategy selection or specific strategy
                         # NOW with smart intent detection for chapters
                         # Use large token limit - smart intent will decide actual scope
                         strategy = "auto" if rag_mode == "ultimate" else rag_mode
+                        
                         rag_result = rag_store.ultimate_rag_search(
                             query=request.message,
                             user_email=user_email,
                             max_tokens=50000,  # Large limit, smart intent decides actual scope
                             strategy=strategy,
-                            document_id=rag_config.document_ids[0] if rag_config.document_ids else None
+                            document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
+                            debug_collector=rag_debug_collector
                         )
                         rag_context = rag_result["context"]
                         rag_sources = rag_result["sources"]
                         rag_debug_info = rag_result.get("debug", {})
+                        # Merge collector debug info
+                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
                         
                     elif rag_mode == "advanced" and has_advanced:
                         # Advanced search with multi-query, hybrid, and reranking
@@ -1474,6 +1517,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                         rag_context = rag_result["context"]
                         rag_sources = rag_result["sources"]
                         rag_debug_info = rag_result.get("debug", {})
+                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
                         
                     else:
                         # auto/basic/fallback: hybrid search with configurable weights
@@ -1489,6 +1533,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             semantic_weight=semantic_weight
                         )
                         rag_debug_info = {"mode": rag_mode, "strategy": "hybrid_search"}
+                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
                     
                     if rag_sources:
                         logger.info(f"[RAG] Found {len(rag_sources)} relevant chunks from documents (mode={rag_mode})")

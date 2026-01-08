@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, RefreshCw, AlertCircle, Square, FileText, Upload, AlertTriangle } from 'lucide-react';
+import { Send, Bot, RefreshCw, AlertCircle, Square, FileText, Upload, AlertTriangle, Bug } from 'lucide-react';
 import { ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversationsContext } from '../contexts/ConversationsContext';
 import { useMessageReorder } from '../hooks/useMessageReorder';
@@ -13,6 +13,7 @@ import { VirtualizedMessageList } from './VirtualizedMessageList';
 import DocumentManager from './DocumentManager';
 import { RAGToggle } from './RAGSources';
 import { ragService } from '../services/rag';
+import { DebugPanel, RequestDebugInfo } from './DebugPanel';
 
 // Threshold for switching to virtualized list (performance optimization)
 // Lower threshold = faster initial load for chats with many messages
@@ -57,6 +58,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showDocumentManager, setShowDocumentManager] = useState(false);
   const [promptSizeWarning, setPromptSizeWarning] = useState<string | null>(null);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
+  // Debug Panel state
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [lastDebugInfo, setLastDebugInfo] = useState<RequestDebugInfo | null>(null);
   // Large paste confirmation modal state
   const [pendingPaste, setPendingPaste] = useState<{
     text: string;
@@ -193,6 +197,24 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       getConversation(conversationId);
     }
   }, [conversationId, conversations, getConversation]);
+
+  // Extract RAG debug info from last assistant message for Debug Panel
+  useEffect(() => {
+    if (messages.length > 0) {
+      const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
+      if (lastAssistantMsg?.meta?.rag_debug) {
+        // Transform rag_debug to RequestDebugInfo format
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ragDebug = lastAssistantMsg.meta.rag_debug as any;
+        const collectorData = ragDebug?.collector || ragDebug;
+
+        // Only update if we have meaningful debug data
+        if (collectorData && (collectorData.request_id || collectorData.timestamp)) {
+          setLastDebugInfo(collectorData as RequestDebugInfo);
+        }
+      }
+    }
+  }, [messages]);
 
   // Message reordering functionality
   const { deleteMessage, moveTo } = useMessageReorder();
@@ -1125,7 +1147,57 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   currentInput={inputValue}
                   generationConfig={generationConfig}
                   systemPrompt={systemPrompt}
+                  ragDebugInfo={lastDebugInfo?.rag_pipeline ? {
+                    intent: lastDebugInfo.rag_pipeline.intent_analysis ? {
+                      query: lastDebugInfo.rag_pipeline.intent_analysis.original_query,
+                      detected_intent: lastDebugInfo.rag_pipeline.intent_analysis.detected_task,
+                      keywords: lastDebugInfo.rag_pipeline.intent_analysis.detected_sections
+                    } : undefined,
+                    structure: lastDebugInfo.rag_pipeline.document_structure ? {
+                      total_chunks: lastDebugInfo.rag_pipeline.document_structure.total_chunks,
+                      chapters: lastDebugInfo.rag_pipeline.document_structure.detected_chapters?.map(c => `${c.number}: ${c.title}`),
+                      document_type: lastDebugInfo.rag_pipeline.document_structure.detected_structure_type
+                    } : undefined,
+                    retrieval: lastDebugInfo.rag_pipeline.retrieval ? {
+                      query: lastDebugInfo.rag_pipeline.retrieval.generated_queries?.[0] || '',
+                      top_k: lastDebugInfo.rag_pipeline.chunks?.total_retrieved || 0,
+                      results_count: lastDebugInfo.rag_pipeline.chunks?.total_retrieved || 0
+                    } : undefined,
+                    chunks: lastDebugInfo.rag_pipeline.chunks?.items?.map(chunk => ({
+                      id: `chunk-${chunk.chunk_index}`,
+                      content: chunk.full_content || chunk.content_preview,
+                      metadata: {
+                        source: chunk.document_name,
+                        chapter: chunk.chapter,
+                        score: chunk.similarity_score
+                      },
+                      similarity_score: chunk.similarity_score
+                    })),
+                    context: lastDebugInfo.rag_pipeline.context_building ? {
+                      total_tokens: lastDebugInfo.rag_pipeline.context_building.final_context_chars ? Math.ceil(lastDebugInfo.rag_pipeline.context_building.final_context_chars / 4) : undefined,
+                      context_text: lastDebugInfo.rag_pipeline.context_building.full_context || lastDebugInfo.rag_pipeline.context_building.context_preview
+                    } : undefined,
+                    timing: {
+                      retrieval_ms: lastDebugInfo.rag_pipeline.retrieval?.latency_ms,
+                      total_ms: lastDebugInfo.summary?.total_latency_ms
+                    }
+                  } : undefined}
+                  ragContext={lastDebugInfo?.rag_pipeline?.context_building?.full_context || lastDebugInfo?.rag_pipeline?.context_building?.context_preview}
                 />
+
+                {/* Debug Panel Button - show when RAG is enabled and we have debug info */}
+                {lastDebugInfo && (
+                  <Button
+                    type="button"
+                    onClick={() => setShowDebugPanel(true)}
+                    variant="ghost"
+                    size="sm"
+                    title="View RAG Debug Info"
+                    className="h-8 w-8 p-0 rounded-lg hover:bg-secondary"
+                  >
+                    <Bug size={16} className="text-muted-foreground" />
+                  </Button>
+                )}
 
                 {messages.length > 0 && (
                   <Button
@@ -1259,6 +1331,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         </div>
       )}
+
+      {/* RAG Debug Panel */}
+      <DebugPanel
+        debugInfo={lastDebugInfo}
+        isOpen={showDebugPanel}
+        onClose={() => setShowDebugPanel(false)}
+      />
     </div>
   );
 };

@@ -46,6 +46,9 @@ export interface ExtendedMessageMeta {
   rag_sources?: RAGSource[];
   rag_enabled?: boolean;
   rag_context_preview?: string; // Preview of the context sent to model
+  rag_context_full?: string; // Full context for debug mode
+  rag_debug?: RAGDebugInfo; // Debug info about search queries and methods
+  system_prompt_preview?: string; // Preview of the full system prompt
 }
 
 export interface Message {
@@ -70,8 +73,12 @@ export interface ChatResponse {
   // RAG context info (sent at start of generation)
   rag_sources?: RAGSource[];
   rag_context_preview?: string;
+  rag_context_full?: string; // Full context for debug mode
   rag_context_length?: number;
   chunks_count?: number;
+  debug?: RAGDebugInfo; // Debug info about search queries and methods
+  system_prompt_preview?: string; // Preview of the system prompt
+  system_prompt_length?: number;
   meta?: {
     tokens_in?: number;
     tokens_out?: number;
@@ -220,11 +227,17 @@ export interface ModelCard {
 // API Request/Response Types
 export interface RAGConfig {
   enabled?: boolean;
-  mode?: 'auto' | 'manual' | 'off';
+  mode?: 'off' | 'auto' | 'smart' | 'basic' | 'advanced' | 'ultimate' | 'hyde' | 'agentic' | 'full' | 'chapter';
   document_ids?: string[];
   max_chunks?: number;
   min_similarity?: number;
   use_rerank?: boolean;
+  // Advanced options (like n8n)
+  include_metadata?: boolean;  // Include document metadata in results
+  keyword_weight?: number;     // Weight for keyword search (0-1), default 0.3
+  semantic_weight?: number;    // Weight for semantic search (0-1), default 0.7
+  // Debug option - shows FULL prompt sent to model
+  debug_mode?: boolean;        // When true, returns full system prompt + history in response
 }
 
 export interface RAGSource {
@@ -236,6 +249,23 @@ export interface RAGSource {
   chunk_index?: number;
   similarity: number;
   citation: string;
+  rerank_score?: number;
+  matching_queries?: string[]; // Queries that matched this chunk (for multi-query)
+  content_preview?: string; // Preview of the chunk content
+}
+
+export interface RAGDebugInfo {
+  original_query: string;
+  generated_queries: string[];
+  total_candidates: number;
+  after_rerank: number;
+  search_method: string[];
+  strategy?: string;
+  auto_detected_strategy?: string;
+  techniques_used?: string[];
+  step_back_query?: string;
+  search_history?: Array<{ query: string; results_count: number }>;
+  agent_iterations?: number;
 }
 
 export interface SendMessageRequest {

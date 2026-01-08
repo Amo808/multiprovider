@@ -15,6 +15,7 @@ from pathlib import Path
 import tempfile
 
 from .client import get_supabase_service_client, get_or_create_user, is_supabase_configured
+from .debug_collector import RAGDebugCollector, get_current_collector, new_collector
 
 logger = logging.getLogger(__name__)
 
@@ -556,6 +557,118 @@ class RAGStore:
         
         return results
     
+    def multi_query_search(
+        self,
+        query: str,
+        user_email: str,
+        num_queries: int = 4,
+        results_per_query: int = 7,
+        use_hybrid: bool = True,
+        document_ids: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Multi-query retrieval: Generate multiple search queries from the original query,
+        search with each, and combine results for better coverage.
+        
+        This helps find relevant content that might be missed by a single query.
+        
+        Args:
+            query: Original user query
+            user_email: User email for filtering
+            num_queries: Number of alternative queries to generate
+            results_per_query: Number of results per query
+            use_hybrid: Use hybrid search instead of pure vector search
+            document_ids: Optional list of document IDs to filter
+        
+        Returns:
+            Combined and deduplicated results from all queries
+        """
+        # Generate alternative queries using AI
+        alternative_queries = self._generate_alternative_queries(query, num_queries)
+        
+        # Add original query to the list
+        all_queries = [query] + alternative_queries
+        logger.info(f"[RAG] Multi-query search with {len(all_queries)} queries: {all_queries}")
+        
+        # Search with each query
+        all_results = []
+        seen_chunks = set()
+        
+        for q in all_queries:
+            if use_hybrid:
+                results = self.hybrid_search(
+                    query=q,
+                    user_email=user_email,
+                    limit=results_per_query
+                )
+            else:
+                results = self.search_chunks(
+                    query=q,
+                    user_email=user_email,
+                    document_ids=document_ids,
+                    limit=results_per_query
+                )
+            
+            # Deduplicate by chunk ID
+            for r in results:
+                chunk_id = f"{r.get('document_id', '')}_{r.get('chunk_index', '')}"
+                if chunk_id not in seen_chunks:
+                    seen_chunks.add(chunk_id)
+                    all_results.append(r)
+        
+        logger.info(f"[RAG] Multi-query found {len(all_results)} unique results")
+        return all_results
+    
+    def _generate_alternative_queries(self, query: str, num_queries: int = 3) -> List[str]:
+        """
+        Generate alternative search queries from the original query using AI.
+        
+        Args:
+            query: Original query
+            num_queries: Number of alternative queries to generate
+        
+        Returns:
+            List of alternative queries
+        """
+        try:
+            prompt = f"""Generate {num_queries} alternative search queries for the following question.
+The alternative queries should:
+1. Use different words/synonyms
+2. Focus on different aspects of the question
+3. Be in the same language as the original
+4. Be specific and searchable
+
+Original question: "{query}"
+
+Return ONLY a JSON array of strings, like: ["query1", "query2", "query3"]
+No explanation, just the array."""
+
+            response = self.embedding_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=200
+            )
+            
+            import json
+            result_text = response.choices[0].message.content.strip()
+            
+            # Extract JSON array
+            if '[' in result_text:
+                result_text = result_text[result_text.index('['):result_text.rindex(']')+1]
+            
+            queries = json.loads(result_text)
+            logger.info(f"[RAG] Generated alternative queries: {queries}")
+            return queries[:num_queries]
+            
+        except Exception as e:
+            logger.warning(f"[RAG] Failed to generate alternative queries: {e}")
+            # Fallback: simple keyword extraction
+            keywords = self._extract_keywords(query)
+            if keywords:
+                return [" ".join(keywords)]
+            return []
+
     def hybrid_search(
         self,
         query: str,
@@ -996,7 +1109,8 @@ Next search query (or DONE):"""
         user_email: str,
         max_tokens: int = 4000,
         strategy: str = "auto",
-        document_id: Optional[str] = None
+        document_id: Optional[str] = None,
+        debug_collector: Optional[RAGDebugCollector] = None
     ) -> Dict[str, Any]:
         """
         Ultimate RAG search that combines all techniques intelligently.
@@ -1009,7 +1123,14 @@ Next search query (or DONE):"""
         - "multi_query": Use multi-query for broad searches
         - "agentic": Use agentic retrieval for complex questions
         - "step_back": Use step-back prompting for specific questions
+        
+        Args:
+            debug_collector: Optional RAGDebugCollector for collecting debug info
         """
+        # Initialize debug collector if provided
+        collector = debug_collector or get_current_collector()
+        collector.start_rag_pipeline()
+        
         debug_info = {
             "original_query": query,
             "strategy": strategy,
@@ -1036,7 +1157,25 @@ Next search query (or DONE):"""
                     chapters = self.get_document_chapters(user_email, document_id)
                     all_chunks = self.get_all_document_chunks(user_email, [document_id])
                     
+                    # Get document name
+                    doc_info = self.get_document(document_id, user_email)
+                    doc_name = doc_info.get("name", "") if doc_info else ""
+                    
                     logger.info(f"[ULTIMATE-RAG] Document has {len(chapters)} chapters, {len(all_chunks)} total chunks")
+                    
+                    # Log document structure to collector
+                    collector.log_document_structure(
+                        document_id=document_id,
+                        document_name=doc_name,
+                        total_chunks=len(all_chunks),
+                        chapters=[{
+                            "number": ch["chapter_number"],
+                            "title": ch.get("title", ""),
+                            "start_chunk": ch.get("start_chunk", 0),
+                            "end_chunk": ch.get("end_chunk", 0)
+                        } for ch in chapters],
+                        structure_type="book"
+                    )
                     
                     document_structure = {
                         "type": "book",
@@ -1053,6 +1192,15 @@ Next search query (or DONE):"""
                     
                     logger.info(f"[ULTIMATE-RAG] Intent analysis result: scope={scope}, sections={sections}, task={task}")
                     
+                    # Log intent analysis to collector
+                    collector.log_intent_analysis(
+                        original_query=query,
+                        scope=scope,
+                        sections=sections,
+                        task=task,
+                        reasoning=intent.get("reasoning", "")
+                    )
+                    
                     debug_info["intent_analysis"] = intent
                     
                     # If user wants specific chapter(s), load full chapter content
@@ -1061,28 +1209,39 @@ Next search query (or DONE):"""
                         logger.info(f"[ULTIMATE-RAG] Loading full chapter {sections[0]} based on intent analysis")
                         
                         context, sources = self.get_chapter_content(user_email, document_id, sections[0])
+                        logger.info(f"[ULTIMATE-RAG] Chapter content loaded: {len(context)} chars, {len(sources)} sources")
                         
-                        # Add chapter header
-                        chapter_info = next((ch for ch in chapters if str(ch["chapter_number"]) == sections[0]), None)
-                        if chapter_info:
-                            header = f"📖 ГЛАВА {sections[0]}: {chapter_info.get('title', '')}\n\n"
-                            context = header + context
-                        
-                        # Add task instruction
-                        task_instruction = self._get_task_instructions(task, intent)
-                        if task_instruction:
-                            context = task_instruction + "\n\n" + context
-                        
-                        debug_info["scope"] = "single_section"
-                        debug_info["loaded_chapter"] = sections[0]
-                        debug_info["total_chars"] = len(context)
-                        debug_info["estimated_tokens"] = len(context) // 4
-                        
-                        return {
-                            "context": context,
-                            "sources": sources,
-                            "debug": debug_info
-                        }
+                        # If chapter not found, fallback to semantic search
+                        if not context or len(context) < 100:
+                            logger.warning(f"[ULTIMATE-RAG] Chapter {sections[0]} content is empty, falling back to semantic search")
+                            # Don't return early - let it fall through to standard retrieval
+                        else:
+                            # Add chapter header
+                            chapter_info = next((ch for ch in chapters if str(ch["chapter_number"]) == sections[0]), None)
+                            if chapter_info:
+                                header = f"📖 ГЛАВА {sections[0]}: {chapter_info.get('title', '')}\n\n"
+                                context = header + context
+                            else:
+                                header = f"📖 ГЛАВА {sections[0]}\n\n"
+                                context = header + context
+                            
+                            # Add task instruction
+                            task_instruction = self._get_task_instructions(task, intent)
+                            if task_instruction:
+                                context = task_instruction + "\n\n" + context
+                            
+                            debug_info["scope"] = "single_section"
+                            debug_info["loaded_chapter"] = sections[0]
+                            debug_info["total_chars"] = len(context)
+                            debug_info["estimated_tokens"] = len(context) // 4
+                            
+                            logger.info(f"[ULTIMATE-RAG] Returning chapter context: {len(context)} chars, {len(sources)} sources")
+                            
+                            return {
+                                "context": context,
+                                "sources": sources,
+                                "debug": debug_info
+                            }
                     
                     elif scope == "multiple_sections" and sections:
                         debug_info["techniques_used"].append("multi_chapter_load")
@@ -1263,6 +1422,9 @@ Next search query (or DONE):"""
             sources.append(source_info)
             total_chars += chunk_chars
         
+        # Log chunks to collector
+        collector.log_chunks(candidates[:len(sources)])  # Only log chunks that were used
+        
         # Build final context
         header = """Используй следующие фрагменты документов для ответа на вопрос пользователя.
 Если информация из документов релевантна, обязательно укажи номер источника [1], [2] и т.д.
@@ -1272,6 +1434,24 @@ Next search query (or DONE):"""
 НАЙДЕННЫЕ ДОКУМЕНТЫ:
 """
         context = header + "\n\n".join(context_parts)
+        
+        # Log context building to collector
+        raw_chars = sum(len(c.get("content", "")) for c in candidates[:len(sources)])
+        collector.log_context_building(
+            raw_chars=raw_chars,
+            final_chars=len(context),
+            compression_applied=False,
+            final_context=context
+        )
+        
+        # Log retrieval strategy to collector
+        collector.log_retrieval_strategy(
+            strategy=strategy if strategy != "auto" else debug_info.get("auto_detected_strategy", "multi_query"),
+            techniques=debug_info.get("techniques_used", []),
+            generated_queries=debug_info.get("generated_queries", []),
+            step_back_query=debug_info.get("step_back_query", ""),
+            agent_iterations=debug_info.get("search_history", [])
+        )
         
         return {
             "context": context,
@@ -1449,6 +1629,7 @@ Next search query (or DONE):"""
         
         chapters = []
         current_chapter = None
+        seen_chapters = set()  # Track which chapters we've already seen to avoid duplicates
         
         # Detect chapter/section/article headers in chunks
         # Supports: books (chapters), laws (articles, статьи), regulations (sections, пункты)
@@ -1474,18 +1655,25 @@ Next search query (or DONE):"""
             metadata = chunk.get("metadata", {}) or {}
             chunk_idx = chunk.get("chunk_index", 0)
             
-            # Check if this chunk starts a new chapter
+            # Check if this chunk contains a new chapter
+            # Search in entire chunk content (not just first 500 chars) to catch all chapter headers
             for pattern in chapter_patterns:
-                match = re.search(pattern, content[:500], re.IGNORECASE)
+                match = re.search(pattern, content, re.IGNORECASE)
                 if match:
+                    chapter_num = match.group(1)
+                    
+                    # Skip if we've already seen this chapter (avoid duplicates from mentions)
+                    if chapter_num in seen_chapters:
+                        continue
+                    
                     # Save previous chapter
                     if current_chapter:
                         current_chapter["end_chunk"] = chunk_idx - 1
                         chapters.append(current_chapter)
                     
                     # Start new chapter
-                    chapter_num = match.group(1)
                     chapter_title = match.group(2).strip() if match.group(2) else ""
+                    seen_chapters.add(chapter_num)
                     
                     current_chapter = {
                         "chapter_number": chapter_num,
@@ -1498,13 +1686,16 @@ Next search query (or DONE):"""
             
             # Also check metadata for chapter info
             if metadata.get("chapter") and not current_chapter:
-                current_chapter = {
-                    "chapter_number": metadata.get("chapter"),
-                    "title": metadata.get("section_title", ""),
-                    "start_chunk": chunk_idx,
-                    "end_chunk": None,
-                    "preview": content[:200]
-                }
+                ch_num = str(metadata.get("chapter"))
+                if ch_num not in seen_chapters:
+                    seen_chapters.add(ch_num)
+                    current_chapter = {
+                        "chapter_number": ch_num,
+                        "title": metadata.get("section_title", ""),
+                        "start_chunk": chunk_idx,
+                        "end_chunk": None,
+                        "preview": content[:200]
+                    }
         
         # Save last chapter
         if current_chapter:
@@ -1540,7 +1731,9 @@ Next search query (or DONE):"""
         Returns:
             Tuple of (chapter_content, sources)
         """
+        logger.info(f"[RAG] get_chapter_content called: doc={document_id}, chapter={chapter_number}")
         chapters = self.get_document_chapters(user_email, document_id)
+        logger.info(f"[RAG] Found {len(chapters)} chapters in document")
         
         # Find requested chapter
         target_chapter = None
@@ -1550,15 +1743,60 @@ Next search query (or DONE):"""
                 break
         
         if not target_chapter:
+            logger.warning(f"[RAG] Chapter {chapter_number} not found in parsed structure! Available: {[ch['chapter_number'] for ch in chapters[:10]]}")
+            logger.info(f"[RAG] Falling back to content search for 'глава {chapter_number}'")
+            
+            # Fallback: search for chapter content directly in chunks
+            all_chunks = self.get_all_document_chunks(user_email, [document_id])
+            
+            # Look for chunks that mention this chapter
+            chapter_pattern = rf'(?:глава|chapter|ГЛАВА|CHAPTER)\s*{chapter_number}\b'
+            chapter_chunks = []
+            found_start = False
+            
+            for chunk in all_chunks:
+                content = chunk.get("content", "")
+                # Check if this chunk starts the chapter
+                if re.search(chapter_pattern, content, re.IGNORECASE):
+                    found_start = True
+                    chapter_chunks.append(chunk)
+                elif found_start:
+                    # Check if we hit next chapter
+                    next_chapter_pattern = rf'(?:глава|chapter|ГЛАВА|CHAPTER)\s*(?!{chapter_number})\d+'
+                    if re.search(next_chapter_pattern, content[:200], re.IGNORECASE):
+                        break  # Stop at next chapter
+                    chapter_chunks.append(chunk)
+                    # Limit to reasonable size
+                    if len(chapter_chunks) > 50:
+                        break
+            
+            if chapter_chunks:
+                logger.info(f"[RAG] Found {len(chapter_chunks)} chunks via content search for chapter {chapter_number}")
+                content_parts = [c["content"] for c in chapter_chunks]
+                sources = [{
+                    "index": i + 1,
+                    "document_id": document_id,
+                    "document_name": chunk.get("document_name"),
+                    "chunk_index": chunk.get("chunk_index"),
+                    "chapter": chapter_number,
+                    "citation": f"Глава {chapter_number}, фрагмент {i + 1}"
+                } for i, chunk in enumerate(chapter_chunks)]
+                return "\n\n".join(content_parts), sources
+            
+            logger.warning(f"[RAG] Chapter {chapter_number} not found even via content search")
             return "", []
+        
+        logger.info(f"[RAG] Target chapter found: {target_chapter}")
         
         # Get all chunks for this chapter
         all_chunks = self.get_all_document_chunks(user_email, [document_id])
+        logger.info(f"[RAG] Total chunks in document: {len(all_chunks)}")
         
         start_idx = target_chapter["start_chunk"]
         end_idx = target_chapter["end_chunk"]
         
         chapter_chunks = [c for c in all_chunks if start_idx <= c.get("chunk_index", 0) <= end_idx]
+        logger.info(f"[RAG] Chapter {chapter_number} chunks: {len(chapter_chunks)} (from idx {start_idx} to {end_idx})")
         
         # Build content
         content_parts = []
@@ -1587,6 +1825,9 @@ Next search query (or DONE):"""
         - What to search for (chapter, article, paragraph, law, loophole, etc.)
         - What scope (single section, multiple sections, full document, comparison)
         - What task (summarize, analyze, find contradictions, find loopholes, compare)
+        
+        IMPORTANT: When RAG is enabled, ALWAYS return a valid search strategy.
+        Never return empty results - if unsure, use "search" scope.
         
         Args:
             query: User's natural language query in any language
@@ -1620,52 +1861,63 @@ USER QUERY: "{query}"
 DOCUMENT STRUCTURE:
 {structure_desc}
 
+CRITICAL RULES:
+1. The user HAS documents loaded and wants to search them
+2. NEVER say "no documents" or "cannot find" - always provide a search strategy
+3. If the query mentions ANY specific data (years, numbers, dates, statistics, countries, names), use scope="search" with a refined search_query
+4. Questions about "what's in the document", "about what", "summary" = scope="full_document"
+5. Questions with specific numbers/dates/statistics = scope="search" (NOT full_document)
+
 Analyze the query and return a JSON object with these fields:
 
 1. "scope": One of:
-   - "single_section": User wants a specific chapter/article/section/статья/пункт
+   - "single_section": User wants a specific chapter/article/section/статья/пункт (must have explicit number)
    - "multiple_sections": User wants several specific sections (e.g., "статьи 1-5", "articles 1 and 40")
-   - "full_document": User wants to analyze the entire document (summary, overview, themes)
+   - "full_document": User wants overview/summary/themes of the ENTIRE document (NO specific data questions)
    - "comparison": User wants to compare different parts of the document
-   - "search": User is looking for specific information that could be anywhere
+   - "search": User is looking for SPECIFIC information (dates, numbers, facts, statistics, names, events)
+   
+   USE "search" FOR:
+   - Any question with years (2018, 2020, etc.)
+   - Any question with numbers/statistics ("сколько", "how many", "количество")
+   - Any question about specific facts/data
+   - Questions with "кто", "что", "где", "когда", "сколько", "какие страны", "какие компании"
 
 2. "sections": Array of section identifiers the user wants. Examples:
    - ["40"] for chapter/article 40
    - ["1", "2", "3"] for sections 1-3
-   - ["1.1", "1.2"] for subsections
    - [] for full document or search scope
 
 3. "task": One of:
-   - "summarize": Retell, summarize, explain content
+   - "summarize": Retell, summarize, explain content (for full_document or sections)
    - "analyze": Deep analysis, themes, meaning
-   - "find_loopholes": Find legal loopholes, exceptions, workarounds (for legal docs)
-   - "find_contradictions": Find contradictions, inconsistencies
-   - "find_penalties": Find penalties, sanctions, fines (штрафы, санкции)
-   - "find_requirements": Find requirements, obligations (требования, обязанности)
-   - "find_rights": Find rights, permissions (права, разрешения)
-   - "find_exceptions": Find exceptions, special cases (исключения, особые случаи)
-   - "find_deadlines": Find deadlines, terms (сроки, даты)
-   - "compare": Compare sections or analyze relationships
-   - "explain": Explain specific concept or term
-   - "search": Find specific information
+   - "find_data": Find specific data, statistics, numbers, facts (DEFAULT for questions with numbers/dates)
+   - "find_loopholes": Find legal loopholes, exceptions
+   - "find_contradictions": Find contradictions
+   - "find_penalties": Find penalties, sanctions
+   - "find_requirements": Find requirements, obligations
+   - "find_rights": Find rights, permissions
+   - "find_exceptions": Find exceptions, special cases
+   - "find_deadlines": Find deadlines, terms
+   - "compare": Compare sections
+   - "explain": Explain specific concept
+   - "search": General information search
 
-4. "search_query": If scope is "search", provide an optimized search query (can be different from original)
+4. "search_query": ALWAYS provide for scope="search". Create an optimized search query with:
+   - Key terms from the original query
+   - Synonyms and related terms
+   - Numbers/years from the query
+   Example: "экспорт 2018 страны участники ВЭД товары"
 
-5. "reasoning": Brief explanation of your analysis (1-2 sentences)
+5. "reasoning": Brief explanation (1-2 sentences)
 
-EXAMPLES FOR BOOKS:
+EXAMPLES:
+- "о чем документ" -> {{"scope": "full_document", "sections": [], "task": "summarize", "search_query": ""}}
+- "в сколько стран экспортировали товары в 2018 году" -> {{"scope": "search", "sections": [], "task": "find_data", "search_query": "экспорт 2018 страны количество товары ВЭД"}}
+- "какая статистика за 2020 год" -> {{"scope": "search", "sections": [], "task": "find_data", "search_query": "статистика 2020 год данные показатели"}}
 - "расскажи о 40 главе" -> {{"scope": "single_section", "sections": ["40"], "task": "summarize"}}
-- "перескажи главы 1-5" -> {{"scope": "multiple_sections", "sections": ["1","2","3","4","5"], "task": "summarize"}}
-
-EXAMPLES FOR LEGAL DOCUMENTS:
-- "что говорит статья 228?" -> {{"scope": "single_section", "sections": ["228"], "task": "summarize"}}
-- "какие штрафы за нарушение?" -> {{"scope": "search", "sections": [], "task": "find_penalties", "search_query": "штраф санкция наказание ответственность"}}
-- "какие есть исключения в статье 10?" -> {{"scope": "single_section", "sections": ["10"], "task": "find_exceptions"}}
-- "найди лазейки в налоговом кодексе" -> {{"scope": "search", "sections": [], "task": "find_loopholes", "search_query": "исключение освобождение льгота уменьшение кроме случаев если не"}}
-- "сравни статьи 159 и 160" -> {{"scope": "comparison", "sections": ["159", "160"], "task": "compare"}}
-- "какие сроки давности?" -> {{"scope": "search", "sections": [], "task": "find_deadlines", "search_query": "срок давность период день месяц год"}}
-- "какие права у обвиняемого?" -> {{"scope": "search", "sections": [], "task": "find_rights", "search_query": "право обвиняемый подсудимый защита адвокат"}}
-- "противоречит ли статья 5 статье 10?" -> {{"scope": "comparison", "sections": ["5", "10"], "task": "find_contradictions"}}
+- "сколько компаний упоминается" -> {{"scope": "search", "sections": [], "task": "find_data", "search_query": "компании организации количество список"}}
+- "какие страны участвовали" -> {{"scope": "search", "sections": [], "task": "find_data", "search_query": "страны участники государства"}}
 
 Respond with ONLY valid JSON, no markdown formatting."""
 
@@ -1719,7 +1971,11 @@ Respond with ONLY valid JSON, no markdown formatting."""
         return "\n".join(parts)
     
     def _fallback_intent_analysis(self, query: str, structure: Dict) -> Dict:
-        """Simple fallback intent analysis using regex patterns"""
+        """Simple fallback intent analysis using regex patterns
+        
+        IMPORTANT: Always returns a valid search strategy, never empty.
+        When in doubt, use scope="search" with the original query.
+        """
         import re
         
         result = {
@@ -1727,28 +1983,54 @@ Respond with ONLY valid JSON, no markdown formatting."""
             "sections": [],
             "task": "search",
             "search_query": query,
-            "reasoning": "Fallback analysis",
+            "reasoning": "Fallback analysis - semantic search",
             "method": "regex_fallback"
         }
         
         query_lower = query.lower()
         
-        # Check for full document intent
+        # PRIORITY 1: Check for specific data questions (numbers, dates, statistics)
+        # These should ALWAYS use search, not full_document
+        data_patterns = [
+            r'\d{4}',  # Years like 2018, 2020
+            r'сколько',  # how many
+            r'какое количество',
+            r'how many',
+            r'how much',
+            r'статистик',  # statistics
+            r'данны[еx]',  # data
+            r'показател',  # indicators
+            r'процент',  # percent
+            r'стран[ыа]?\s',  # countries
+            r'компани[йяи]',  # companies
+            r'участник',  # participants
+        ]
+        for pattern in data_patterns:
+            if re.search(pattern, query_lower):
+                result["scope"] = "search"
+                result["task"] = "find_data"
+                result["search_query"] = query  # Use original query for search
+                result["reasoning"] = "Data/statistics question detected - using semantic search"
+                return result
+        
+        # PRIORITY 2: Check for full document intent (only for general questions)
         full_doc_patterns = [
+            r'^о\s*чем\s*(эт[оа]|документ|книга|текст)',  # "о чем это/документ" at start
             r'вс[яеюё]\s*(книг|документ|текст)',
             r'whole\s*(book|document|text)',
             r'entire',
             r'полност',
             r'целиком',
-            r'overview',
-            r'обзор',
-            r'о\s*чем\s*(книга|документ)',
+            r'^overview$',
+            r'^обзор$',
+            r'общ[аи][яй]\s*(тем|иде|суть)',  # общая тема/идея/суть
+            r'кратк[оиа].*(содержан|пересказ)',  # краткое содержание
         ]
         for pattern in full_doc_patterns:
             if re.search(pattern, query_lower):
                 result["scope"] = "full_document"
                 result["task"] = "summarize"
-                result["reasoning"] = "Full document keywords detected"
+                result["reasoning"] = "Full document overview request detected"
                 return result
         
         # Check for comparison
@@ -1802,7 +2084,8 @@ Respond with ONLY valid JSON, no markdown formatting."""
         query: str,
         user_email: str,
         document_id: Optional[str] = None,
-        max_tokens: int = 50000
+        max_tokens: int = 50000,
+        debug_collector: Optional[Any] = None
     ) -> Tuple[str, List[Dict], Dict]:
         """
         🚀 SMART RAG - Universal intelligent document retrieval
@@ -1845,12 +2128,38 @@ Respond with ONLY valid JSON, no markdown formatting."""
             "total_chunks": len(all_chunks)
         }
         
+        # Log document structure to debug collector
+        if debug_collector:
+            debug_collector.start_rag_pipeline()
+            debug_collector.log_document_structure(
+                document_id=document_id,
+                document_name=document_name,
+                total_chunks=len(all_chunks),
+                chapters=[{
+                    "number": ch.get("chapter_number", ""),
+                    "title": ch.get("title", ""),
+                    "start_chunk": ch.get("start_chunk", 0),
+                    "end_chunk": ch.get("end_chunk", 0)
+                } for ch in chapters],
+                structure_type="book"
+            )
+        
         # Analyze intent
         intent = self.analyze_query_intent(query, document_structure)
         
         scope = intent.get("scope", "search")
         sections = intent.get("sections", [])
         task = intent.get("task", "search")
+        
+        # Log intent analysis to debug collector
+        if debug_collector:
+            debug_collector.log_intent_analysis(
+                original_query=query,
+                scope=scope,
+                sections=sections,
+                task=task,
+                reasoning=intent.get("reasoning", "")
+            )
         
         context = ""
         sources = []
@@ -1869,7 +2178,7 @@ Respond with ONLY valid JSON, no markdown formatting."""
                     total_chars = stats.get("total_chars") or stats.get("total_length") or 0
                     num_batches = (total_chars // batch_size_chars) + (1 if total_chars % batch_size_chars else 0)
                     batch_summaries = []
-                    batch_sources = []
+                    batch_sources = []  # List of List[Dict] - one list per batch
                     batch_debugs = []
                     for batch_number in range(num_batches):
                         context, sources, debug = self.build_iterative_summary_context(
@@ -1879,7 +2188,7 @@ Respond with ONLY valid JSON, no markdown formatting."""
                             batch_number=batch_number
                         )
                         batch_summaries.append(context)
-                        batch_sources.extend(sources)
+                        batch_sources.append(sources)  # Append as list, not extend
                         batch_debugs.append(debug)
                     # Синтез финального ответа
                     final_context, final_sources, final_debug = self.build_synthesis_context(
@@ -1954,19 +2263,41 @@ Respond with ONLY valid JSON, no markdown formatting."""
             context = "\n".join(context_parts)
             
         else:
-            # Default: semantic search
+            # Default: semantic search (scope == "search" or fallback)
             search_query = intent.get("search_query", query)
-            logger.info(f"[SMART-RAG] Semantic search: '{search_query[:50]}...'")
+            task = intent.get("task", "search")
+            logger.info(f"[SMART-RAG] Semantic search: query='{search_query[:80]}...', task='{task}'")
+            
+            # Log retrieval start to debug collector
+            if debug_collector:
+                debug_collector.log_retrieval(
+                    strategy="semantic_search",
+                    techniques=["embedding_similarity", "hybrid_search"],
+                    queries=[search_query],
+                    latency_ms=0  # Will be updated
+                )
             
             # Use advanced search if available
             if hasattr(self, 'ultimate_rag_search'):
+                logger.info(f"[SMART-RAG] Using ultimate_rag_search for query")
                 result = self.ultimate_rag_search(
                     query=search_query,
                     user_email=user_email,
                     max_tokens=max_tokens
                 )
-                context = result["context"]
-                sources = result["sources"]
+                context = result.get("context", "")
+                sources = result.get("sources", [])
+                
+                # If no results from ultimate search, try with lower threshold
+                if not sources:
+                    logger.warning(f"[SMART-RAG] ultimate_rag_search returned no results, trying build_rag_context")
+                    context, sources = self.build_rag_context(
+                        query=search_query,
+                        user_email=user_email,
+                        document_ids=[document_id],
+                        max_tokens=max_tokens,
+                        min_similarity=0.3  # Lower threshold
+                    )
             else:
                 context, sources = self.build_rag_context(
                     query=search_query,
@@ -1974,6 +2305,24 @@ Respond with ONLY valid JSON, no markdown formatting."""
                     document_ids=[document_id],
                     max_tokens=max_tokens
                 )
+            
+            # If still no results, try broader search with just keywords
+            if not sources and not context:
+                logger.warning(f"[SMART-RAG] No results found, trying keyword extraction")
+                # Extract key terms from query
+                keywords = self._extract_keywords(search_query)
+                if keywords:
+                    keyword_query = " ".join(keywords)
+                    logger.info(f"[SMART-RAG] Trying keyword search: '{keyword_query}'")
+                    context, sources = self.build_rag_context(
+                        query=keyword_query,
+                        user_email=user_email,
+                        document_ids=[document_id],
+                        max_tokens=max_tokens,
+                        min_similarity=0.25  # Even lower threshold
+                    )
+            
+            logger.info(f"[SMART-RAG] Search results: {len(sources)} sources, {len(context)} chars context")
         
         # Build task-specific instructions BEFORE compression
         task_instructions = self._get_task_instructions(task, intent)
@@ -1988,6 +2337,35 @@ Respond with ONLY valid JSON, no markdown formatting."""
             max_tokens=max_tokens,
             model_name="gpt-4o"  # можно сделать параметром если нужно
         )
+        
+        # Log to debug collector
+        if debug_collector:
+            # Log chunks (sources)
+            debug_collector.log_chunks([{
+                "chunk_index": i,
+                "document_id": s.get("document_id", document_id),
+                "document_name": s.get("document_name", document_name),
+                "content": s.get("content", "")[:500],
+                "metadata": s.get("metadata", {}),
+                "similarity": s.get("similarity", 0),
+                "chapter": s.get("chapter", "")
+            } for i, s in enumerate(sources)])
+            
+            # Log context building
+            debug_collector.log_context_building(
+                raw_chars=original_len,
+                final_chars=len(context),
+                compression_applied=len(context) < original_len,
+                final_context=context
+            )
+            
+            # Log retrieval strategy
+            debug_collector.log_retrieval_strategy(
+                strategy=f"smart_rag_{scope}",
+                techniques=["intent_analysis", "chapter_detection"] if sections else ["semantic_search"],
+                generated_queries=[],
+                step_back_query=""
+            )
         
         debug_info = {
             "mode": "smart_rag",
@@ -2010,6 +2388,14 @@ Respond with ONLY valid JSON, no markdown formatting."""
         instructions = {
             "summarize": "📝 ЗАДАЧА: Перескажи/суммаризируй содержание ниже.",
             "analyze": "🔍 ЗАДАЧА: Проведи глубокий анализ текста - темы, смысл, подтекст.",
+            "find_data": """📊 ЗАДАЧА: Найди конкретные данные, статистику, факты и цифры в тексте.
+Обрати внимание на:
+- Числа, проценты, количества
+- Даты, годы, периоды
+- Названия стран, компаний, организаций
+- Статистические показатели
+- Конкретные факты и события
+Если данные найдены - приведи их точно. Если не найдены - скажи об этом.""",
             "find_loopholes": """⚖️ ЗАДАЧА: Найди лазейки, исключения и способы обхода в тексте.
 Обрати внимание на:
 - Фразы типа "за исключением", "кроме случаев", "если не..."
@@ -2021,11 +2407,77 @@ Respond with ONLY valid JSON, no markdown formatting."""
 - Взаимоисключающие утверждения
 - Логические нестыковки
 - Разночтения в терминах""",
+            "find_penalties": """⚠️ ЗАДАЧА: Найди информацию о штрафах, санкциях, наказаниях.
+Ищи:
+- Размеры штрафов
+- Виды наказаний
+- Условия применения санкций""",
+            "find_requirements": """📋 ЗАДАЧА: Найди требования, обязанности, условия.
+Ищи:
+- Обязательные требования
+- Необходимые условия
+- Обязанности сторон""",
+            "find_deadlines": """⏰ ЗАДАЧА: Найди сроки, даты, периоды.
+Ищи:
+- Конкретные даты
+- Сроки исполнения
+- Периоды действия""",
             "compare": "📊 ЗАДАЧА: Сравни указанные разделы. Найди общее и различия.",
             "explain": "💡 ЗАДАЧА: Объясни запрошенное понятие или термин.",
-            "search": ""  # No special instructions for search
+            "search": ""  # No special instructions for general search
         }
         return instructions.get(task, "")
+
+    def _extract_keywords(self, query: str) -> List[str]:
+        """
+        Extract meaningful keywords from a query for fallback search.
+        Removes common stop words and keeps important terms.
+        
+        Args:
+            query: User's search query
+        
+        Returns:
+            List of keywords
+        """
+        import re
+        
+        # Common stop words (Russian + English)
+        stop_words = {
+            # Russian
+            'и', 'в', 'во', 'не', 'что', 'он', 'на', 'я', 'с', 'со', 'как', 'а', 'то', 'все',
+            'она', 'так', 'его', 'но', 'да', 'ты', 'к', 'у', 'же', 'вы', 'за', 'бы', 'по',
+            'только', 'её', 'мне', 'было', 'вот', 'от', 'меня', 'ещё', 'нет', 'о', 'из',
+            'ему', 'теперь', 'когда', 'уже', 'вам', 'ни', 'быть', 'был', 'была', 'были',
+            'этот', 'этого', 'этой', 'эти', 'это', 'есть', 'где', 'какой', 'какая', 'какие',
+            'сколько', 'который', 'которая', 'которые', 'про', 'для', 'при', 'об',
+            # English
+            'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+            'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used',
+            'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into',
+            'through', 'during', 'before', 'after', 'above', 'below', 'between',
+            'and', 'but', 'or', 'nor', 'so', 'yet', 'both', 'either', 'neither',
+            'not', 'only', 'own', 'same', 'than', 'too', 'very', 'just',
+            'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those',
+            'how', 'when', 'where', 'why', 'all', 'each', 'every', 'any', 'some',
+            # Question words to remove
+            'расскажи', 'скажи', 'покажи', 'найди', 'tell', 'show', 'find',
+            'документ', 'документе', 'книге', 'книга', 'тексте', 'document', 'book', 'text'
+        }
+        
+        # Tokenize: split on non-word characters, keep numbers
+        tokens = re.findall(r'[\w\d]+', query.lower())
+        
+        # Filter out stop words and short tokens (except numbers)
+        keywords = []
+        for token in tokens:
+            if token.isdigit():
+                keywords.append(token)  # Keep all numbers (years, quantities)
+            elif token not in stop_words and len(token) > 2:
+                keywords.append(token)
+        
+        logger.info(f"[RAG] Extracted keywords from '{query[:50]}...': {keywords}")
+        return keywords
 
     def _extract_chapter_with_ai(self, query: str, available_chapters: List) -> Optional[str]:
         """
@@ -2586,9 +3038,14 @@ Content range: ~{batch_start_char:,} to ~{batch_end_char:,} characters
         # Combine all sources
         combined_sources = []
         for batch_idx, sources in enumerate(batch_sources):
+            if not isinstance(sources, list):
+                # Handle case where sources is not a list
+                continue
             for source in sources:
-                source["batch_number"] = batch_idx
-                combined_sources.append(source)
+                if isinstance(source, dict):
+                    source["batch_number"] = batch_idx
+                    combined_sources.append(source)
+                # Skip non-dict sources
         
         debug_info = {
             "mode": "synthesis",
@@ -2665,12 +3122,14 @@ Content range: ~{batch_start_char:,} to ~{batch_end_char:,} characters
         
         return compressed
 
-# ==================== SINGLETON INSTANCE ====================
 
-_rag_store_instance = None
+# ==================== SINGLETON ====================
+
+_rag_store_instance: Optional[RAGStore] = None
+
 
 def get_rag_store() -> RAGStore:
-    """Get singleton instance of RAGStore"""
+    """Get or create RAG store singleton"""
     global _rag_store_instance
     if _rag_store_instance is None:
         _rag_store_instance = RAGStore()

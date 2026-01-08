@@ -306,7 +306,8 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         // Handle RAG context info (sent at start of generation)
         if (chunk.type === 'rag_context' && chunk.rag_sources) {
           console.log(`[ConversationsContext] RAG context received: ${chunk.chunks_count} chunks, ${chunk.rag_context_length} chars`);
-          
+          console.log(`[ConversationsContext] RAG debug:`, chunk.debug);
+
           // Update the assistant message with RAG sources
           setConversations(prev => ({
             ...prev,
@@ -321,7 +322,10 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
                       ...msg.meta,
                       rag_sources: chunk.rag_sources,
                       rag_enabled: true,
-                      rag_context_preview: chunk.rag_context_preview
+                      rag_context_preview: chunk.rag_context_preview,
+                      rag_context_full: chunk.rag_context_full,
+                      rag_debug: chunk.debug,
+                      system_prompt_preview: chunk.system_prompt_preview
                     }
                   }
                   : msg
