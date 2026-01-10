@@ -1108,9 +1108,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
 
         {/* ChatGPT-style input */}
-        <div className="max-w-3xl mx-auto w-full overflow-hidden">
+        <div className="max-w-3xl mx-auto w-full">
           <form onSubmit={handleSubmit} className="relative">
-            <div className="relative flex items-end bg-secondary/50 border border-border rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all overflow-hidden max-w-full">
+            <div className="relative flex items-end bg-secondary/50 border border-border rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all max-w-full">
               {/* Hidden file input for prompt loading */}
               <input
                 ref={fileInputRef}
