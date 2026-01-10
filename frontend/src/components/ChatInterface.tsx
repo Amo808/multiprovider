@@ -11,7 +11,9 @@ import { estimateCostForMessage } from '../lib/pricing';
 import { DraggableMessageList } from './DraggableMessageList';
 import { VirtualizedMessageList } from './VirtualizedMessageList';
 import DocumentManager from './DocumentManager';
-import { RAGToggle } from './RAGSources';
+import { RAGUnifiedButton } from './RAGUnifiedButton';
+import { RAGDebugPanel } from './RAGDebugPanel';
+import { RAGPromptsEditor } from './RAGPromptsEditor';
 import { ragService } from '../services/rag';
 import { DebugPanel, RequestDebugInfo } from './DebugPanel';
 
@@ -61,6 +63,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   // Debug Panel state
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [lastDebugInfo, setLastDebugInfo] = useState<RequestDebugInfo | null>(null);
+  // RAG Debug Panel state
+  const [showRAGDebugPanel, setShowRAGDebugPanel] = useState(false);
+  const [lastRAGDebugInfo, setLastRAGDebugInfo] = useState<Record<string, any> | null>(null);
+  // RAG Prompts Editor state
+  const [showRAGPromptsEditor, setShowRAGPromptsEditor] = useState(false);
   // Large paste confirmation modal state
   const [pendingPaste, setPendingPaste] = useState<{
     text: string;
@@ -85,6 +92,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setRagEnabled,
     ragMode,
     setRagMode,
+    ragSettings,
+    setRagSettings,
     documentsCount,
     loadDocuments,
     documents,
@@ -212,6 +221,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         if (collectorData && (collectorData.request_id || collectorData.timestamp)) {
           setLastDebugInfo(collectorData as RequestDebugInfo);
         }
+
+        // Also store full RAG debug info for RAGDebugPanel
+        setLastRAGDebugInfo(ragDebug);
       }
     }
   }, [messages]);
@@ -654,14 +666,37 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       conversation_id: conversationId,
       config: generationConfig,
       ...(systemPrompt && systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
-      // Always send RAG config to ensure it's properly disabled when not needed
+      // Use ragSettings for all RAG parameters including new chunk_mode and orchestrator
       rag: {
         enabled: ragEnabled && documentsCount > 0,
         mode: ragEnabled ? ragMode : 'off',
         document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
-        max_chunks: ragMode === 'agentic' ? 10 : 5,
-        min_similarity: ragMode === 'hyde' ? 0.3 : 0.5,
-        use_rerank: ragMode !== 'basic'
+
+        // === CHUNK MODE SETTINGS ===
+        chunk_mode: ragSettings.chunk_mode,
+        max_chunks: ragSettings.max_chunks,
+        chunk_percent: ragSettings.chunk_percent,
+        min_chunks: ragSettings.min_chunks,
+        max_chunks_limit: ragSettings.max_chunks_limit,
+
+        // === SEARCH SETTINGS ===
+        min_similarity: ragSettings.min_similarity,
+        use_rerank: ragSettings.use_rerank,
+        keyword_weight: ragSettings.keyword_weight,
+        semantic_weight: ragSettings.semantic_weight,
+        include_metadata: ragSettings.include_metadata,
+        debug_mode: ragSettings.debug_mode,
+
+        // === ORCHESTRATOR SETTINGS ===
+        orchestrator: ragSettings.orchestrator ? {
+          include_history: ragSettings.orchestrator.include_history,
+          history_limit: ragSettings.orchestrator.history_limit,
+          include_memory: ragSettings.orchestrator.include_memory,
+          auto_retrieve: ragSettings.orchestrator.auto_retrieve,
+          adaptive_chunks: ragSettings.orchestrator.adaptive_chunks,
+          enable_web_search: ragSettings.orchestrator.enable_web_search,
+          enable_code_execution: ragSettings.orchestrator.enable_code_execution,
+        } : undefined
       }
     };
 
@@ -1070,8 +1105,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 className="hidden"
               />
 
-              {/* Left buttons */}
-              <div className="flex items-center pl-3 pb-3 gap-1">
+              {/* Left buttons - shrink on mobile */}
+              <div className="flex items-center pl-2 sm:pl-3 pb-3 gap-1 flex-shrink-0 max-w-[50%] sm:max-w-none">
                 <Button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -1079,7 +1114,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   variant="ghost"
                   size="sm"
                   title="Load prompt from file"
-                  className="h-8 w-8 p-0 rounded-lg hover:bg-secondary"
+                  className="h-8 w-8 p-0 rounded-lg hover:bg-secondary flex-shrink-0"
                 >
                   {isLoadingFile ? (
                     <RefreshCw size={18} className="text-muted-foreground animate-spin" />
@@ -1102,19 +1137,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   <FileText size={18} className="text-muted-foreground" />
                 </Button>
 
-                {/* RAG Toggle - only show if documents exist */}
+                {/* RAG Unified Button - only show if documents exist */}
                 {documentsCount > 0 && (
-                  <RAGToggle
+                  <RAGUnifiedButton
                     enabled={ragEnabled}
-                    onChange={setRagEnabled}
+                    onEnableChange={setRagEnabled}
+                    mode={ragMode}
+                    onModeChange={setRagMode}
+                    settings={ragSettings}
+                    onSettingsChange={setRagSettings}
                     documentsCount={documentsCount}
                     documents={documents.map(d => ({ id: d.id, filename: d.name }))}
                     selectedDocumentIds={selectedDocumentIds}
                     onDocumentToggle={handleDocumentToggle}
                     onSelectAll={handleSelectAllDocuments}
                     onDeselectAll={handleDeselectAllDocuments}
-                    mode={ragMode}
-                    onModeChange={setRagMode}
+                    onOpenDebug={() => setShowRAGDebugPanel(true)}
+                    onOpenPromptsEditor={() => setShowRAGPromptsEditor(true)}
                   />
                 )}
               </div>
@@ -1347,6 +1386,34 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         debugInfo={lastDebugInfo}
         isOpen={showDebugPanel}
         onClose={() => setShowDebugPanel(false)}
+      />
+
+      {/* RAG Prompts & Settings Panel */}
+      <RAGDebugPanel
+        isOpen={showRAGDebugPanel}
+        onClose={() => setShowRAGDebugPanel(false)}
+        currentSettings={{
+          mode: ragMode,
+          max_chunks: ragSettings.max_chunks,
+          min_similarity: ragSettings.min_similarity,
+          keyword_weight: ragSettings.keyword_weight,
+          semantic_weight: ragSettings.semantic_weight,
+          use_rerank: ragSettings.use_rerank,
+          // NEW: Chunk mode settings
+          chunk_mode: ragSettings.chunk_mode,
+          chunk_percent: ragSettings.chunk_percent,
+          min_chunks: ragSettings.min_chunks,
+          max_chunks_limit: ragSettings.max_chunks_limit,
+          // NEW: Orchestrator settings
+          orchestrator: ragSettings.orchestrator,
+        }}
+        lastDebugInfo={lastRAGDebugInfo || undefined}
+      />
+
+      {/* RAG Prompts Editor - для редактирования промптов */}
+      <RAGPromptsEditor
+        isOpen={showRAGPromptsEditor}
+        onClose={() => setShowRAGPromptsEditor(false)}
       />
     </div>
   );

@@ -227,17 +227,39 @@ export interface ModelCard {
 }
 
 // API Request/Response Types
+export interface RAGOrchestratorConfig {
+  include_history?: boolean;        // Include conversation history
+  history_limit?: number;           // Max messages from history (0 = disabled)
+  include_memory?: boolean;         // Use long-term memory (Mem0)
+  auto_retrieve?: boolean;          // Automatically search documents
+  adaptive_chunks?: boolean;        // AI decides how many chunks (3% or 50%)
+  enable_web_search?: boolean;      // Allow web search (future)
+  enable_code_execution?: boolean;  // Allow code execution (future)
+}
+
 export interface RAGConfig {
   enabled?: boolean;
   mode?: 'off' | 'auto' | 'smart' | 'basic' | 'advanced' | 'ultimate' | 'hyde' | 'agentic' | 'full' | 'chapter';
   document_ids?: string[];
-  max_chunks?: number;
+
+  // === CHUNK RETRIEVAL SETTINGS ===
+  // Mode: "fixed" (exact count) or "percent" (% of document) or "adaptive" (AI decides)
+  chunk_mode?: 'fixed' | 'percent' | 'adaptive';
+  max_chunks?: number;              // Used when chunk_mode="fixed" (legacy)
+  chunk_percent?: number;           // Used when chunk_mode="percent" (0-100%)
+  min_chunks?: number;              // Minimum chunks even for small queries
+  max_chunks_limit?: number;        // Hard limit to prevent token overflow
+
   min_similarity?: number;
   use_rerank?: boolean;
   // Advanced options (like n8n)
   include_metadata?: boolean;  // Include document metadata in results
   keyword_weight?: number;     // Weight for keyword search (0-1), default 0.3
   semantic_weight?: number;    // Weight for semantic search (0-1), default 0.7
+
+  // === ORCHESTRATOR SETTINGS ===
+  orchestrator?: RAGOrchestratorConfig;
+
   // Debug option - shows FULL prompt sent to model
   debug_mode?: boolean;        // When true, returns full system prompt + history in response
 }

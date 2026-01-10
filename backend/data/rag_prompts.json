@@ -1,0 +1,175 @@
+{
+  "task_instructions": {
+    "summarize": {
+      "emoji": "📝",
+      "name": "Пересказ / Суммаризация",
+      "prompt": "📝 ЗАДАЧА: Перескажи/суммаризируй содержание ниже.",
+      "description": "Краткий пересказ или суммаризация текста"
+    },
+    "analyze": {
+      "emoji": "🔍",
+      "name": "Глубокий анализ",
+      "prompt": "🔍 ЗАДАЧА: Проведи глубокий анализ текста - темы, смысл, подтекст.",
+      "description": "Подробный анализ тем, смысла и подтекста"
+    },
+    "find_data": {
+      "emoji": "📊",
+      "name": "Поиск данных",
+      "prompt": "📊 ЗАДАЧА: Найди конкретные данные, статистику, факты и цифры в тексте.\nОбрати внимание на:\n- Числа, проценты, количества\n- Даты, годы, периоды\n- Названия стран, компаний, организаций\n- Статистические показатели\n- Конкретные факты и события\nЕсли данные найдены - приведи их точно. Если не найдены - скажи об этом.",
+      "description": "Поиск конкретных данных, статистики, цифр"
+    },
+    "find_loopholes": {
+      "emoji": "⚖️",
+      "name": "Поиск лазеек",
+      "prompt": "⚖️ ЗАДАЧА: Найди лазейки, исключения и способы обхода в тексте.\nОбрати внимание на:\n- Фразы типа \"за исключением\", \"кроме случаев\", \"если не...\"\n- Размытые формулировки\n- Отсутствие четких определений\n- Противоречия с другими нормами",
+      "description": "Поиск юридических лазеек и исключений"
+    },
+    "find_contradictions": {
+      "emoji": "⚡",
+      "name": "Поиск противоречий",
+      "prompt": "⚡ ЗАДАЧА: Найди противоречия и несоответствия в тексте.\nИщи:\n- Взаимоисключающие утверждения\n- Логические нестыковки\n- Разночтения в терминах",
+      "description": "Поиск внутренних противоречий"
+    },
+    "find_penalties": {
+      "emoji": "⚠️",
+      "name": "Поиск санкций",
+      "prompt": "⚠️ ЗАДАЧА: Найди информацию о штрафах, санкциях, наказаниях.\nИщи:\n- Размеры штрафов\n- Виды наказаний\n- Условия применения санкций",
+      "description": "Поиск штрафов, санкций, наказаний"
+    },
+    "find_requirements": {
+      "emoji": "📋",
+      "name": "Поиск требований",
+      "prompt": "📋 ЗАДАЧА: Найди требования, обязанности, условия.\nИщи:\n- Обязательные требования\n- Необходимые условия\n- Обязанности сторон",
+      "description": "Поиск обязательных требований"
+    },
+    "find_deadlines": {
+      "emoji": "⏰",
+      "name": "Поиск сроков",
+      "prompt": "⏰ ЗАДАЧА: Найди сроки, даты, периоды.\nИщи:\n- Конкретные даты\n- Сроки исполнения\n- Периоды действия",
+      "description": "Поиск сроков и дат"
+    },
+    "compare": {
+      "emoji": "📊",
+      "name": "Сравнение",
+      "prompt": "📊 ЗАДАЧА: Сравни указанные разделы. Найди общее и различия.",
+      "description": "Сравнение разных частей документа"
+    },
+    "explain": {
+      "emoji": "💡",
+      "name": "Объяснение",
+      "prompt": "💡 ЗАДАЧА: Объясни запрошенное понятие или термин.",
+      "description": "Подробное объяснение терминов"
+    },
+    "search": {
+      "emoji": "🔎",
+      "name": "Общий поиск",
+      "prompt": "",
+      "description": "Общий семантический поиск"
+    }
+  },
+  "context_header": {
+    "name": "Заголовок контекста",
+    "prompt": "Используй следующие фрагменты документов для ответа на вопрос пользователя.\nЕсли информация из документов релевантна, обязательно укажи номер источника [1], [2] и т.д.\nЕсли в документах нет нужной информации, честно скажи об этом.\n\n---\nНАЙДЕННЫЕ ДОКУМЕНТЫ:",
+    "description": "Инструкция для модели как использовать найденные документы"
+  },
+  "intent_analysis": {
+    "name": "Анализ намерений",
+    "description": "AI анализирует запрос и определяет: scope (область), task (задачу), sections (разделы)",
+    "system_prompt": "Ты - анализатор запросов к документам. Твоя задача - понять намерение пользователя и выбрать оптимальную стратегию поиска.",
+    "prompt": "Analyze this user query about a document and determine the best retrieval strategy.\n\nUSER QUERY: \"{query}\"\n\nDOCUMENT STRUCTURE:\n{structure_desc}\n\nCRITICAL RULES:\n1. The user HAS documents loaded and wants to search them\n2. NEVER say \"no documents\" or \"cannot find\" - always provide a search strategy\n3. If the query mentions ANY specific data (years, numbers, dates, statistics, countries, names), use scope=\"search\" with a refined search_query\n4. Questions about \"what's in the document\", \"about what\", \"summary\" = scope=\"full_document\"\n5. Questions with specific numbers/dates/statistics = scope=\"search\" (NOT full_document)\n\nAnalyze the query and return a JSON object with these fields:\n\n1. \"scope\": One of:\n   - \"single_section\": User wants a specific chapter/article/section/статья/пункт (must have explicit number)\n   - \"multiple_sections\": User wants several specific sections (e.g., \"статьи 1-5\", \"articles 1 and 40\")\n   - \"full_document\": User wants overview/summary/themes of the ENTIRE document (NO specific data questions)\n   - \"comparison\": User wants to compare different parts of the document\n   - \"search\": User is looking for SPECIFIC information (dates, numbers, facts, statistics, names, events)\n   \n   USE \"search\" FOR:\n   - Any question with years (2018, 2020, etc.)\n   - Any question with numbers/statistics (\"сколько\", \"how many\", \"количество\")\n   - Any question about specific facts/data\n   - Questions with \"кто\", \"что\", \"где\", \"когда\", \"сколько\", \"какие страны\", \"какие компании\"\n\n2. \"sections\": Array of section identifiers the user wants. Examples:\n   - [\"40\"] for chapter/article 40\n   - [\"1\", \"2\", \"3\"] for sections 1-3\n   - [] for full document or search scope\n\n3. \"task\": One of:\n   - \"summarize\": Retell, summarize, explain content (for full_document or sections)\n   - \"analyze\": Deep analysis, themes, meaning\n   - \"find_data\": Find specific data, statistics, numbers, facts (DEFAULT for questions with numbers/dates)\n   - \"find_loopholes\": Find legal loopholes, exceptions\n   - \"find_contradictions\": Find contradictions\n   - \"find_penalties\": Find penalties, sanctions\n   - \"find_requirements\": Find requirements, obligations\n   - \"find_rights\": Find rights, permissions\n   - \"find_exceptions\": Find exceptions, special cases\n   - \"find_deadlines\": Find deadlines, terms\n   - \"compare\": Compare sections\n   - \"explain\": Explain specific concept\n   - \"search\": General information search\n\n4. \"search_query\": ALWAYS provide for scope=\"search\". Create an optimized search query with:\n   - Key terms from the original query\n   - Synonyms and related terms\n   - Numbers/years from the query\n   Example: \"экспорт 2018 страны участники ВЭД товары\"\n\n5. \"reasoning\": Brief explanation (1-2 sentences)\n\nEXAMPLES:\n- \"о чем документ\" -> {{\"scope\": \"full_document\", \"sections\": [], \"task\": \"summarize\", \"search_query\": \"\"}}\n- \"в сколько стран экспортировали товары в 2018 году\" -> {{\"scope\": \"search\", \"sections\": [], \"task\": \"find_data\", \"search_query\": \"экспорт 2018 страны количество товары ВЭД\"}}\n- \"какая статистика за 2020 год\" -> {{\"scope\": \"search\", \"sections\": [], \"task\": \"find_data\", \"search_query\": \"статистика 2020 год данные показатели\"}}\n- \"расскажи о 40 главе\" -> {{\"scope\": \"single_section\", \"sections\": [\"40\"], \"task\": \"summarize\"}}\n- \"сколько компаний упоминается\" -> {{\"scope\": \"search\", \"sections\": [], \"task\": \"find_data\", \"search_query\": \"компании организации количество список\"}}\n- \"какие страны участвовали\" -> {{\"scope\": \"search\", \"sections\": [], \"task\": \"find_data\", \"search_query\": \"страны участники государства\"}}\n\nRespond with ONLY valid JSON, no markdown formatting.",
+    "scopes": {
+      "single_section": "Один конкретный раздел/глава",
+      "multiple_sections": "Несколько разделов",
+      "full_document": "Весь документ целиком",
+      "comparison": "Сравнение разделов",
+      "search": "Поиск конкретной информации"
+    }
+  },
+  "search_strategies": {
+    "hybrid_search": {
+      "name": "Гибридный поиск",
+      "description": "Комбинация векторного (semantic) и ключевого (keyword) поиска",
+      "default_weights": {
+        "semantic": 0.7,
+        "keyword": 0.3
+      }
+    },
+    "hyde": {
+      "name": "HyDE",
+      "description": "Генерация гипотетического ответа для улучшения поиска",
+      "prompt": "Given this question, write a detailed passage that would answer it.\nWrite as if you are quoting directly from a document that contains this information.\nBe specific and detailed. Write 2-3 paragraphs.\n\nQuestion: {query}\n\nHypothetical document passage:"
+    },
+    "multi_query": {
+      "name": "Multi-Query",
+      "description": "Генерация нескольких вариантов запроса для расширения поиска",
+      "prompt": "You are an AI language model assistant. Your task is to generate {num_queries} different versions of the given user question to retrieve relevant documents from a vector database.\n\nBy generating multiple perspectives on the user question, your goal is to help overcome some of the limitations of distance-based similarity search.\n\nProvide these alternative questions separated by newlines.\nOriginal question: {query}\n\nAlternative questions:"
+    },
+    "step_back": {
+      "name": "Step-Back Prompting",
+      "description": "Генерация более общего вопроса для понимания контекста",
+      "prompt": "Given a specific question, generate a more general \"step-back\" question that would help understand the broader context needed to answer the original question.\n\nSpecific question: {query}\n\nStep-back question (more general):"
+    },
+    "reranker": {
+      "name": "LLM Reranker",
+      "description": "Переоценка релевантности результатов с помощью LLM",
+      "prompt": "You are a relevance scoring assistant. Given a query and documents, score each document's relevance from 0-10 where 10 is perfectly relevant.\n\nQuery: {query}\n\nDocuments:\n{documents}\n\nReturn JSON array with scores: [{\"doc_index\": 0, \"score\": 8, \"reason\": \"...\"}]"
+    }
+  },
+  "defaults": {
+    "max_chunks": 50,
+    "min_similarity": 0.4,
+    "keyword_weight": 0.3,
+    "semantic_weight": 0.7,
+    "use_rerank": false,
+    "chunk_mode": "adaptive",
+    "chunk_percent": 30,
+    "min_chunks": 5,
+    "max_chunks_limit": 100
+  },
+  "orchestrator": {
+    "include_history": true,
+    "history_limit": 10,
+    "include_memory": true,
+    "auto_retrieve": true,
+    "adaptive_chunks": true
+  },
+  "modes": {
+    "smart": {
+      "name": "Умный",
+      "description": "AI понимает запрос автоматически",
+      "recommended": true
+    },
+    "auto": {
+      "name": "Авто",
+      "description": "Автоматический выбор стратегии"
+    },
+    "full": {
+      "name": "Полный",
+      "description": "Загрузить весь документ"
+    },
+    "chapter": {
+      "name": "По главам",
+      "description": "Работа с отдельными главами"
+    },
+    "basic": {
+      "name": "Базовый",
+      "description": "Быстрый гибридный поиск"
+    },
+    "advanced": {
+      "name": "Расширенный",
+      "description": "Multi-query + rerank"
+    },
+    "ultimate": {
+      "name": "Максимальный",
+      "description": "Авто-выбор лучшей стратегии"
+    },
+    "hyde": {
+      "name": "HyDE",
+      "description": "Для структурных запросов"
+    },
+    "agentic": {
+      "name": "Агент",
+      "description": "AI агент итеративного поиска"
+    }
+  }
+}

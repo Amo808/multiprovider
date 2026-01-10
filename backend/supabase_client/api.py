@@ -2,12 +2,13 @@
 RAG API Router for MULTECH AI
 Handles document upload, processing, and search endpoints
 """
+import json
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from pydantic import BaseModel
 
-from .rag import get_rag_store, SUPPORTED_TYPES
+from .rag import get_rag_store, SUPPORTED_TYPES, load_rag_prompts, RAG_PROMPTS_PATH
 from .client import is_supabase_configured
 
 logger = logging.getLogger(__name__)
@@ -465,4 +466,50 @@ async def get_full_document(
         raise
     except Exception as e:
         logger.error(f"Failed to get full document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== RAG PROMPTS MANAGEMENT ====================
+
+class PromptsUpdateRequest(BaseModel):
+    prompts: Dict[str, Any]
+
+
+@router.get("/prompts")
+async def get_rag_prompts():
+    """
+    Get all RAG prompts configuration.
+    Returns the current prompts from rag_prompts.json
+    """
+    try:
+        prompts = load_rag_prompts()
+        return {"success": True, "prompts": prompts}
+    except Exception as e:
+        logger.error(f"Failed to load RAG prompts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/prompts")
+async def update_rag_prompts(request: PromptsUpdateRequest):
+    """
+    Update all RAG prompts configuration.
+    Saves the prompts to rag_prompts.json
+    """
+    try:
+        # Validate that prompts is a dict
+        if not isinstance(request.prompts, dict):
+            raise HTTPException(status_code=400, detail="Prompts must be a dictionary")
+        
+        # Write new prompts to file
+        # Cache in rag.py will auto-refresh based on file mtime
+        with open(RAG_PROMPTS_PATH, 'w', encoding='utf-8') as f:
+            json.dump(request.prompts, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"[RAG] Prompts updated successfully")
+        return {"success": True, "message": "Prompts updated successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update RAG prompts: {e}")
         raise HTTPException(status_code=500, detail=str(e))

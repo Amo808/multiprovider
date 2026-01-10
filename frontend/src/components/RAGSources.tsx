@@ -135,14 +135,18 @@ export const RAGStatusIndicator: React.FC<{ active: boolean; documentsCount?: nu
 /**
  * RAG Toggle - allows user to enable/disable RAG with document selection and mode
  */
-export type RAGMode = 'basic' | 'advanced' | 'ultimate' | 'hyde' | 'agentic';
+export type RAGMode = 'off' | 'auto' | 'smart' | 'basic' | 'advanced' | 'ultimate' | 'hyde' | 'agentic' | 'full' | 'chapter';
 
 const RAG_MODES: { value: RAGMode; label: string; description: string; icon: string }[] = [
-    { value: 'basic', label: 'Basic', description: 'Fast hybrid search', icon: '⚡' },
-    { value: 'advanced', label: 'Advanced', description: 'Multi-query + rerank', icon: '🔍' },
-    { value: 'ultimate', label: 'Auto', description: 'Auto-detect best strategy', icon: '🎯' },
-    { value: 'hyde', label: 'HyDE', description: 'For structural queries', icon: '📖' },
-    { value: 'agentic', label: 'Agentic', description: 'AI agent iterative search', icon: '🤖' },
+    { value: 'smart', label: 'Умный', description: 'AI понимает запрос автоматически', icon: '🧠' },
+    { value: 'auto', label: 'Авто', description: 'Автоматический выбор стратегии', icon: '✨' },
+    { value: 'full', label: 'Полный', description: 'Загрузить весь документ', icon: '📚' },
+    { value: 'chapter', label: 'По главам', description: 'Работа с отдельными главами', icon: '📖' },
+    { value: 'basic', label: 'Базовый', description: 'Быстрый гибридный поиск', icon: '⚡' },
+    { value: 'advanced', label: 'Расширенный', description: 'Multi-query + rerank', icon: '🔍' },
+    { value: 'ultimate', label: 'Максимальный', description: 'Авто-выбор лучшей стратегии', icon: '🎯' },
+    { value: 'hyde', label: 'HyDE', description: 'Для структурных запросов', icon: '�' },
+    { value: 'agentic', label: 'Агент', description: 'AI агент итеративного поиска', icon: '🤖' },
 ];
 
 interface RAGToggleProps {
@@ -274,8 +278,8 @@ export const RAGToggle: React.FC<RAGToggleProps> = ({
                                         key={m.value}
                                         onClick={() => onModeChange(m.value)}
                                         className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-left transition-all text-xs ${mode === m.value
-                                                ? 'bg-purple-500/20 border border-purple-500/50 text-purple-400'
-                                                : 'bg-secondary/50 border border-transparent hover:border-border text-muted-foreground hover:text-foreground'
+                                            ? 'bg-purple-500/20 border border-purple-500/50 text-purple-400'
+                                            : 'bg-secondary/50 border border-transparent hover:border-border text-muted-foreground hover:text-foreground'
                                             }`}
                                         title={m.description}
                                     >

@@ -238,20 +238,41 @@ async def debug_auth_public():
     }
 
 # Pydantic models
+class OrchestratorConfig(BaseModel):
+    """Orchestrator settings for RAG"""
+    include_history: bool = True
+    history_limit: int = 50
+    include_memory: bool = False
+    auto_retrieve: bool = True
+    adaptive_chunks: bool = True
+    enable_web_search: bool = False
+    enable_code_execution: bool = False
+
 class RAGConfig(BaseModel):
     """RAG configuration for chat requests"""
     enabled: bool = True  # RAG enabled by default - auto-searches user's documents
-    mode: str = "auto"  # "off", "auto", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
+    mode: str = "smart"  # "off", "auto", "smart", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
     document_ids: Optional[List[str]] = None  # Specific documents to search (None = all)
-    max_chunks: int = 10  # Increased from 5 to 10 for better context
-    min_similarity: float = 0.5  # Minimum similarity threshold
+    
+    # === CHUNK MODE SETTINGS ===
+    chunk_mode: str = "adaptive"  # "fixed", "percent", "adaptive"
+    max_chunks: int = 50  # Fixed number of chunks
+    chunk_percent: float = 20.0  # Percentage of document
+    min_chunks: int = 5  # Minimum chunks to retrieve
+    max_chunks_limit: int = 500  # Hard limit
+    
+    # === SEARCH SETTINGS ===
+    min_similarity: float = 0.4  # Lowered from 0.5 to capture more results
     use_rerank: bool = True  # Use LLM reranking for better results
-    # Advanced options (like n8n Supabase tool)
     include_metadata: bool = True  # Include document metadata in results
     keyword_weight: float = 0.3  # Weight for keyword/BM25 search (0-1)
     semantic_weight: float = 0.7  # Weight for semantic/vector search (0-1)
+    
     # Debug option - shows FULL prompt sent to model
     debug_mode: bool = False  # When True, returns full system prompt in response
+    
+    # === ORCHESTRATOR SETTINGS ===
+    orchestrator: Optional[OrchestratorConfig] = None
 
 class ChatRequest(BaseModel):
     message: str
@@ -687,6 +708,59 @@ async def rag_status():
             "error": str(e),
             "supported_types": []
         }
+
+
+# ==================== RAG PROMPTS API ====================
+
+RAG_PROMPTS_FILE = Path(__file__).parent / "data" / "rag_prompts.json"
+
+def load_rag_prompts_local() -> dict:
+    """Load RAG prompts from JSON file."""
+    if RAG_PROMPTS_FILE.exists():
+        with open(RAG_PROMPTS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def save_rag_prompts_local(prompts: dict) -> bool:
+    """Save RAG prompts to JSON file."""
+    try:
+        RAG_PROMPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(RAG_PROMPTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(prompts, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save RAG prompts: {e}")
+        return False
+
+
+@api_router.get("/rag/prompts")
+async def get_rag_prompts_endpoint():
+    """Get all RAG prompts and settings."""
+    try:
+        prompts = load_rag_prompts_local()
+        return prompts
+    except Exception as e:
+        logger.error(f"Failed to load RAG prompts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.put("/rag/prompts")
+async def update_rag_prompts_endpoint(data: dict, _: str = Depends(get_current_user)):
+    """Update all RAG prompts and settings."""
+    try:
+        # Frontend sends {prompts: {...}} or just {...}
+        prompts = data.get("prompts", data)
+        if save_rag_prompts_local(prompts):
+            return {"success": True, "message": "RAG prompts saved"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save prompts")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to save RAG prompts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== END RAG PROMPTS API ====================
 
 
 @api_router.post("/rag/documents/upload")
@@ -1367,16 +1441,40 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     
                     # Determine RAG strategy based on mode
                     # Modes: "off", "auto", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
-                    rag_mode = rag_config.mode or "auto"
+                    rag_mode = rag_config.mode or "smart"
                     
-                    # Extract advanced options
-                    max_chunks = rag_config.max_chunks or 10  # Increased default from 5 to 10
-                    min_similarity = rag_config.min_similarity or 0.5
+                    # === EXTRACT ALL RAG SETTINGS FROM CONFIG ===
+                    # Chunk mode settings
+                    chunk_mode = rag_config.chunk_mode or "adaptive"
+                    max_chunks = rag_config.max_chunks or 50
+                    chunk_percent = rag_config.chunk_percent or 20.0
+                    min_chunks = rag_config.min_chunks or 5
+                    max_chunks_limit = rag_config.max_chunks_limit or 500
+                    
+                    # Search settings
+                    min_similarity = rag_config.min_similarity or 0.4
                     use_rerank = rag_config.use_rerank
                     keyword_weight = rag_config.keyword_weight or 0.3
                     semantic_weight = rag_config.semantic_weight or 0.7
                     
-                    logger.info(f"[RAG] Config: mode={rag_mode}, max_chunks={max_chunks}, min_sim={min_similarity}, rerank={use_rerank}, kw_weight={keyword_weight}, sem_weight={semantic_weight}")
+                    # Orchestrator settings
+                    adaptive_chunks = True  # default
+                    if rag_config.orchestrator:
+                        adaptive_chunks = rag_config.orchestrator.adaptive_chunks
+                    
+                    logger.info(f"[RAG] ===== RAG SETTINGS =====")
+                    logger.info(f"[RAG] Mode: {rag_mode}")
+                    logger.info(f"[RAG] Chunk mode: {chunk_mode}")
+                    logger.info(f"[RAG] Max chunks: {max_chunks}")
+                    logger.info(f"[RAG] Chunk percent: {chunk_percent}%")
+                    logger.info(f"[RAG] Min/Max chunks limit: {min_chunks}-{max_chunks_limit}")
+                    logger.info(f"[RAG] Min similarity: {min_similarity}")
+                    logger.info(f"[RAG] Keyword weight: {keyword_weight}")
+                    logger.info(f"[RAG] Semantic weight: {semantic_weight}")
+                    logger.info(f"[RAG] Use rerank: {use_rerank}")
+                    logger.info(f"[RAG] Adaptive chunks: {adaptive_chunks}")
+                    logger.info(f"[RAG] =========================")
+
                     
                     # Check which methods are available in RAG store
                     has_ultimate = hasattr(rag_store, 'ultimate_rag_search')
@@ -1400,13 +1498,24 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     if rag_mode == "smart" and has_smart:
                         # 🧠 SMART RAG: AI analyzes query intent and retrieves optimally
                         # Understands: chapters, ranges, full doc, comparisons, legal loopholes, etc.
-                        logger.info(f"[RAG] Using SMART mode - AI intent analysis")
+                        logger.info(f"[RAG] Using SMART mode - AI intent analysis with user settings")
                         result = rag_store.smart_rag_search(
                             query=request.message,
                             user_email=user_email,
                             document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
                             max_tokens=100000,
-                            debug_collector=rag_debug_collector
+                            debug_collector=rag_debug_collector,
+                            # === PASS ALL USER SETTINGS ===
+                            chunk_mode=chunk_mode,
+                            max_chunks=max_chunks,
+                            chunk_percent=chunk_percent,
+                            min_chunks=min_chunks,
+                            max_chunks_limit=max_chunks_limit,
+                            min_similarity=min_similarity,
+                            use_rerank=use_rerank,
+                            keyword_weight=keyword_weight,
+                            semantic_weight=semantic_weight,
+                            adaptive_chunks=adaptive_chunks
                         )
                         if isinstance(result, tuple):
                             rag_context, rag_sources, rag_debug_info = result
@@ -1419,13 +1528,24 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     # === AUTO MODE - Let AI decide best approach ===
                     elif rag_mode == "auto" and has_smart:
                         # Auto mode now uses smart RAG for better results
-                        logger.info(f"[RAG] Using AUTO mode with SMART RAG")
+                        logger.info(f"[RAG] Using AUTO mode with SMART RAG and user settings")
                         result = rag_store.smart_rag_search(
                             query=request.message,
                             user_email=user_email,
                             document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
                             max_tokens=50000,
-                            debug_collector=rag_debug_collector
+                            debug_collector=rag_debug_collector,
+                            # === PASS ALL USER SETTINGS ===
+                            chunk_mode=chunk_mode,
+                            max_chunks=max_chunks,
+                            chunk_percent=chunk_percent,
+                            min_chunks=min_chunks,
+                            max_chunks_limit=max_chunks_limit,
+                            min_similarity=min_similarity,
+                            use_rerank=use_rerank,
+                            keyword_weight=keyword_weight,
+                            semantic_weight=semantic_weight,
+                            adaptive_chunks=adaptive_chunks
                         )
                         if isinstance(result, tuple):
                             rag_context, rag_sources, rag_debug_info = result

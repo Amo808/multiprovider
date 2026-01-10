@@ -19,6 +19,10 @@ export { Logo } from './Logo';
 // Document & RAG Components
 export { default as DocumentManager } from './DocumentManager';
 export { RAGSources, RAGStatusIndicator, RAGToggle } from './RAGSources';
+export { RAGSettingsPanel, RAGSettingsInline, DEFAULT_RAG_SETTINGS, RAG_PRESETS } from './RAGSettingsPanel';
+export { RAGUnifiedButton } from './RAGUnifiedButton';
+export { RAGPromptsEditor } from './RAGPromptsEditor';
+export type { RAGSettings } from './RAGSettingsPanel';
 
 // Process & Multi-Model Components
 export { ProcessViewer, ProcessCard } from './ProcessViewer';

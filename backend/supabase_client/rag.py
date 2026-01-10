@@ -3,6 +3,7 @@ RAG (Retrieval Augmented Generation) operations for Supabase
 Handles document upload, chunking, embedding, and similarity search
 """
 import os
+import json
 import hashlib
 import logging
 import asyncio
@@ -18,6 +19,179 @@ from .client import get_supabase_service_client, get_or_create_user, is_supabase
 from .debug_collector import RAGDebugCollector, get_current_collector, new_collector
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== PROMPTS CONFIG LOADER ====================
+
+RAG_PROMPTS_PATH = Path(__file__).parent.parent / "data" / "rag_prompts.json"
+MODEL_LIMITS_PATH = Path(__file__).parent.parent / "data" / "model_limits.json"
+_prompts_cache: Optional[Dict] = None
+_prompts_cache_mtime: float = 0
+_model_limits_cache: Optional[Dict] = None
+_model_limits_cache_mtime: float = 0
+
+
+def load_model_limits() -> Dict:
+    """
+    Load model token limits from JSON config file.
+    Caches the result and reloads if file changed.
+    """
+    global _model_limits_cache, _model_limits_cache_mtime
+    
+    try:
+        if MODEL_LIMITS_PATH.exists():
+            current_mtime = MODEL_LIMITS_PATH.stat().st_mtime
+            
+            # Return cache if file hasn't changed
+            if _model_limits_cache is not None and current_mtime == _model_limits_cache_mtime:
+                return _model_limits_cache
+            
+            # Load and cache
+            with open(MODEL_LIMITS_PATH, 'r', encoding='utf-8') as f:
+                _model_limits_cache = json.load(f)
+                _model_limits_cache_mtime = current_mtime
+                logger.info(f"[RAG] Loaded model limits from {MODEL_LIMITS_PATH}")
+                return _model_limits_cache
+        else:
+            logger.warning(f"[RAG] Model limits file not found: {MODEL_LIMITS_PATH}")
+            return {"defaults": {"context_limit": 8192, "rag_context_percent": 70, "safety_buffer_tokens": 5000}, "models": {}}
+    except Exception as e:
+        logger.error(f"[RAG] Failed to load model limits: {e}")
+        return {"defaults": {"context_limit": 8192, "rag_context_percent": 70, "safety_buffer_tokens": 5000}, "models": {}}
+
+
+def get_model_limit(model_name: str) -> Dict[str, int]:
+    """
+    Get token limits for a specific model.
+    Searches for exact match first, then partial match.
+    
+    Args:
+        model_name: Name of the model (e.g., "gpt-4o", "claude-3-sonnet")
+    
+    Returns:
+        Dict with context_limit, rag_context_percent, safety_buffer_tokens
+    """
+    config = load_model_limits()
+    defaults = config.get("defaults", {})
+    models = config.get("models", {})
+    
+    model_name_lower = model_name.lower()
+    
+    # Try exact match first
+    if model_name_lower in models:
+        model_config = models[model_name_lower]
+        return {
+            "context_limit": model_config.get("context_limit", defaults.get("context_limit", 8192)),
+            "rag_context_percent": model_config.get("rag_context_percent", defaults.get("rag_context_percent", 70)),
+            "safety_buffer_tokens": defaults.get("safety_buffer_tokens", 5000)
+        }
+    
+    # Try partial match (e.g., "gpt-4o-2024-01-01" matches "gpt-4o")
+    for key in models:
+        if key in model_name_lower or model_name_lower in key:
+            model_config = models[key]
+            return {
+                "context_limit": model_config.get("context_limit", defaults.get("context_limit", 8192)),
+                "rag_context_percent": model_config.get("rag_context_percent", defaults.get("rag_context_percent", 70)),
+                "safety_buffer_tokens": defaults.get("safety_buffer_tokens", 5000)
+            }
+    
+    # Return defaults if no match
+    logger.warning(f"[RAG] No model limit found for '{model_name}', using defaults")
+    return {
+        "context_limit": defaults.get("context_limit", 8192),
+        "rag_context_percent": defaults.get("rag_context_percent", 70),
+        "safety_buffer_tokens": defaults.get("safety_buffer_tokens", 5000)
+    }
+
+
+def load_rag_prompts() -> Dict:
+    """
+    Load RAG prompts from JSON config file.
+    Caches the result and reloads if file changed.
+    """
+    global _prompts_cache, _prompts_cache_mtime
+    
+    try:
+        if RAG_PROMPTS_PATH.exists():
+            current_mtime = RAG_PROMPTS_PATH.stat().st_mtime
+            
+            # Return cache if file hasn't changed
+            if _prompts_cache is not None and current_mtime == _prompts_cache_mtime:
+                return _prompts_cache
+            
+            # Load and cache
+            with open(RAG_PROMPTS_PATH, 'r', encoding='utf-8') as f:
+                _prompts_cache = json.load(f)
+                _prompts_cache_mtime = current_mtime
+                logger.info(f"[RAG] Loaded prompts from {RAG_PROMPTS_PATH}")
+                return _prompts_cache
+        else:
+            logger.warning(f"[RAG] Prompts file not found: {RAG_PROMPTS_PATH}")
+            return {}
+    except Exception as e:
+        logger.error(f"[RAG] Failed to load prompts: {e}")
+        return {}
+
+
+def get_prompt(section: str, key: str = None, default: str = "") -> str:
+    """
+    Get a specific prompt from the config.
+    
+    Args:
+        section: Section name (e.g., 'task_instructions', 'search_strategies')
+        key: Key within section (e.g., 'summarize', 'hyde')
+        default: Default value if not found
+    
+    Returns:
+        The prompt string or default
+    """
+    prompts = load_rag_prompts()
+    
+    if section not in prompts:
+        return default
+    
+    if key is None:
+        # Return the whole section if it's a string/prompt
+        section_data = prompts[section]
+        if isinstance(section_data, dict) and 'prompt' in section_data:
+            return section_data['prompt']
+        return default
+    
+    section_data = prompts.get(section, {})
+    if isinstance(section_data, dict):
+        item = section_data.get(key, {})
+        if isinstance(item, dict):
+            return item.get('prompt', default)
+        return str(item) if item else default
+    
+    return default
+
+
+def get_context_header() -> str:
+    """Get the context header prompt."""
+    return get_prompt('context_header', default="""Используй следующие фрагменты документов для ответа на вопрос пользователя.
+Если информация из документов релевантна, обязательно укажи номер источника [1], [2] и т.д.
+Если в документах нет нужной информации, честно скажи об этом.
+
+---
+НАЙДЕННЫЕ ДОКУМЕНТЫ:""")
+
+
+def get_task_prompt(task: str) -> str:
+    """Get prompt for a specific task."""
+    return get_prompt('task_instructions', task, default="")
+
+
+def get_search_strategy_prompt(strategy: str) -> str:
+    """Get prompt for a specific search strategy."""
+    return get_prompt('search_strategies', strategy, default="")
+
+
+def get_default_setting(key: str, default: Any = None) -> Any:
+    """Get a default setting value."""
+    prompts = load_rag_prompts()
+    return prompts.get('defaults', {}).get(key, default)
 
 
 def sanitize_filename(filename: str) -> str:
@@ -105,6 +279,112 @@ class RAGStore:
             user = get_or_create_user(user_email)
             self._user_cache[user_email] = user["id"]
         return self._user_cache[user_email]
+    
+    # ==================== CHUNK CALCULATION ====================
+    
+    def calculate_target_chunks(
+        self,
+        total_chunks: int,
+        chunk_mode: str = "adaptive",
+        max_chunks: int = 50,
+        chunk_percent: float = 20.0,
+        min_chunks: int = 5,
+        max_chunks_limit: int = 500,
+        query_complexity: str = "medium"
+    ) -> int:
+        """
+        Calculate target number of chunks based on mode and document size.
+        
+        Args:
+            total_chunks: Total number of chunks in document(s)
+            chunk_mode: "fixed", "percent", or "adaptive"
+            max_chunks: Fixed number of chunks (for "fixed" mode)
+            chunk_percent: Percentage of document (for "percent" mode)
+            min_chunks: Minimum chunks to retrieve
+            max_chunks_limit: Hard limit to prevent token overflow
+            query_complexity: "simple", "medium", "complex" (for adaptive mode)
+        
+        Returns:
+            Target number of chunks to retrieve
+        """
+        if chunk_mode == "fixed":
+            # Fixed number of chunks (legacy behavior)
+            target = max_chunks
+            
+        elif chunk_mode == "percent":
+            # Percentage of document
+            target = int(total_chunks * (chunk_percent / 100.0))
+            
+        elif chunk_mode == "adaptive":
+            # AI-style adaptive logic based on query complexity
+            if query_complexity == "simple":
+                # Simple factual questions: 5-15% of doc
+                target = int(total_chunks * 0.10)
+            elif query_complexity == "complex":
+                # Complex analysis: 30-50% of doc
+                target = int(total_chunks * 0.40)
+            else:
+                # Medium complexity: 15-25% of doc
+                target = int(total_chunks * 0.20)
+        else:
+            # Default fallback
+            target = max_chunks
+        
+        # Apply constraints
+        target = max(target, min_chunks)
+        target = min(target, max_chunks_limit)
+        target = min(target, total_chunks)  # Can't exceed total
+        
+        logger.info(f"[RAG] Calculated target chunks: {target} "
+                   f"(mode={chunk_mode}, total={total_chunks}, "
+                   f"percent={chunk_percent}%, limits={min_chunks}-{max_chunks_limit})")
+        
+        return target
+    
+    def estimate_query_complexity(self, query: str) -> str:
+        """
+        Estimate query complexity for adaptive chunk selection.
+        
+        Returns: "simple", "medium", or "complex"
+        """
+        # Simple heuristics
+        query_lower = query.lower()
+        word_count = len(query.split())
+        
+        # Complex queries
+        complex_indicators = [
+            "сравни", "compare", "анализ", "analysis", "analyze",
+            "все", "all", "полностью", "целиком", "весь документ",
+            "подробно", "детально", "in detail", "throughout",
+            "связь между", "relationship", "противоречия", "contradictions",
+            "суммаризируй весь", "summarize entire", "overview"
+        ]
+        
+        # Simple queries
+        simple_indicators = [
+            "что такое", "what is", "определение", "definition",
+            "когда", "when", "где", "where", "кто", "who",
+            "сколько", "how many", "how much", "какой", "which"
+        ]
+        
+        # Check for complex
+        for indicator in complex_indicators:
+            if indicator in query_lower:
+                return "complex"
+        
+        # Check for simple
+        for indicator in simple_indicators:
+            if indicator in query_lower:
+                if word_count < 10:  # Short factual questions
+                    return "simple"
+        
+        # Default based on length
+        if word_count > 20:
+            return "complex"
+        elif word_count < 6:
+            return "simple"
+        
+        return "medium"
     
     # ==================== FILE PARSING ====================
     
@@ -832,13 +1112,18 @@ No explanation, just the array."""
         """
         try:
             # Step 1: Generate hypothetical document/answer
-            hyde_prompt = f"""Given this question, write a detailed passage that would answer it.
+            # Load prompt from config
+            hyde_prompt_template = get_search_strategy_prompt('hyde')
+            if not hyde_prompt_template:
+                hyde_prompt_template = """Given this question, write a detailed passage that would answer it.
 Write as if you are quoting directly from a document that contains this information.
 Be specific and detailed. Write 2-3 paragraphs.
 
 Question: {query}
 
 Hypothetical document passage:"""
+            
+            hyde_prompt = hyde_prompt_template.replace('{query}', query)
 
             response = self.embedding_client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -993,12 +1278,17 @@ Hypothetical document passage:"""
         then use both for retrieval. Helps with specific questions.
         """
         try:
-            prompt = f"""Given a specific question, generate a more general "step-back" question 
+            # Load prompt from config
+            prompt_template = get_search_strategy_prompt('step_back')
+            if not prompt_template:
+                prompt_template = """Given a specific question, generate a more general "step-back" question 
 that would help understand the broader context needed to answer the original question.
 
 Specific question: {query}
 
 Step-back question (more general):"""
+            
+            prompt = prompt_template.replace('{query}', query)
 
             response = self.embedding_client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -1431,14 +1721,8 @@ Next search query (or DONE):"""
         # Log chunks to collector
         collector.log_chunks(candidates[:len(sources)])  # Only log chunks that were used
         
-        # Build final context
-        header = """Используй следующие фрагменты документов для ответа на вопрос пользователя.
-Если информация из документов релевантна, обязательно укажи номер источника [1], [2] и т.д.
-Если в документах нет нужной информации, честно скажи об этом.
-
----
-НАЙДЕННЫЕ ДОКУМЕНТЫ:
-"""
+        # Build final context with header from config
+        header = get_context_header() + "\n"
         context = header + "\n\n".join(context_parts)
         
         # Log context building to collector
@@ -1545,14 +1829,8 @@ Next search query (or DONE):"""
             })
             total_chars += chunk_chars
         
-        # Build final context with instruction
-        header = """Используй следующие фрагменты документов для ответа на вопрос пользователя.
-Если информация из документов релевантна, обязательно укажи номер источника [1], [2] и т.д.
-Если в документах нет нужной информации, честно скажи об этом.
-
----
-ДОКУМЕНТЫ:
-"""
+        # Build final context with header from config
+        header = get_context_header() + "\n"
         context = header + "\n\n".join(context_parts)
         
         return context, sources
@@ -1860,72 +2138,18 @@ Next search query (or DONE):"""
             # Build document structure description
             structure_desc = self._describe_document_structure(document_structure)
             
-            analysis_prompt = f"""Analyze this user query about a document and determine the best retrieval strategy.
-
-USER QUERY: "{query}"
-
-DOCUMENT STRUCTURE:
-{structure_desc}
-
-CRITICAL RULES:
-1. The user HAS documents loaded and wants to search them
-2. NEVER say "no documents" or "cannot find" - always provide a search strategy
-3. If the query mentions ANY specific data (years, numbers, dates, statistics, countries, names), use scope="search" with a refined search_query
-4. Questions about "what's in the document", "about what", "summary" = scope="full_document"
-5. Questions with specific numbers/dates/statistics = scope="search" (NOT full_document)
-
-Analyze the query and return a JSON object with these fields:
-
-1. "scope": One of:
-   - "single_section": User wants a specific chapter/article/section/статья/пункт (must have explicit number)
-   - "multiple_sections": User wants several specific sections (e.g., "статьи 1-5", "articles 1 and 40")
-   - "full_document": User wants overview/summary/themes of the ENTIRE document (NO specific data questions)
-   - "comparison": User wants to compare different parts of the document
-   - "search": User is looking for SPECIFIC information (dates, numbers, facts, statistics, names, events)
-   
-   USE "search" FOR:
-   - Any question with years (2018, 2020, etc.)
-   - Any question with numbers/statistics ("сколько", "how many", "количество")
-   - Any question about specific facts/data
-   - Questions with "кто", "что", "где", "когда", "сколько", "какие страны", "какие компании"
-
-2. "sections": Array of section identifiers the user wants. Examples:
-   - ["40"] for chapter/article 40
-   - ["1", "2", "3"] for sections 1-3
-   - [] for full document or search scope
-
-3. "task": One of:
-   - "summarize": Retell, summarize, explain content (for full_document or sections)
-   - "analyze": Deep analysis, themes, meaning
-   - "find_data": Find specific data, statistics, numbers, facts (DEFAULT for questions with numbers/dates)
-   - "find_loopholes": Find legal loopholes, exceptions
-   - "find_contradictions": Find contradictions
-   - "find_penalties": Find penalties, sanctions
-   - "find_requirements": Find requirements, obligations
-   - "find_rights": Find rights, permissions
-   - "find_exceptions": Find exceptions, special cases
-   - "find_deadlines": Find deadlines, terms
-   - "compare": Compare sections
-   - "explain": Explain specific concept
-   - "search": General information search
-
-4. "search_query": ALWAYS provide for scope="search". Create an optimized search query with:
-   - Key terms from the original query
-   - Synonyms and related terms
-   - Numbers/years from the query
-   Example: "экспорт 2018 страны участники ВЭД товары"
-
-5. "reasoning": Brief explanation (1-2 sentences)
-
-EXAMPLES:
-- "о чем документ" -> {{"scope": "full_document", "sections": [], "task": "summarize", "search_query": ""}}
-- "в сколько стран экспортировали товары в 2018 году" -> {{"scope": "search", "sections": [], "task": "find_data", "search_query": "экспорт 2018 страны количество товары ВЭД"}}
-- "какая статистика за 2020 год" -> {{"scope": "search", "sections": [], "task": "find_data", "search_query": "статистика 2020 год данные показатели"}}
-- "расскажи о 40 главе" -> {{"scope": "single_section", "sections": ["40"], "task": "summarize"}}
-- "сколько компаний упоминается" -> {{"scope": "search", "sections": [], "task": "find_data", "search_query": "компании организации количество список"}}
-- "какие страны участвовали" -> {{"scope": "search", "sections": [], "task": "find_data", "search_query": "страны участники государства"}}
-
-Respond with ONLY valid JSON, no markdown formatting."""
+            # Load intent analysis prompt from config
+            prompts_config = load_rag_prompts()
+            intent_config = prompts_config.get('intent_analysis', {})
+            prompt_template = intent_config.get('prompt', '')
+            
+            if not prompt_template:
+                # Fallback to hardcoded if config is empty
+                logger.warning("[RAG] Intent analysis prompt not found in config, using fallback")
+                return self._fallback_intent_analysis(query, document_structure)
+            
+            # Format the prompt with query and structure
+            analysis_prompt = prompt_template.replace('{query}', query).replace('{structure_desc}', structure_desc)
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -2091,7 +2315,18 @@ Respond with ONLY valid JSON, no markdown formatting."""
         user_email: str,
         document_id: Optional[str] = None,
         max_tokens: int = 50000,
-        debug_collector: Optional[Any] = None
+        debug_collector: Optional[Any] = None,
+        # === NEW: RAG CONFIG PARAMETERS ===
+        chunk_mode: str = "adaptive",
+        max_chunks: int = 50,
+        chunk_percent: float = 20.0,
+        min_chunks: int = 5,
+        max_chunks_limit: int = 500,
+        min_similarity: float = 0.4,
+        use_rerank: bool = True,
+        keyword_weight: float = 0.3,
+        semantic_weight: float = 0.7,
+        adaptive_chunks: bool = True  # From orchestrator
     ) -> Tuple[str, List[Dict], Dict]:
         """
         🚀 SMART RAG - Universal intelligent document retrieval
@@ -2102,6 +2337,11 @@ Respond with ONLY valid JSON, no markdown formatting."""
         - Full document
         - Semantic search
         - Comparisons
+        
+        NEW: Supports configurable chunk retrieval:
+        - chunk_mode: "fixed" (exact count), "percent" (% of doc), "adaptive" (AI decides)
+        - chunk_percent: Percentage of document to retrieve
+        - adaptive_chunks: AI decides optimal chunk count based on query
         
         Args:
             query: User's natural language query
@@ -2169,6 +2409,18 @@ Respond with ONLY valid JSON, no markdown formatting."""
         
         context = ""
         sources = []
+        
+        # Initialize chunk calculation variables (used in semantic search and debug_info)
+        query_complexity = self.estimate_query_complexity(query) if adaptive_chunks else "medium"
+        target_chunks = self.calculate_target_chunks(
+            total_chunks=len(all_chunks),
+            chunk_mode=chunk_mode,
+            max_chunks=max_chunks,
+            chunk_percent=chunk_percent,
+            min_chunks=min_chunks,
+            max_chunks_limit=max_chunks_limit,
+            query_complexity=query_complexity
+        )
         
         # Execute based on scope
         if scope == "full_document":
@@ -2274,22 +2526,30 @@ Respond with ONLY valid JSON, no markdown formatting."""
             task = intent.get("task", "search")
             logger.info(f"[SMART-RAG] Semantic search: query='{search_query[:80]}...', task='{task}'")
             
+            # Target chunks already calculated above
+            logger.info(f"[SMART-RAG] Target chunks: {target_chunks} "
+                       f"(mode={chunk_mode}, complexity={query_complexity}, total={len(all_chunks)})")
+            
             # Log retrieval start to debug collector
             if debug_collector:
                 debug_collector.log_retrieval(
                     strategy="semantic_search",
-                    techniques=["embedding_similarity", "hybrid_search"],
+                    techniques=["embedding_similarity", "hybrid_search", f"chunk_mode:{chunk_mode}"],
                     queries=[search_query],
                     latency_ms=0  # Will be updated
                 )
             
             # Use advanced search if available
             if hasattr(self, 'ultimate_rag_search'):
-                logger.info(f"[SMART-RAG] Using ultimate_rag_search for query")
+                logger.info(f"[SMART-RAG] Using ultimate_rag_search for query (target_chunks={target_chunks})")
                 result = self.ultimate_rag_search(
                     query=search_query,
                     user_email=user_email,
-                    max_tokens=max_tokens
+                    max_tokens=max_tokens,
+                    max_chunks=target_chunks,  # Pass calculated target
+                    min_similarity=min_similarity,
+                    keyword_weight=keyword_weight,
+                    semantic_weight=semantic_weight
                 )
                 context = result.get("context", "")
                 sources = result.get("sources", [])
@@ -2302,14 +2562,20 @@ Respond with ONLY valid JSON, no markdown formatting."""
                         user_email=user_email,
                         document_ids=[document_id],
                         max_tokens=max_tokens,
-                        min_similarity=0.3  # Lower threshold
+                        threshold=min(min_similarity, 0.3),  # Lower threshold
+                        keyword_weight=keyword_weight,
+                        semantic_weight=semantic_weight
                     )
             else:
+                # Use build_rag_context with configurable params
                 context, sources = self.build_rag_context(
                     query=search_query,
                     user_email=user_email,
                     document_ids=[document_id],
-                    max_tokens=max_tokens
+                    max_tokens=max_tokens,
+                    threshold=min_similarity,
+                    keyword_weight=keyword_weight,
+                    semantic_weight=semantic_weight
                 )
             
             # If still no results, try broader search with just keywords
@@ -2384,7 +2650,19 @@ Respond with ONLY valid JSON, no markdown formatting."""
             "compressed_chars": len(context),
             "compression_ratio": f"{len(context)/original_len*100:.1f}%" if original_len > 0 else "100%",
             "estimated_tokens": len(context) // 4,
-            "sources_count": len(sources)
+            "sources_count": len(sources),
+            # NEW: Chunk mode info
+            "chunk_config": {
+                "mode": chunk_mode,
+                "max_chunks": max_chunks,
+                "chunk_percent": chunk_percent,
+                "min_chunks": min_chunks,
+                "max_chunks_limit": max_chunks_limit,
+                "total_document_chunks": len(all_chunks),
+                "target_chunks_calculated": target_chunks if scope == "search" else None,
+                "adaptive_chunks": adaptive_chunks,
+                "query_complexity": query_complexity if scope == "search" else None
+            }
         }
         
         return context, sources, debug_info
@@ -2859,14 +3137,8 @@ Chapter number:"""
             })
             total_chars += chunk_chars
         
-        # Build final context with instruction
-        header = """Используй следующие фрагменты документов для ответа на вопрос пользователя.
-Ссылайся на источники используя номера [1], [2] и т.д.
-Если в документах нет нужной информации, честно скажи об этом.
-
----
-ДОКУМЕНТЫ:
-"""
+        # Build final context with header from config
+        header = get_context_header() + "\n"
         context = header + "\n\n".join(context_parts)
         
         return context, sources
@@ -3081,28 +3353,17 @@ Content range: ~{batch_start_char:,} to ~{batch_end_char:,} characters
         Returns:
             Сжатый контекст
         """
-        # Определяем лимиты для разных моделей (ОБЩИЙ лимит context)
-        model_limits = {
-            "gpt-4": 8192,
-            "gpt-4-turbo": 128000,
-            "gpt-4o": 128000,
-            "gpt-4o-mini": 128000,
-            "claude-3": 200000,
-            "claude-3-opus": 200000,
-            "gemini-1.5-pro": 1000000,
-            "deepseek": 64000,
-        }
+        # === LOAD LIMITS FROM CONFIG FILE ===
+        model_config = get_model_limit(model_name)
+        total_context_limit = model_config["context_limit"]
+        rag_percent = model_config["rag_context_percent"]
+        safety_buffer = model_config["safety_buffer_tokens"]
         
-        # Найдем лимит для модели
-        total_context_limit = model_limits.get(model_name, 8192)
-        for key in model_limits:
-            if key in model_name.lower():
-                total_context_limit = model_limits[key]
-                break
+        logger.info(f"[RAG] Model '{model_name}': limit={total_context_limit}, rag_percent={rag_percent}%, buffer={safety_buffer}")
         
         # Оставляем запас для completion + system prompt + history
-        # Берем 70% от лимита для RAG контекста, остальное для completion и прочего
-        available_tokens = int(total_context_limit * 0.7) - 5000  # -5000 для запаса
+        # Используем процент из конфига для RAG контекста
+        available_tokens = int(total_context_limit * (rag_percent / 100)) - safety_buffer
         
         current_tokens = len(context) // 4  # грубая оценка (1 token ≈ 4 chars)
         
