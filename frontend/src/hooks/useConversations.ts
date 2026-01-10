@@ -168,7 +168,7 @@ export const useConversations = () => {
     try {
       const MAX_MESSAGES = 5;
       const MAX_CONTENT = 200;
-      
+
       const lightConversations: Record<string, any> = {};
       Object.entries(conversations).forEach(([id, convo]) => {
         if (convo.messages && convo.messages.length > 0) {

@@ -95,18 +95,18 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
       const conversationsToSave: ConversationsState = {};
       const MAX_MESSAGES_TO_CACHE = 5; // Only cache last 5 messages per conversation
       const MAX_CONTENT_LENGTH = 200; // Truncate content to 200 chars
-      
+
       Object.entries(conversations).forEach(([id, convo]) => {
         if (convo.messages.length > 0) {
           // Save only last N messages with minimal data
           const recentMessages = convo.messages.slice(-MAX_MESSAGES_TO_CACHE);
-          
+
           const lightMessages = recentMessages.map(msg => ({
             id: msg.id,
             role: msg.role,
             // Keep only first 200 chars for preview
-            content: msg.content.length > MAX_CONTENT_LENGTH 
-              ? msg.content.slice(0, MAX_CONTENT_LENGTH) + '...' 
+            content: msg.content.length > MAX_CONTENT_LENGTH
+              ? msg.content.slice(0, MAX_CONTENT_LENGTH) + '...'
               : msg.content,
             timestamp: msg.timestamp
             // NO meta at all - it's loaded fresh from Supabase
