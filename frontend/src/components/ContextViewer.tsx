@@ -245,6 +245,7 @@ interface JsonSectionProps {
   defaultExpanded?: boolean;
   badge?: string;
   badgeColor?: string;
+  defaultViewMode?: 'tree' | 'raw';
 }
 
 const JsonSection: React.FC<JsonSectionProps> = ({
@@ -253,11 +254,12 @@ const JsonSection: React.FC<JsonSectionProps> = ({
   icon,
   defaultExpanded = true,
   badge,
-  badgeColor = 'gray'
+  badgeColor = 'gray',
+  defaultViewMode = 'tree'
 }) => {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
-  const [viewMode, setViewMode] = useState<'tree' | 'raw'>('tree');
+  const [viewMode, setViewMode] = useState<'tree' | 'raw'>(defaultViewMode);
 
   const jsonString = useMemo(() => {
     try {
@@ -561,78 +563,6 @@ const SystemPromptViewer: React.FC<SystemPromptViewerProps> = ({ content }) => {
   );
 };
 
-// ==================== SYSTEM PROMPT SECTION (Collapsible) ====================
-
-interface SystemPromptSectionProps {
-  systemContent: string;
-  defaultExpanded?: boolean;
-}
-
-const SystemPromptSection: React.FC<SystemPromptSectionProps> = ({
-  systemContent,
-  defaultExpanded = true
-}) => {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
-  const [copied, setCopied] = useState(false);
-
-  // Check if has RAG
-  const hasRag = systemContent.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---') ||
-    systemContent.includes('📚 ДОКУМЕНТ:');
-
-  const totalTokens = Math.round(systemContent.length / 4);
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(systemContent);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [systemContent]);
-
-  return (
-    <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-900 mb-3">
-      {/* Header */}
-      <div
-        className="flex items-center justify-between px-3 py-2.5 bg-gray-800 border-b border-gray-700 cursor-pointer hover:bg-gray-800/80 transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-gray-500">
-            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          </span>
-          <MessageSquare size={14} className="text-cyan-400" />
-          <span className="text-sm font-medium text-gray-200">System Prompt</span>
-
-          {hasRag && (
-            <span className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/20 text-green-400 border border-green-500/30 animate-pulse">
-              + RAG CONTEXT
-            </span>
-          )}
-
-          <span className="px-1.5 py-0.5 text-[10px] rounded bg-gray-700/50 text-gray-500 border border-gray-600/50">
-            ~{totalTokens.toLocaleString()} tokens
-          </span>
-        </div>
-
-        <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-          <button
-            onClick={handleCopy}
-            className="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors"
-            title="Copy full system prompt"
-          >
-            {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-          </button>
-        </div>
-      </div>
-
-      {/* Content */}
-      {isExpanded && (
-        <div className="p-3 overflow-auto max-h-[60vh]">
-          <SystemPromptViewer content={systemContent} />
-        </div>
-      )}
-    </div>
-  );
-};
-
 // ==================== MAIN CONTEXT VIEWER COMPONENT ====================
 
 // Helper function to extract RAG context from system message
@@ -763,7 +693,7 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
       const chapterMarker = '📖 ГЛАВА';
       const taskIdx = content.indexOf(taskMarker);
       const chapterIdx = content.indexOf(chapterMarker);
-      
+
       if (taskIdx !== -1 || chapterIdx !== -1) {
         // Find the earliest RAG marker
         const ragStartIdx = taskIdx !== -1 ? taskIdx : chapterIdx;
@@ -796,7 +726,7 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
         /\n\n(Раздел|Статья|Пункт)\s+\d+/i,
         /\n\n[А-Я][а-я]+\s+\d+\.\s/
       ];
-      
+
       for (const pattern of docPatterns) {
         const match = content.match(pattern);
         if (match && match.index !== undefined && match.index > 50) {
@@ -909,6 +839,15 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
     }
   }), [apiRequest, ragDebugInfo, tokenStats, generationConfig]);
 
+  // State for quick copy buttons
+  const [copiedApiRequest, setCopiedApiRequest] = useState(false);
+
+  const handleCopyApiRequest = useCallback(() => {
+    navigator.clipboard.writeText(JSON.stringify(apiRequest, null, 2));
+    setCopiedApiRequest(true);
+    setTimeout(() => setCopiedApiRequest(false), 2000);
+  }, [apiRequest]);
+
   const handleCopyAll = useCallback(() => {
     navigator.clipboard.writeText(JSON.stringify(fullDebugPayload, null, 2));
     setCopied(true);
@@ -983,16 +922,27 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1 border-l border-gray-700 pl-3">
+                    {/* Quick copy API Request button - самое важное! */}
+                    <button
+                      onClick={handleCopyApiRequest}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-xs font-medium transition-colors"
+                      title="Скопировать API Request JSON"
+                    >
+                      {copiedApiRequest ? <Check size={14} /> : <Copy size={14} />}
+                      {copiedApiRequest ? 'Скопировано!' : 'Copy API JSON'}
+                    </button>
                     <button
                       onClick={handleCopyAll}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs transition-colors"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded text-xs transition-colors"
+                      title="Copy all (with debug info)"
                     >
                       {copied ? <Check size={12} /> : <Copy size={12} />}
-                      {copied ? 'Скопировано!' : 'Copy All'}
+                      All
                     </button>
                     <button
                       onClick={handleDownloadAll}
                       className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded text-xs transition-colors"
+                      title="Download JSON"
                     >
                       <Download size={12} />
                     </button>
@@ -1009,14 +959,15 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
               {/* Content - Scrollable */}
               <div className="flex-1 overflow-y-auto p-4">
 
-                {/* SECTION 1: API Request - главное! */}
+                {/* SECTION 1: API Request - главное! По умолчанию Raw для быстрого просмотра */}
                 <JsonSection
                   data={apiRequest}
-                  title="API Request"
+                  title="API Request (полный JSON)"
                   icon={<Zap size={14} className="text-yellow-400" />}
                   defaultExpanded={true}
                   badge="ОТПРАВЛЯЕТСЯ В МОДЕЛЬ"
                   badgeColor="yellow"
+                  defaultViewMode="raw"
                 />
 
                 {/* SECTION 2: RAG Debug (if available) */}
