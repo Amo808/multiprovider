@@ -119,12 +119,15 @@ else:
 # ----------------------------------------------------------------------------
 
 # Configure logging
+log_dir = Path(__file__).parent / 'logs'
+log_dir.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(Path(__file__).parent / 'logs' / 'app.log')
+        logging.FileHandler(log_dir / 'app.log')
     ]
 )
 logger = logging.getLogger(__name__)
