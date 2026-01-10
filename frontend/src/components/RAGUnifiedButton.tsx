@@ -162,7 +162,7 @@ export const RAGUnifiedButton: React.FC<RAGUnifiedButtonProps> = ({
 
                     <div
                         ref={popupRef}
-                        className="fixed md:absolute bottom-0 md:bottom-full left-0 right-0 md:left-auto md:right-auto md:mb-2 
+                        className="fixed inset-x-0 bottom-0 md:inset-auto md:left-1/2 md:bottom-24 md:-translate-x-1/2
               w-full md:w-96 max-h-[80vh] md:max-h-[70vh] bg-card border border-border 
               rounded-t-2xl md:rounded-xl shadow-2xl z-50 flex flex-col
               animate-in slide-in-from-bottom-4 md:slide-in-from-bottom-2 duration-200"
