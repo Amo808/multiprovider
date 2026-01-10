@@ -390,7 +390,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
         </div>
       )}
 
-      <div ref={containerRef} className="py-6 max-w-3xl mx-auto px-4" onDragOver={handleDrag}>
+      <div ref={containerRef} className="py-6 max-w-3xl mx-auto px-4 overflow-hidden" onDragOver={handleDrag}>
         {/* Loading indicator while rendering more messages */}
         {hasMoreToRender && (
           <div className="flex items-center justify-center py-2 mb-4">

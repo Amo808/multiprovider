@@ -923,7 +923,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       )}
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto min-h-0 ios-scroll">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 ios-scroll">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-lg mx-auto px-6">
