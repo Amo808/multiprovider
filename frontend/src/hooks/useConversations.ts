@@ -162,11 +162,36 @@ export const useConversations = () => {
   }, []);
 
   // Save conversations to localStorage whenever they change
+  // LIGHTWEIGHT version to prevent quota exceeded (Safari ~5MB limit)
   useEffect(() => {
     try {
-      localStorage.setItem('conversations', JSON.stringify(conversations));
+      const lightConversations: Record<string, any> = {};
+      Object.entries(conversations).forEach(([id, convo]) => {
+        if (convo.messages && convo.messages.length > 0) {
+          // Save only essential data, truncate content
+          const lightMessages = convo.messages.map((msg: any) => ({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content?.length > 500 ? msg.content.slice(0, 500) + '...[truncated]' : msg.content,
+            timestamp: msg.timestamp,
+            meta: msg.meta ? { tokens_in: msg.meta.tokens_in, tokens_out: msg.meta.tokens_out } : undefined
+          }));
+          lightConversations[id] = {
+            messages: lightMessages,
+            isStreaming: false,
+            error: null,
+            currentResponse: ''
+          };
+        }
+      });
+      localStorage.setItem('conversations', JSON.stringify(lightConversations));
     } catch (error) {
-      console.warn('Failed to save conversations to localStorage:', error);
+      console.warn('localStorage quota exceeded, clearing cache:', error);
+      try {
+        localStorage.removeItem('conversations');
+      } catch {
+        // ignore
+      }
     }
   }, [conversations]);
 

@@ -87,25 +87,64 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
   // Track conversations currently being loaded to prevent duplicate requests
   const loadingConversationsRef = useRef<Set<string>>(new Set());
 
-  // Save to localStorage
+  // Save to localStorage - LIGHTWEIGHT version to prevent quota exceeded
+  // Full messages are stored in Supabase, localStorage is just a cache for UI state
   useEffect(() => {
-    const conversationsToSave: ConversationsState = {};
-    Object.entries(conversations).forEach(([id, convo]) => {
-      if (convo.messages.length > 0) {
-        conversationsToSave[id] = {
-          ...convo,
-          isStreaming: false,
-          currentResponse: '',
-          error: null,
-          deepResearchStage: undefined,
-          connectionLost: false,
-          lastHeartbeat: undefined,
-          thinkingContent: undefined,
-          isThinking: false
-        };
+    try {
+      const conversationsToSave: ConversationsState = {};
+      Object.entries(conversations).forEach(([id, convo]) => {
+        if (convo.messages.length > 0) {
+          // Save lightweight version - only essential data
+          // Truncate message content to prevent localStorage overflow (Safari has ~5MB limit)
+          const lightMessages = convo.messages.map(msg => ({
+            id: msg.id,
+            role: msg.role,
+            // Keep first 500 chars of content for preview, full content loaded from Supabase
+            content: msg.content.length > 500 ? msg.content.slice(0, 500) + '...[truncated]' : msg.content,
+            timestamp: msg.timestamp,
+            // Skip heavy meta fields (rag_context, system_prompt_full, etc.)
+            meta: msg.meta ? {
+              tokens_in: msg.meta.tokens_in,
+              tokens_out: msg.meta.tokens_out
+              // Explicitly NOT saving: rag_context_full, system_prompt_full, reasoning_content
+            } : undefined
+          }));
+
+          conversationsToSave[id] = {
+            messages: lightMessages as typeof convo.messages,
+            loaded: convo.loaded,
+            totalCount: convo.totalCount,
+            hasMore: convo.hasMore,
+            // Reset transient state
+            isStreaming: false,
+            currentResponse: '',
+            error: null,
+            deepResearchStage: undefined,
+            connectionLost: false,
+            lastHeartbeat: undefined,
+            thinkingContent: undefined,
+            isThinking: false
+          };
+        }
+      });
+      localStorage.setItem('conversations', JSON.stringify(conversationsToSave));
+    } catch (e) {
+      // localStorage quota exceeded - Safari has very limited space (~5MB)
+      // Clear old data and try again with minimal info
+      console.warn('[ConversationsContext] localStorage quota exceeded, clearing cache:', e);
+      try {
+        localStorage.removeItem('conversations');
+        // Save only conversation IDs and loaded status - no messages
+        const minimalSave: Record<string, { loaded: boolean }> = {};
+        Object.keys(conversations).forEach(id => {
+          minimalSave[id] = { loaded: true };
+        });
+        localStorage.setItem('conversations', JSON.stringify(minimalSave));
+      } catch {
+        // Complete failure - just clear everything
+        localStorage.removeItem('conversations');
       }
-    });
-    localStorage.setItem('conversations', JSON.stringify(conversationsToSave));
+    }
   }, [conversations]);
 
   const loadConversationHistory = useCallback(async (conversationId: string, loadAll: boolean = false) => {
