@@ -289,55 +289,82 @@ class RAGStore:
         max_chunks: int = 50,
         chunk_percent: float = 20.0,
         min_chunks: int = 5,
-        max_chunks_limit: int = 500,
+        max_chunks_limit: int = 10000,  # Internal safety limit
+        max_percent_limit: float = 30.0,  # Main user-facing limit (% of document)
         query_complexity: str = "medium"
     ) -> int:
         """
         Calculate target number of chunks based on mode and document size.
         
+        IMPORTANT: 
+        - In "percent" mode: chunk_percent is the PRIMARY setting (user's explicit choice)
+        - In "adaptive" mode: max_percent_limit caps the adaptive calculation
+        - max_chunks_limit is always the absolute safety limit
+        
         Args:
             total_chunks: Total number of chunks in document(s)
             chunk_mode: "fixed", "percent", or "adaptive"
-            max_chunks: Fixed number of chunks (for "fixed" mode)
-            chunk_percent: Percentage of document (for "percent" mode)
+            max_chunks: For "fixed" mode - exact number of chunks
+            chunk_percent: For "percent" mode - user's chosen percentage
             min_chunks: Minimum chunks to retrieve
-            max_chunks_limit: Hard limit to prevent token overflow
+            max_chunks_limit: Internal safety limit (absolute number)
+            max_percent_limit: For "adaptive" mode - caps adaptive calculation
             query_complexity: "simple", "medium", "complex" (for adaptive mode)
         
         Returns:
             Target number of chunks to retrieve
         """
+        logger.info(f"[RAG] calculate_target_chunks called: mode={chunk_mode}, "
+                   f"chunk_percent={chunk_percent}%, max_percent_limit={max_percent_limit}%, "
+                   f"total_chunks={total_chunks}")
+        
         if chunk_mode == "fixed":
-            # Fixed number of chunks (legacy behavior)
+            # Fixed mode: use exact number of chunks
             target = max_chunks
+            logger.info(f"[RAG] Fixed mode: target={max_chunks} chunks")
             
         elif chunk_mode == "percent":
-            # Percentage of document
+            # PERCENT MODE: User explicitly chose this percentage - USE IT DIRECTLY
+            # chunk_percent is the user's explicit choice, respect it!
             target = int(total_chunks * (chunk_percent / 100.0))
+            logger.info(f"[RAG] Percent mode: {chunk_percent}% of {total_chunks} = {target} chunks")
             
         elif chunk_mode == "adaptive":
-            # AI-style adaptive logic based on query complexity
+            # Adaptive mode: AI decides based on query complexity
+            # max_percent_limit caps the adaptive calculation
             if query_complexity == "simple":
                 # Simple factual questions: 5-15% of doc
-                target = int(total_chunks * 0.10)
+                adaptive_percent = 10.0
             elif query_complexity == "complex":
                 # Complex analysis: 30-50% of doc
-                target = int(total_chunks * 0.40)
+                adaptive_percent = 40.0
             else:
                 # Medium complexity: 15-25% of doc
-                target = int(total_chunks * 0.20)
+                adaptive_percent = 20.0
+            
+            # Use the lower of adaptive_percent and max_percent_limit
+            effective_percent = min(adaptive_percent, max_percent_limit)
+            target = int(total_chunks * (effective_percent / 100.0))
+            logger.info(f"[RAG] Adaptive mode: complexity={query_complexity}, "
+                       f"adaptive_percent={adaptive_percent}%, max_percent_limit={max_percent_limit}%, "
+                       f"effective_percent={effective_percent}%, target={target}")
         else:
-            # Default fallback
-            target = max_chunks
+            # Default fallback - use max_percent_limit
+            target = int(total_chunks * (max_percent_limit / 100.0))
+            logger.info(f"[RAG] Unknown mode '{chunk_mode}', using max_percent_limit={max_percent_limit}%")
         
         # Apply constraints
+        # 1. Ensure minimum chunks
         target = max(target, min_chunks)
-        target = min(target, max_chunks_limit)
-        target = min(target, total_chunks)  # Can't exceed total
         
-        logger.info(f"[RAG] Calculated target chunks: {target} "
-                   f"(mode={chunk_mode}, total={total_chunks}, "
-                   f"percent={chunk_percent}%, limits={min_chunks}-{max_chunks_limit})")
+        # 2. Cap at absolute safety limit
+        target = min(target, max_chunks_limit)
+        
+        # 3. Can't exceed total
+        target = min(target, total_chunks)
+        
+        logger.info(f"[RAG] Final target chunks: {target} "
+                   f"(after applying min={min_chunks}, max_limit={max_chunks_limit}, total={total_chunks})")
         
         return target
     
@@ -1586,7 +1613,7 @@ Next search query (or DONE):"""
                         # DeepSeek/Gemini can handle 100K+ tokens
                         full_doc_max_tokens = 100000  # ~400K chars
                         
-                        context, sources, _ = self.build_full_document_context(
+                        context, sources, full_doc_info = self.build_full_document_context(
                             user_email=user_email,
                             document_ids=[document_id],
                             max_tokens=full_doc_max_tokens
@@ -1600,6 +1627,10 @@ Next search query (or DONE):"""
                         debug_info["scope"] = "full_document"
                         debug_info["total_chars"] = len(context)
                         debug_info["estimated_tokens"] = len(context) // 4
+                        # Include full document info
+                        debug_info["full_document_info"] = full_doc_info
+                        debug_info["total_chunks_loaded"] = full_doc_info.get("total_chunks", 0)
+                        logger.info(f"[ULTIMATE-RAG] Full doc loaded: {full_doc_info}")
                         
                         return {
                             "context": context,
@@ -2322,6 +2353,7 @@ Next search query (or DONE):"""
         chunk_percent: float = 20.0,
         min_chunks: int = 5,
         max_chunks_limit: int = 500,
+        max_percent_limit: float = 50.0,  # NEW: percentage-based hard limit
         min_similarity: float = 0.4,
         use_rerank: bool = True,
         keyword_weight: float = 0.3,
@@ -2419,56 +2451,72 @@ Next search query (or DONE):"""
             chunk_percent=chunk_percent,
             min_chunks=min_chunks,
             max_chunks_limit=max_chunks_limit,
+            max_percent_limit=max_percent_limit,  # NEW!
             query_complexity=query_complexity
         )
         
-        # Execute based on scope
+        # Calculate effective limit for logging
+        percent_limit = int(len(all_chunks) * (max_percent_limit / 100.0))
+        effective_limit = min(max_chunks_limit, percent_limit)
+        
+        # === DETAILED LOGGING FOR CHUNK SETTINGS ===
+        logger.info(f"[SMART-RAG] ===== CHUNK SETTINGS =====")
+        logger.info(f"[SMART-RAG] Intent scope: {scope}, task: {task}")
+        logger.info(f"[SMART-RAG] chunk_mode={chunk_mode}, max_chunks={max_chunks}, chunk_percent={chunk_percent}%")
+        logger.info(f"[SMART-RAG] Total document chunks: {len(all_chunks)}, target_chunks calculated: {target_chunks}")
+        logger.info(f"[SMART-RAG] Hard limits: abs={max_chunks_limit}, %={max_percent_limit}% ({percent_limit} chunks), effective={effective_limit}")
+        logger.info(f"[SMART-RAG] min_chunks={min_chunks}")
+        
+        # === RESPECT USER CHUNK SETTINGS FOR FULL DOCUMENT ===
+        # If user explicitly limited chunks but intent is full_document, switch to semantic search
         if scope == "full_document":
-            logger.info(f"[SMART-RAG] Loading full document for task: {task}")
-            # --- NEW: check if document is too large for full context ---
-            if hasattr(self, 'get_document_stats') and hasattr(self, 'build_iterative_summary_context') and hasattr(self, 'build_synthesis_context'):
-                stats = self.get_document_stats(user_email, [document_id])
-                logger.info(f"[SMART-RAG] Document stats: {stats}")
-                if stats.get("recommended_approach") == "iterative":
-                    logger.info(f"[SMART-RAG] Switching to iterative mode for large document (auto full pipeline)")
-                    # Автоматически пройти по всем батчам, собрать summary, синтезировать итог
-                    batch_size_chars = 20000
-                    total_chars = stats.get("total_chars") or stats.get("total_length") or 0
-                    num_batches = (total_chars // batch_size_chars) + (1 if total_chars % batch_size_chars else 0)
-                    batch_summaries = []
-                    batch_sources = []  # List of List[Dict] - one list per batch
-                    batch_debugs = []
-                    for batch_number in range(num_batches):
-                        context, sources, debug = self.build_iterative_summary_context(
-                            user_email=user_email,
-                            document_ids=[document_id],
-                            batch_size_chars=batch_size_chars,
-                            batch_number=batch_number
-                        )
-                        batch_summaries.append(context)
-                        batch_sources.append(sources)  # Append as list, not extend
-                        batch_debugs.append(debug)
-                    # Синтез финального ответа
-                    final_context, final_sources, final_debug = self.build_synthesis_context(
-                        user_email=user_email,
-                        document_ids=[document_id],
-                        batch_summaries=batch_summaries,
-                        batch_sources=batch_sources,
-                        batch_debugs=batch_debugs,
-                        task=task
-                    )
-                    # Добавим флаг и отладочную инфу
-                    if isinstance(final_debug, dict):
-                        final_debug["auto_iterative"] = True
-                        final_debug["num_batches"] = num_batches
-                        final_debug["batch_debugs"] = batch_debugs
-                    return final_context, final_sources, final_debug
-            # --- fallback: обычный full context ---
-            context, sources, _ = self.build_full_document_context(
+            logger.info(f"[SMART-RAG] Full document scope detected - checking if user limited chunks...")
+            
+            # Check if user wants less than full document
+            user_wants_limited = False
+            
+            # ALWAYS respect max_chunks_limit if it's less than total chunks
+            if max_chunks_limit < len(all_chunks):
+                user_wants_limited = True
+                logger.info(f"[SMART-RAG] ✓ max_chunks_limit ({max_chunks_limit}) < total ({len(all_chunks)}) - switching to search")
+            elif chunk_mode == "fixed":
+                if max_chunks < len(all_chunks):
+                    user_wants_limited = True
+                    logger.info(f"[SMART-RAG] ✓ User set FIXED mode with {max_chunks} chunks < {len(all_chunks)} total - switching to search")
+                else:
+                    logger.info(f"[SMART-RAG] Fixed mode but max_chunks({max_chunks}) >= total({len(all_chunks)}) - keeping full_document")
+                    
+            elif chunk_mode == "percent":
+                if target_chunks < len(all_chunks) * 0.8:
+                    user_wants_limited = True
+                    logger.info(f"[SMART-RAG] ✓ User set PERCENT mode ({chunk_percent}%) = {target_chunks} chunks - switching to search")
+                else:
+                    logger.info(f"[SMART-RAG] Percent mode but target({target_chunks}) >= 80% of total - keeping full_document")
+                    
+            elif chunk_mode == "adaptive":
+                # In adaptive mode, check if target_chunks is significantly less than total
+                if target_chunks < len(all_chunks) * 0.5:
+                    user_wants_limited = True
+                    logger.info(f"[SMART-RAG] ✓ ADAPTIVE mode but target({target_chunks}) < 50% of total({len(all_chunks)}) - switching to search")
+                else:
+                    logger.info(f"[SMART-RAG] Adaptive mode, target({target_chunks}) is sufficient - keeping full_document")
+            
+            if user_wants_limited:
+                scope = "search"
+                intent["scope"] = "search"
+                intent["reasoning"] = f"User limited chunks: mode={chunk_mode}, target={target_chunks}, max_limit={max_chunks_limit}, total={len(all_chunks)}"
+                logger.info(f"[SMART-RAG] → Switched to SEARCH mode to respect user's chunk limit")
+        
+        # Execute based on scope
+        full_doc_debug_info = None  # Store full document debug info
+        if scope == "full_document":
+            logger.info(f"[SMART-RAG] Loading full document for task: {task} (chunk_mode={chunk_mode})")
+            context, sources, full_doc_debug_info = self.build_full_document_context(
                 user_email=user_email,
                 document_ids=[document_id],
                 max_tokens=max_tokens
             )
+            logger.info(f"[SMART-RAG] Full doc loaded: {full_doc_debug_info.get('total_chunks', 0)} chunks, {full_doc_debug_info.get('total_chars', 0)} chars")
             
         elif scope == "single_section" and sections:
             logger.info(f"[SMART-RAG] Loading single section: {sections[0]}")
@@ -2539,17 +2587,31 @@ Next search query (or DONE):"""
                     latency_ms=0  # Will be updated
                 )
             
-            # Use advanced search if available
-            if hasattr(self, 'ultimate_rag_search'):
+            # Use direct hybrid search when user explicitly limited chunks
+            # to avoid ultimate_rag_search re-analyzing intent and loading full doc
+            user_limited_chunks = (chunk_mode == "fixed" and max_chunks < len(all_chunks)) or \
+                                  (chunk_mode == "percent" and target_chunks < len(all_chunks) * 0.8)
+            
+            if user_limited_chunks:
+                logger.info(f"[SMART-RAG] User limited chunks - using direct hybrid search (target={target_chunks})")
+                # Use direct hybrid search to respect user's chunk limit
+                context, sources = self.build_rag_context(
+                    query=search_query,
+                    user_email=user_email,
+                    document_ids=[document_id],
+                    max_tokens=target_chunks * 800,
+                    threshold=min_similarity,
+                    use_hybrid=True,
+                    keyword_weight=keyword_weight,
+                    semantic_weight=semantic_weight,
+                    limit=target_chunks  # PASS TARGET CHUNKS AS LIMIT
+                )
+            elif hasattr(self, 'ultimate_rag_search'):
                 logger.info(f"[SMART-RAG] Using ultimate_rag_search for query (target_chunks={target_chunks})")
                 result = self.ultimate_rag_search(
                     query=search_query,
                     user_email=user_email,
-                    max_tokens=max_tokens,
-                    max_chunks=target_chunks,  # Pass calculated target
-                    min_similarity=min_similarity,
-                    keyword_weight=keyword_weight,
-                    semantic_weight=semantic_weight
+                    max_tokens=target_chunks * 1000  # Convert chunks to approximate tokens
                 )
                 context = result.get("context", "")
                 sources = result.get("sources", [])
@@ -2564,7 +2626,8 @@ Next search query (or DONE):"""
                         max_tokens=max_tokens,
                         threshold=min(min_similarity, 0.3),  # Lower threshold
                         keyword_weight=keyword_weight,
-                        semantic_weight=semantic_weight
+                        semantic_weight=semantic_weight,
+                        limit=target_chunks  # PASS TARGET CHUNKS AS LIMIT
                     )
             else:
                 # Use build_rag_context with configurable params
@@ -2575,7 +2638,8 @@ Next search query (or DONE):"""
                     max_tokens=max_tokens,
                     threshold=min_similarity,
                     keyword_weight=keyword_weight,
-                    semantic_weight=semantic_weight
+                    semantic_weight=semantic_weight,
+                    limit=target_chunks  # PASS TARGET CHUNKS AS LIMIT
                 )
             
             # If still no results, try broader search with just keywords
@@ -2591,7 +2655,8 @@ Next search query (or DONE):"""
                         user_email=user_email,
                         document_ids=[document_id],
                         max_tokens=max_tokens,
-                        min_similarity=0.25  # Even lower threshold
+                        threshold=0.25,  # Even lower threshold
+                        limit=target_chunks  # PASS TARGET CHUNKS AS LIMIT
                     )
             
             logger.info(f"[SMART-RAG] Search results: {len(sources)} sources, {len(context)} chars context")
@@ -2658,12 +2723,22 @@ Next search query (or DONE):"""
                 "chunk_percent": chunk_percent,
                 "min_chunks": min_chunks,
                 "max_chunks_limit": max_chunks_limit,
+                "max_percent_limit": max_percent_limit,  # NEW!
+                "effective_limit": effective_limit,  # NEW!
                 "total_document_chunks": len(all_chunks),
                 "target_chunks_calculated": target_chunks if scope == "search" else None,
                 "adaptive_chunks": adaptive_chunks,
                 "query_complexity": query_complexity if scope == "search" else None
             }
         }
+        
+        # Include full document info if available
+        if full_doc_debug_info:
+            debug_info["full_document_info"] = full_doc_debug_info
+            # Override sources_count with actual chunks loaded for full doc mode
+            debug_info["total_chunks_loaded"] = full_doc_debug_info.get("total_chunks", 0)
+            debug_info["total_chars_loaded"] = full_doc_debug_info.get("total_chars", 0)
+            logger.info(f"[SMART-RAG] Debug info enriched with full_doc: {full_doc_debug_info}")
         
         return context, sources, debug_info
     
@@ -2899,10 +2974,25 @@ Chapter number:"""
         total_chars = 0
         max_chars = max_tokens * 4  # Rough token estimate
         truncated = False
+        chunks_loaded = 0  # Track how many chunks were actually loaded
         
         for doc_id, doc_data in docs_content.items():
             doc_name = doc_data["name"]
             chunks = doc_data["chunks"]
+            total_doc_chunks = len(chunks)
+            doc_total_chars = sum(len(c['content']) for c in chunks)
+            
+            # Add source info FIRST - ONE entry per document but include ALL chunk info
+            # This ensures source is always added even if document is truncated
+            source_entry = {
+                "document_id": doc_id,
+                "document_name": doc_name,
+                "total_chunks": total_doc_chunks,
+                "chunks_in_document": total_doc_chunks,  # For UI display
+                "citation": f"📚 {doc_name} (полный документ, {total_doc_chunks} чанков)",
+                "content": f"[Полный документ: {total_doc_chunks} чанков, ~{doc_total_chars} символов]"
+            }
+            sources.append(source_entry)
             
             # Add document header
             doc_header = f"\n{'='*60}\n📚 ДОКУМЕНТ: {doc_name}\n{'='*60}\n"
@@ -2916,25 +3006,22 @@ Chapter number:"""
                 
                 if total_chars + chunk_chars > max_chars:
                     # Add truncation notice
-                    context_parts.append(f"\n... [Документ обрезан из-за лимита токенов. Загружено {total_chars} символов из {sum(len(c['content']) for c in all_chunks)}] ...")
+                    context_parts.append(f"\n... [Документ обрезан из-за лимита токенов. Загружено {total_chars} символов из {doc_total_chars}] ...")
                     truncated = True
+                    # Update source entry with truncation info
+                    source_entry["truncated"] = True
+                    source_entry["chunks_loaded"] = chunks_loaded
+                    source_entry["citation"] = f"📚 {doc_name} (загружено {chunks_loaded} из {total_doc_chunks} чанков)"
                     break
                 
                 context_parts.append(chunk_content)
                 total_chars += chunk_chars
+                chunks_loaded += 1
             
             if truncated:
                 break
-            
-            # Add source info
-            sources.append({
-                "document_id": doc_id,
-                "document_name": doc_name,
-                "total_chunks": len(chunks),
-                "citation": f"📚 {doc_name} (полный документ)"
-            })
         
-        logger.info(f"[FULL-DOC] Built context: {total_chars} chars, truncated={truncated}")
+        logger.info(f"[FULL-DOC] Built context: {total_chars} chars, chunks_loaded={chunks_loaded}, truncated={truncated}, sources={len(sources)}")
         
         # Build final context
         header = """Ниже представлен ПОЛНЫЙ текст документа(ов) пользователя.
@@ -2947,8 +3034,10 @@ Chapter number:"""
             "mode": "full",
             "total_documents": len(docs_content),
             "total_chunks": len(all_chunks),
+            "chunks_loaded": chunks_loaded if truncated else len(all_chunks),
             "total_chars": total_chars,
-            "estimated_tokens": total_chars // 4
+            "estimated_tokens": total_chars // 4,
+            "truncated": truncated
         }
         
         return context, sources, debug_info
@@ -3071,7 +3160,8 @@ Chapter number:"""
         threshold: float = 0.5,
         use_hybrid: bool = True,
         keyword_weight: float = 0.3,
-        semantic_weight: float = 0.7
+        semantic_weight: float = 0.7,
+        limit: int = 50  # NEW: configurable chunk limit
     ) -> Tuple[str, List[Dict]]:
         """
         Build context string from relevant documents for RAG.
@@ -3086,15 +3176,18 @@ Chapter number:"""
             use_hybrid: Use hybrid (keyword + semantic) search
             keyword_weight: Weight for BM25/keyword search (0-1)
             semantic_weight: Weight for vector/semantic search (0-1)
+            limit: Maximum number of chunks to retrieve
         
         Returns:
             Tuple of (context_string, source_documents)
         """
+        logger.info(f"[build_rag_context] Starting with limit={limit}, max_tokens={max_tokens}")
+        
         if use_hybrid:
             results = self.hybrid_search(
                 query=query,
                 user_email=user_email,
-                limit=10,
+                limit=limit,  # Use configurable limit
                 keyword_weight=keyword_weight,
                 semantic_weight=semantic_weight
             )
@@ -3104,8 +3197,10 @@ Chapter number:"""
                 user_email=user_email,
                 document_ids=document_ids,
                 threshold=threshold,
-                limit=10
+                limit=limit  # Use configurable limit
             )
+        
+        logger.info(f"[build_rag_context] Got {len(results)} results from search")
         
         if not results:
             return "", []
@@ -3164,12 +3259,10 @@ Chapter number:"""
         estimated_tokens = total_chars // 4  # rough estimate
         
         # Recommend approach based on size
-        if estimated_tokens < 30000:
-            approach = "full"  # fits in one context
-        elif estimated_tokens < 100000:
-            approach = "full"  # still manageable for large context models
-        else:
-            approach = "iterative"  # too large, need batching
+        # Modern models support large contexts: Claude 200K, Gemini 1M, GPT-4o 128K
+        # DISABLED iterative mode - always use "full" to avoid hangs
+        # Iterative mode was causing performance issues with many batches
+        approach = "full"  # Always use full mode, let adaptive_context_compression handle truncation
         
         return {
             "total_chars": total_chars,

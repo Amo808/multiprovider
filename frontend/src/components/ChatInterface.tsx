@@ -715,6 +715,21 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       isHiddenMode
     });
 
+    // === DEBUG: Log RAG settings being sent ===
+    if (ragEnabled && documentsCount > 0) {
+      console.log('%c[RAG SETTINGS SENT TO BACKEND]', 'color: yellow; font-weight: bold;', {
+        chunk_mode: request.rag?.chunk_mode,
+        max_chunks: request.rag?.max_chunks,
+        chunk_percent: request.rag?.chunk_percent,
+        min_chunks: request.rag?.min_chunks,
+        max_chunks_limit: request.rag?.max_chunks_limit,
+        min_similarity: request.rag?.min_similarity,
+        use_rerank: request.rag?.use_rerank,
+        keyword_weight: request.rag?.keyword_weight,
+        semantic_weight: request.rag?.semantic_weight
+      });
+    }
+
     // Clear both visible and hidden content
     setInputValue('');
     setHiddenContent(null);

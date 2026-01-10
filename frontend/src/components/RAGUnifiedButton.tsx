@@ -16,14 +16,12 @@ import {
     Bug,
     X,
     Database,
-    Hash,
     Percent,
     Brain,
     Search,
     Zap,
     RotateCcw,
     Info,
-    Settings,
     History,
     Cpu,
     Globe,
@@ -423,8 +421,21 @@ const SettingsTab: React.FC<{
     onChange: (settings: RAGSettings) => void;
 }> = ({ settings, onChange }) => {
     const [showPresets, setShowPresets] = useState(false);
-    const [showAdvanced, setShowAdvanced] = useState(false);
     const [showOrchestrator, setShowOrchestrator] = useState(false);
+
+    // Wrapper to log changes
+    const handleChange = (newSettings: RAGSettings) => {
+        console.log('[RAGUnifiedButton] Settings changed:', {
+            chunk_mode: newSettings.chunk_mode,
+            max_percent_limit: newSettings.max_percent_limit,  // MAIN setting
+            max_chunks: newSettings.max_chunks,
+            min_chunks: newSettings.min_chunks,
+            max_chunks_limit: newSettings.max_chunks_limit,
+            chunk_percent: newSettings.chunk_percent,
+            min_similarity: newSettings.min_similarity
+        });
+        onChange(newSettings);
+    };
 
     // Check if weights are balanced
     const weightsSum = settings.keyword_weight + settings.semantic_weight;
@@ -433,7 +444,7 @@ const SettingsTab: React.FC<{
     const normalizeWeights = () => {
         const sum = settings.keyword_weight + settings.semantic_weight;
         if (sum > 0) {
-            onChange({
+            handleChange({
                 ...settings,
                 keyword_weight: Number((settings.keyword_weight / sum).toFixed(2)),
                 semantic_weight: Number((settings.semantic_weight / sum).toFixed(2))
@@ -448,7 +459,7 @@ const SettingsTab: React.FC<{
                 <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-medium text-muted-foreground">🎯 Быстрые пресеты</span>
                     <button
-                        onClick={() => onChange(DEFAULT_RAG_SETTINGS)}
+                        onClick={() => handleChange(DEFAULT_RAG_SETTINGS)}
                         className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
                     >
                         <RotateCcw size={10} />
@@ -459,7 +470,7 @@ const SettingsTab: React.FC<{
                     {Object.entries(RAG_PRESETS).slice(0, 4).map(([key, preset]) => (
                         <button
                             key={key}
-                            onClick={() => onChange({ ...settings, ...preset.settings })}
+                            onClick={() => handleChange({ ...settings, ...preset.settings })}
                             className="px-2 py-1 text-xs bg-secondary/50 hover:bg-secondary rounded-lg transition-colors"
                         >
                             {preset.icon} {preset.name}
@@ -477,7 +488,7 @@ const SettingsTab: React.FC<{
                         {Object.entries(RAG_PRESETS).slice(4).map(([key, preset]) => (
                             <button
                                 key={key}
-                                onClick={() => onChange({ ...settings, ...preset.settings })}
+                                onClick={() => handleChange({ ...settings, ...preset.settings })}
                                 className="px-2 py-1 text-xs bg-secondary/50 hover:bg-secondary rounded-lg transition-colors"
                             >
                                 {preset.icon} {preset.name}
@@ -487,23 +498,22 @@ const SettingsTab: React.FC<{
                 )}
             </div>
 
-            {/* Chunk mode */}
+            {/* Chunk mode - simplified: only percent and adaptive */}
             <div>
                 <span className="text-xs font-medium text-muted-foreground flex items-center gap-1 mb-2">
                     <Database size={12} />
-                    Режим контекста
+                    Сколько контекста брать
                 </span>
-                <div className="flex gap-1">
+                <div className="flex gap-1 mb-3">
                     {[
-                        { mode: 'fixed' as ChunkMode, label: 'Фикс', icon: <Hash size={12} />, desc: 'Точное число чанков' },
-                        { mode: 'percent' as ChunkMode, label: '%', icon: <Percent size={12} />, desc: 'Процент документа' },
-                        { mode: 'adaptive' as ChunkMode, label: 'AI', icon: <Brain size={12} />, desc: 'AI решает' },
+                        { mode: 'percent' as ChunkMode, label: 'Фикс. %', icon: <Percent size={12} />, desc: 'Всегда заданный процент' },
+                        { mode: 'adaptive' as ChunkMode, label: 'Умный', icon: <Brain size={12} />, desc: 'AI решает сам' },
                     ].map(({ mode, label, icon, desc }) => (
                         <button
                             key={mode}
-                            onClick={() => onChange({ ...settings, chunk_mode: mode })}
+                            onClick={() => handleChange({ ...settings, chunk_mode: mode })}
                             title={desc}
-                            className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs transition-all ${settings.chunk_mode === mode
+                            className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs transition-all ${settings.chunk_mode === mode || (mode === 'percent' && settings.chunk_mode === 'fixed')
                                 ? 'bg-purple-500/20 border border-purple-500/50 text-purple-400'
                                 : 'bg-secondary/30 border border-transparent text-muted-foreground hover:bg-secondary/50'
                                 }`}
@@ -514,66 +524,27 @@ const SettingsTab: React.FC<{
                     ))}
                 </div>
 
-                {/* Mode-specific settings */}
-                <div className="mt-2 space-y-2">
-                    {settings.chunk_mode === 'fixed' && (
-                        <SliderSetting
-                            label="Количество чанков"
-                            value={settings.max_chunks}
-                            min={5}
-                            max={200}
-                            step={5}
-                            onChange={(v) => onChange({ ...settings, max_chunks: v })}
-                        />
-                    )}
-                    {settings.chunk_mode === 'percent' && (
-                        <>
-                            <SliderSetting
-                                label="% документа"
-                                value={settings.chunk_percent}
-                                min={5}
-                                max={100}
-                                step={5}
-                                onChange={(v) => onChange({ ...settings, chunk_percent: v })}
-                                format={(v) => `${v}%`}
-                            />
-                            <SliderSetting
-                                label="Макс. лимит"
-                                value={settings.max_chunks_limit}
-                                min={50}
-                                max={1000}
-                                step={50}
-                                onChange={(v) => onChange({ ...settings, max_chunks_limit: v })}
-                            />
-                        </>
-                    )}
-                    {settings.chunk_mode === 'adaptive' && (
-                        <>
-                            <div className="text-xs text-purple-400 bg-purple-500/10 px-2 py-1.5 rounded-lg">
-                                <Brain size={12} className="inline mr-1" />
-                                AI автоматически определяет объём контекста
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <SliderSetting
-                                    label="Мин. чанков"
-                                    value={settings.min_chunks}
-                                    min={1}
-                                    max={20}
-                                    step={1}
-                                    onChange={(v) => onChange({ ...settings, min_chunks: v })}
-                                />
-                                <SliderSetting
-                                    label="Макс. %"
-                                    value={settings.chunk_percent}
-                                    min={10}
-                                    max={100}
-                                    step={10}
-                                    onChange={(v) => onChange({ ...settings, chunk_percent: v })}
-                                    format={(v) => `${v}%`}
-                                />
-                            </div>
-                        </>
-                    )}
+                {/* ЕДИНЫЙ СЛАЙДЕР ДЛЯ ВСЕХ РЕЖИМОВ */}
+                <SliderSetting
+                    label={settings.chunk_mode === 'adaptive' ? "Максимум контекста" : "Контекст"}
+                    value={settings.max_percent_limit}
+                    min={5}
+                    max={100}
+                    step={5}
+                    onChange={(v) => handleChange({
+                        ...settings,
+                        max_percent_limit: v,
+                        chunk_percent: v  // синхронизируем
+                    })}
+                    format={(v) => `${v}%`}
+                />
+
+                {/* Подсказка под слайдером */}
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                    {settings.chunk_mode === 'adaptive'
+                        ? `AI возьмёт от 5% до ${settings.max_percent_limit}% документа`
+                        : `Будет использовано ${settings.max_percent_limit}% документа`
+                    }
                 </div>
             </div>
 
@@ -584,7 +555,7 @@ const SettingsTab: React.FC<{
                 min={0.1}
                 max={0.9}
                 step={0.05}
-                onChange={(v) => onChange({ ...settings, min_similarity: v })}
+                onChange={(v) => handleChange({ ...settings, min_similarity: v })}
                 format={(v) => `${Math.round(v * 100)}%`}
             />
 
@@ -606,7 +577,7 @@ const SettingsTab: React.FC<{
                         min={0}
                         max={1}
                         step={0.1}
-                        onChange={(v) => onChange({ ...settings, keyword_weight: v })}
+                        onChange={(v) => handleChange({ ...settings, keyword_weight: v })}
                         format={(v) => `${Math.round(v * 100)}%`}
                         icon={<Search size={10} />}
                     />
@@ -616,7 +587,7 @@ const SettingsTab: React.FC<{
                         min={0}
                         max={1}
                         step={0.1}
-                        onChange={(v) => onChange({ ...settings, semantic_weight: v })}
+                        onChange={(v) => handleChange({ ...settings, semantic_weight: v })}
                         format={(v) => `${Math.round(v * 100)}%`}
                         icon={<Zap size={10} />}
                     />
@@ -628,21 +599,21 @@ const SettingsTab: React.FC<{
                 <ToggleChip
                     label="Rerank"
                     checked={settings.use_rerank}
-                    onChange={(v) => onChange({ ...settings, use_rerank: v })}
+                    onChange={(v) => handleChange({ ...settings, use_rerank: v })}
                 />
                 <ToggleChip
                     label="Metadata"
                     checked={settings.include_metadata}
-                    onChange={(v) => onChange({ ...settings, include_metadata: v })}
+                    onChange={(v) => handleChange({ ...settings, include_metadata: v })}
                 />
                 <ToggleChip
                     label="Debug"
                     checked={settings.debug_mode}
-                    onChange={(v) => onChange({ ...settings, debug_mode: v })}
+                    onChange={(v) => handleChange({ ...settings, debug_mode: v })}
                 />
             </div>
 
-            {/* === ORCHESTRATOR SETTINGS === */}
+            {/* === CONTEXT & MEMORY SETTINGS === */}
             <div className="border-t border-border pt-3">
                 <button
                     onClick={() => setShowOrchestrator(!showOrchestrator)}
@@ -650,7 +621,7 @@ const SettingsTab: React.FC<{
                 >
                     <span className="flex items-center gap-1">
                         <Cpu size={12} />
-                        🤖 Оркестратор AI
+                        � Контекст и память
                     </span>
                     <ChevronDown size={14} className={`transition-transform ${showOrchestrator ? 'rotate-180' : ''}`} />
                 </button>
@@ -661,7 +632,7 @@ const SettingsTab: React.FC<{
                             label="История диалога"
                             description="Включать предыдущие сообщения"
                             checked={settings.orchestrator.include_history}
-                            onChange={(v) => onChange({
+                            onChange={(v) => handleChange({
                                 ...settings,
                                 orchestrator: { ...settings.orchestrator, include_history: v }
                             })}
@@ -674,7 +645,7 @@ const SettingsTab: React.FC<{
                                 min={1}
                                 max={50}
                                 step={1}
-                                onChange={(v) => onChange({
+                                onChange={(v) => handleChange({
                                     ...settings,
                                     orchestrator: { ...settings.orchestrator, history_limit: v }
                                 })}
@@ -684,7 +655,7 @@ const SettingsTab: React.FC<{
                             label="Долгосрочная память"
                             description="Использовать Mem0 для памяти"
                             checked={settings.orchestrator.include_memory}
-                            onChange={(v) => onChange({
+                            onChange={(v) => handleChange({
                                 ...settings,
                                 orchestrator: { ...settings.orchestrator, include_memory: v }
                             })}
@@ -694,7 +665,7 @@ const SettingsTab: React.FC<{
                             label="Авто-поиск"
                             description="Автоматически искать в документах"
                             checked={settings.orchestrator.auto_retrieve}
-                            onChange={(v) => onChange({
+                            onChange={(v) => handleChange({
                                 ...settings,
                                 orchestrator: { ...settings.orchestrator, auto_retrieve: v }
                             })}
@@ -704,7 +675,7 @@ const SettingsTab: React.FC<{
                             label="Адаптивные чанки"
                             description="AI определяет количество контекста"
                             checked={settings.orchestrator.adaptive_chunks}
-                            onChange={(v) => onChange({
+                            onChange={(v) => handleChange({
                                 ...settings,
                                 orchestrator: { ...settings.orchestrator, adaptive_chunks: v }
                             })}
@@ -714,50 +685,12 @@ const SettingsTab: React.FC<{
                             label="Веб-поиск"
                             description="Поиск в интернете (beta)"
                             checked={settings.orchestrator.enable_web_search}
-                            onChange={(v) => onChange({
+                            onChange={(v) => handleChange({
                                 ...settings,
                                 orchestrator: { ...settings.orchestrator, enable_web_search: v }
                             })}
                             icon={<Globe size={12} />}
                         />
-                    </div>
-                )}
-            </div>
-
-            {/* === ADVANCED SETTINGS === */}
-            <div className="border-t border-border pt-3">
-                <button
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="flex items-center justify-between w-full text-xs font-medium text-muted-foreground hover:text-foreground"
-                >
-                    <span className="flex items-center gap-1">
-                        <Settings size={12} />
-                        ⚙️ Расширенные настройки
-                    </span>
-                    <ChevronDown size={14} className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
-                </button>
-
-                {showAdvanced && (
-                    <div className="mt-3 space-y-3 pl-1">
-                        <SliderSetting
-                            label="Мин. чанков"
-                            value={settings.min_chunks}
-                            min={1}
-                            max={50}
-                            step={1}
-                            onChange={(v) => onChange({ ...settings, min_chunks: v })}
-                        />
-                        <SliderSetting
-                            label="Макс. лимит чанков"
-                            value={settings.max_chunks_limit}
-                            min={50}
-                            max={1000}
-                            step={50}
-                            onChange={(v) => onChange({ ...settings, max_chunks_limit: v })}
-                        />
-                        <div className="text-xs text-muted-foreground bg-secondary/30 p-2 rounded-lg">
-                            💡 Расширенные настройки для тонкой настройки поведения RAG при работе с большими документами
-                        </div>
                     </div>
                 )}
             </div>

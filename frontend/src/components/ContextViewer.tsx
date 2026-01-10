@@ -396,6 +396,243 @@ const JsonSection: React.FC<JsonSectionProps> = ({
   );
 };
 
+// ==================== SYSTEM PROMPT WITH RAG HIGHLIGHTING ====================
+
+interface SystemPromptViewerProps {
+  content: string;
+  ragContext?: string;
+}
+
+const SystemPromptViewer: React.FC<SystemPromptViewerProps> = ({ content }) => {
+  const [showFullRag, setShowFullRag] = useState(false);
+  const [copied, setCopied] = useState<'base' | 'rag' | null>(null);
+
+  // Parse the system prompt to identify parts
+  const parts = useMemo(() => {
+    const startMarker = '--- RETRIEVED CONTEXT FROM DOCUMENTS ---';
+    const endMarker = '--- END CONTEXT ---';
+
+    const startIdx = content.indexOf(startMarker);
+    const endIdx = content.indexOf(endMarker);
+
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      return {
+        basePrompt: content.slice(0, startIdx).trim(),
+        ragContent: content.slice(startIdx + startMarker.length, endIdx).trim(),
+        afterRag: content.slice(endIdx + endMarker.length).trim(),
+        hasRag: true
+      };
+    }
+
+    // Check alternative RAG marker format
+    const altMarker = '📚 ДОКУМЕНТ:';
+    const altIdx = content.indexOf(altMarker);
+    if (altIdx !== -1) {
+      return {
+        basePrompt: content.slice(0, altIdx).trim(),
+        ragContent: content.slice(altIdx).trim(),
+        afterRag: '',
+        hasRag: true
+      };
+    }
+
+    // No RAG content found
+    return {
+      basePrompt: content,
+      ragContent: '',
+      afterRag: '',
+      hasRag: false
+    };
+  }, [content]);
+
+  const handleCopy = useCallback((text: string, type: 'base' | 'rag') => {
+    navigator.clipboard.writeText(text);
+    setCopied(type);
+    setTimeout(() => setCopied(null), 2000);
+  }, []);
+
+  const ragTokens = Math.round((parts.ragContent?.length || 0) / 4);
+  const baseTokens = Math.round(parts.basePrompt.length / 4);
+
+  return (
+    <div className="space-y-3">
+      {/* Base System Prompt */}
+      <div className="border border-blue-500/30 rounded-lg overflow-hidden bg-blue-950/20">
+        <div className="flex items-center justify-between px-3 py-2 bg-blue-900/30 border-b border-blue-500/30">
+          <div className="flex items-center gap-2">
+            <MessageSquare size={14} className="text-blue-400" />
+            <span className="text-sm font-medium text-blue-300">Base System Prompt</span>
+            <span className="px-1.5 py-0.5 text-[10px] rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              ~{baseTokens.toLocaleString()} tokens
+            </span>
+          </div>
+          <button
+            onClick={() => handleCopy(parts.basePrompt, 'base')}
+            className="p-1 rounded hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition-colors"
+            title="Copy base prompt"
+          >
+            {copied === 'base' ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+          </button>
+        </div>
+        <pre className="p-3 text-xs font-mono text-blue-200 whitespace-pre-wrap max-h-[200px] overflow-y-auto">
+          {parts.basePrompt || '(empty)'}
+        </pre>
+      </div>
+
+      {/* RAG Context - highlighted! */}
+      {parts.hasRag && (
+        <div className="border border-green-500/40 rounded-lg overflow-hidden bg-green-950/30 ring-2 ring-green-500/20">
+          <div className="flex items-center justify-between px-3 py-2 bg-green-900/40 border-b border-green-500/40">
+            <div className="flex items-center gap-2">
+              <Database size={14} className="text-green-400" />
+              <span className="text-sm font-medium text-green-300">📚 RAG Context</span>
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/30 text-green-200 border border-green-500/40 animate-pulse">
+                RETRIEVED FROM DOCUMENTS
+              </span>
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/20 text-green-300 border border-green-500/30">
+                ~{ragTokens.toLocaleString()} tokens
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowFullRag(!showFullRag)}
+                className="px-2 py-0.5 text-[10px] rounded bg-green-500/20 text-green-300 hover:bg-green-500/30 transition-colors"
+              >
+                {showFullRag ? 'Collapse' : 'Expand'}
+              </button>
+              <button
+                onClick={() => handleCopy(parts.ragContent, 'rag')}
+                className="p-1 rounded hover:bg-green-500/20 text-green-400 hover:text-green-300 transition-colors"
+                title="Copy RAG context"
+              >
+                {copied === 'rag' ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+              </button>
+            </div>
+          </div>
+
+          <div className="relative">
+            {/* RAG content preview or full */
+              <pre className={`p-3 text-xs font-mono text-green-200 whitespace-pre-wrap overflow-y-auto ${showFullRag ? 'max-h-[400px]' : 'max-h-[120px]'
+                }`}>
+                {parts.ragContent}
+              </pre>}
+
+            {/* Gradient overlay when collapsed */}
+            {!showFullRag && parts.ragContent.length > 300 && (
+              <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-green-950/90 to-transparent flex items-end justify-center pb-2">
+                <button
+                  onClick={() => setShowFullRag(true)}
+                  className="px-3 py-1 text-[11px] rounded bg-green-500/30 text-green-200 hover:bg-green-500/40 transition-colors border border-green-500/40"
+                >
+                  Show full RAG context ({parts.ragContent.length} chars)
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Info footer */}
+          <div className="px-3 py-1.5 bg-green-900/20 border-t border-green-500/30 text-[10px] text-green-400">
+            💡 Этот контекст был извлечён из загруженных документов на основе вашего запроса
+          </div>
+        </div>
+      )}
+
+      {/* After RAG content (if any) */}
+      {parts.afterRag && (
+        <div className="border border-gray-600/30 rounded-lg overflow-hidden bg-gray-800/30">
+          <div className="flex items-center gap-2 px-3 py-2 bg-gray-700/30 border-b border-gray-600/30">
+            <FileText size={14} className="text-gray-400" />
+            <span className="text-sm font-medium text-gray-300">Additional Instructions</span>
+          </div>
+          <pre className="p-3 text-xs font-mono text-gray-300 whitespace-pre-wrap max-h-[100px] overflow-y-auto">
+            {parts.afterRag}
+          </pre>
+        </div>
+      )}
+
+      {/* No RAG indicator */}
+      {!parts.hasRag && (
+        <div className="border border-gray-600/30 rounded-lg px-3 py-2 bg-gray-800/20 text-xs text-gray-500 flex items-center gap-2">
+          <Database size={14} />
+          <span>No RAG context in this prompt</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ==================== SYSTEM PROMPT SECTION (Collapsible) ====================
+
+interface SystemPromptSectionProps {
+  systemContent: string;
+  defaultExpanded?: boolean;
+}
+
+const SystemPromptSection: React.FC<SystemPromptSectionProps> = ({
+  systemContent,
+  defaultExpanded = true
+}) => {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [copied, setCopied] = useState(false);
+
+  // Check if has RAG
+  const hasRag = systemContent.includes('--- RETRIEVED CONTEXT FROM DOCUMENTS ---') ||
+    systemContent.includes('📚 ДОКУМЕНТ:');
+
+  const totalTokens = Math.round(systemContent.length / 4);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(systemContent);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [systemContent]);
+
+  return (
+    <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-900 mb-3">
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-3 py-2.5 bg-gray-800 border-b border-gray-700 cursor-pointer hover:bg-gray-800/80 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500">
+            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </span>
+          <MessageSquare size={14} className="text-cyan-400" />
+          <span className="text-sm font-medium text-gray-200">System Prompt</span>
+
+          {hasRag && (
+            <span className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/20 text-green-400 border border-green-500/30 animate-pulse">
+              + RAG CONTEXT
+            </span>
+          )}
+
+          <span className="px-1.5 py-0.5 text-[10px] rounded bg-gray-700/50 text-gray-500 border border-gray-600/50">
+            ~{totalTokens.toLocaleString()} tokens
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+          <button
+            onClick={handleCopy}
+            className="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors"
+            title="Copy full system prompt"
+          >
+            {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      {isExpanded && (
+        <div className="p-3 overflow-auto max-h-[60vh]">
+          <SystemPromptViewer content={systemContent} />
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ==================== MAIN CONTEXT VIEWER COMPONENT ====================
 
 // Helper function to extract RAG context from system message
@@ -489,10 +726,126 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
 
   // Build the EXACT API request that will be sent
   const apiRequest = useMemo(() => {
-    const apiMessages: Array<{ role: string; content: string }> = [];
+    const apiMessages: Array<{
+      role: string;
+      content: string;
+      _rag_injected?: boolean;
+      _content_breakdown?: {
+        base_system_prompt: string;
+        rag_context?: string;
+        rag_context_tokens?: number;
+        rag_context_chars?: number;
+        detection_method?: string | null;
+        after_rag?: string;
+      };
+    }> = [];
 
-    // 1. System message with RAG context embedded (using effective system prompt)
-    apiMessages.push({ role: 'system', content: effectiveSystemPrompt });
+    // Parse system prompt to identify RAG parts
+    const parseSystemPrompt = (content: string) => {
+      // Method 1: Standard RAG markers
+      const startMarker = '--- RETRIEVED CONTEXT FROM DOCUMENTS ---';
+      const endMarker = '--- END CONTEXT ---';
+      const startIdx = content.indexOf(startMarker);
+      const endIdx = content.indexOf(endMarker);
+
+      if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+        return {
+          basePrompt: content.slice(0, startIdx).trim(),
+          ragContent: content.slice(startIdx + startMarker.length, endIdx).trim(),
+          afterRag: content.slice(endIdx + endMarker.length).trim(),
+          hasRag: true,
+          markerType: 'standard'
+        };
+      }
+
+      // Method 2: Task + Chapter markers (📝 ЗАДАЧА + 📖 ГЛАВА)
+      const taskMarker = '📝 ЗАДАЧА:';
+      const chapterMarker = '📖 ГЛАВА';
+      const taskIdx = content.indexOf(taskMarker);
+      const chapterIdx = content.indexOf(chapterMarker);
+      
+      if (taskIdx !== -1 || chapterIdx !== -1) {
+        // Find the earliest RAG marker
+        const ragStartIdx = taskIdx !== -1 ? taskIdx : chapterIdx;
+        return {
+          basePrompt: content.slice(0, ragStartIdx).trim(),
+          ragContent: content.slice(ragStartIdx).trim(),
+          afterRag: '',
+          hasRag: true,
+          markerType: 'task_chapter'
+        };
+      }
+
+      // Method 3: Alternative document marker
+      const altMarker = '📚 ДОКУМЕНТ:';
+      const altIdx = content.indexOf(altMarker);
+      if (altIdx !== -1) {
+        return {
+          basePrompt: content.slice(0, altIdx).trim(),
+          ragContent: content.slice(altIdx).trim(),
+          afterRag: '',
+          hasRag: true,
+          markerType: 'document'
+        };
+      }
+
+      // Method 4: Check for any injected document content (heuristic)
+      // Look for patterns like "ГЛАВА", "Глава N:", numbered sections, etc.
+      const docPatterns = [
+        /\n\nГЛАВА\s+\d+/i,
+        /\n\n(Раздел|Статья|Пункт)\s+\d+/i,
+        /\n\n[А-Я][а-я]+\s+\d+\.\s/
+      ];
+      
+      for (const pattern of docPatterns) {
+        const match = content.match(pattern);
+        if (match && match.index !== undefined && match.index > 50) {
+          // Found document content after some base prompt
+          return {
+            basePrompt: content.slice(0, match.index).trim(),
+            ragContent: content.slice(match.index).trim(),
+            afterRag: '',
+            hasRag: true,
+            markerType: 'heuristic'
+          };
+        }
+      }
+
+      return { basePrompt: content, ragContent: '', afterRag: '', hasRag: false, markerType: null };
+    };
+
+    const parsed = parseSystemPrompt(effectiveSystemPrompt);
+
+    // 1. System message with structured breakdown
+    // If RAG is present, replace RAG content in `content` with placeholder to avoid duplication
+    let displayContent = effectiveSystemPrompt;
+    if (parsed.hasRag && parsed.ragContent) {
+      // Replace RAG content with a placeholder in the displayed content
+      displayContent = displayContent.replace(
+        parsed.ragContent,
+        `[📚 RAG CONTEXT: ${parsed.ragContent.length} chars / ~${Math.round(parsed.ragContent.length / 4)} tokens — см. _content_breakdown.rag_context]`
+      );
+    }
+
+    const systemMessage: typeof apiMessages[0] = {
+      role: 'system',
+      content: displayContent
+    };
+
+    // Add breakdown metadata if RAG is present
+    if (parsed.hasRag) {
+      systemMessage._rag_injected = true;
+      systemMessage._content_breakdown = {
+        base_system_prompt: parsed.basePrompt,
+        rag_context: parsed.ragContent,
+        rag_context_tokens: Math.round(parsed.ragContent.length / 4),
+        rag_context_chars: parsed.ragContent.length,
+        detection_method: parsed.markerType,
+        ...(parsed.afterRag ? { after_rag: parsed.afterRag } : {})
+      };
+    }
+
+    apiMessages.push(systemMessage);
 
     // 2. Conversation history
     messages.forEach(msg => {
@@ -510,7 +863,16 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
       temperature: generationConfig.temperature,
       max_tokens: generationConfig.max_tokens,
       top_p: generationConfig.top_p,
-      stream: generationConfig.stream
+      stream: generationConfig.stream,
+      // Top-level RAG indicator
+      _rag_context_included: parsed.hasRag,
+      ...(parsed.hasRag ? {
+        _rag_summary: {
+          rag_tokens: Math.round(parsed.ragContent.length / 4),
+          base_prompt_tokens: Math.round(parsed.basePrompt.length / 4),
+          total_system_tokens: Math.round(effectiveSystemPrompt.length / 4)
+        }
+      } : {})
     };
   }, [messages, currentInput, generationConfig, effectiveSystemPrompt]);
 
@@ -678,6 +1040,19 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
                   badge="ВСЁ ВМЕСТЕ"
                   badgeColor="purple"
                 />
+
+                {/* SECTION 4: System Prompt with RAG Highlighting */}
+                <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-900 mb-3">
+                  <div className="flex items-center justify-between px-3 py-2.5 bg-gray-800 border-b border-gray-700">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare size={14} className="text-blue-400" />
+                      <span className="text-sm font-medium text-gray-200">System Prompt with RAG Highlighting</span>
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <SystemPromptViewer content={effectiveSystemPrompt} ragContext={effectiveRagContext} />
+                  </div>
+                </div>
 
               </div>
 

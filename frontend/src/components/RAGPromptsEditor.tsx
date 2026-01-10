@@ -195,16 +195,7 @@ export const RAGPromptsEditor: React.FC<RAGPromptsEditorProps> = ({
         });
     };
 
-    const updateDefault = (key: string, value: number | string | boolean) => {
-        if (!prompts) return;
-        setPrompts({
-            ...prompts,
-            defaults: {
-                ...prompts.defaults,
-                [key]: value
-            }
-        });
-    };
+    // updateDefault removed - настройки теперь в основной панели RAG
 
     const updateIntentAnalysis = (field: string, value: string) => {
         if (!prompts) return;
@@ -566,47 +557,7 @@ export const RAGPromptsEditor: React.FC<RAGPromptsEditorProps> = ({
                                     </div>
                                 </Section>
 
-                                {/* 5️⃣ Defaults */}
-                                <Section
-                                    title="5️⃣ ⚙️ Настройки по умолчанию"
-                                    description="Значения по умолчанию для RAG параметров (применяются ко всем шагам)"
-                                    expanded={expandedSections.has('defaults')}
-                                    onToggle={() => toggleSection('defaults')}
-                                >
-                                    <div className="grid grid-cols-2 gap-3">
-                                        {Object.entries(prompts.defaults).map(([key, value]) => (
-                                            <div key={key} className="flex items-center gap-2">
-                                                <label className="text-sm text-gray-400 w-40">{key}:</label>
-                                                {typeof value === 'boolean' ? (
-                                                    <button
-                                                        onClick={() => updateDefault(key, !value)}
-                                                        className={`px-3 py-1 rounded text-sm ${value
-                                                            ? 'bg-green-500/20 text-green-400'
-                                                            : 'bg-gray-700 text-gray-400'
-                                                            }`}
-                                                    >
-                                                        {value ? 'ON' : 'OFF'}
-                                                    </button>
-                                                ) : typeof value === 'number' ? (
-                                                    <input
-                                                        type="number"
-                                                        value={value}
-                                                        onChange={(e) => updateDefault(key, parseFloat(e.target.value) || 0)}
-                                                        className="w-24 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"
-                                                        step={value < 1 ? 0.1 : 1}
-                                                    />
-                                                ) : (
-                                                    <input
-                                                        type="text"
-                                                        value={value as string}
-                                                        onChange={(e) => updateDefault(key, e.target.value)}
-                                                        className="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"
-                                                    />
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </Section>
+                                {/* 5️⃣ Defaults - REMOVED: настройки теперь в основной панели RAG */}
                             </>
                         ) : (
                             <div className="text-center text-gray-400 py-8">

@@ -248,7 +248,8 @@ export interface RAGConfig {
   max_chunks?: number;              // Used when chunk_mode="fixed" (legacy)
   chunk_percent?: number;           // Used when chunk_mode="percent" (0-100%)
   min_chunks?: number;              // Minimum chunks even for small queries
-  max_chunks_limit?: number;        // Hard limit to prevent token overflow
+  max_chunks_limit?: number;        // Internal safety limit (absolute number)
+  max_percent_limit?: number;       // MAIN user-facing setting: max % of document to use
 
   min_similarity?: number;
   use_rerank?: boolean;
@@ -290,6 +291,18 @@ export interface RAGDebugInfo {
   step_back_query?: string;
   search_history?: Array<{ query: string; results_count: number }>;
   agent_iterations?: number;
+  // Debug collector - подробная информация о RAG pipeline
+  collector?: {
+    timestamp: string;
+    request_id: string;
+    input: any;
+    rag_pipeline: any;
+    model_request: any;
+    model_response: any;
+    summary: any;
+  };
+  // Прочие поля для совместимости со старым кодом
+  [key: string]: any;
 }
 
 export interface SendMessageRequest {

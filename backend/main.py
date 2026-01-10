@@ -124,7 +124,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(Path(__file__).parent.parent / 'logs' / 'app.log')
+        logging.FileHandler(Path(__file__).parent / 'logs' / 'app.log')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -256,10 +256,11 @@ class RAGConfig(BaseModel):
     
     # === CHUNK MODE SETTINGS ===
     chunk_mode: str = "adaptive"  # "fixed", "percent", "adaptive"
-    max_chunks: int = 50  # Fixed number of chunks
-    chunk_percent: float = 20.0  # Percentage of document
+    max_chunks: int = 50  # Legacy - kept for backward compatibility
+    chunk_percent: float = 30.0  # Percentage of document (synced with max_percent_limit)
     min_chunks: int = 5  # Minimum chunks to retrieve
-    max_chunks_limit: int = 500  # Hard limit
+    max_chunks_limit: int = 10000  # Internal safety limit (not user-facing)
+    max_percent_limit: float = 30.0  # MAIN setting: max % of document to use
     
     # === SEARCH SETTINGS ===
     min_similarity: float = 0.4  # Lowered from 0.5 to capture more results
@@ -1244,6 +1245,8 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
     # DEBUG: Log incoming request with RAG config
     logger.info(f"[CHAT] Incoming request: provider={request.provider}, model={request.model}, user={user_email}")
     logger.info(f"[CHAT] RAG config in request: {request.rag}")
+    if request.rag:
+        logger.info(f"[CHAT] RAG max_percent_limit = {request.rag.max_percent_limit} (type: {type(request.rag.max_percent_limit).__name__})")
     
     def generate_error_stream(error_message: str, error_type: str = "error"):
         """Generate SSE stream with error message."""
@@ -1447,9 +1450,10 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     # Chunk mode settings
                     chunk_mode = rag_config.chunk_mode or "adaptive"
                     max_chunks = rag_config.max_chunks or 50
-                    chunk_percent = rag_config.chunk_percent or 20.0
+                    chunk_percent = rag_config.chunk_percent or 30.0
                     min_chunks = rag_config.min_chunks or 5
-                    max_chunks_limit = rag_config.max_chunks_limit or 500
+                    max_chunks_limit = rag_config.max_chunks_limit or 10000  # Internal safety
+                    max_percent_limit = rag_config.max_percent_limit or 30.0  # Main user setting
                     
                     # Search settings
                     min_similarity = rag_config.min_similarity or 0.4
@@ -1465,15 +1469,14 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     logger.info(f"[RAG] ===== RAG SETTINGS =====")
                     logger.info(f"[RAG] Mode: {rag_mode}")
                     logger.info(f"[RAG] Chunk mode: {chunk_mode}")
-                    logger.info(f"[RAG] Max chunks: {max_chunks}")
-                    logger.info(f"[RAG] Chunk percent: {chunk_percent}%")
-                    logger.info(f"[RAG] Min/Max chunks limit: {min_chunks}-{max_chunks_limit}")
+                    logger.info(f"[RAG] Max percent limit: {max_percent_limit}% ← MAIN SETTING")
+                    logger.info(f"[RAG] Min chunks: {min_chunks}")
                     logger.info(f"[RAG] Min similarity: {min_similarity}")
-                    logger.info(f"[RAG] Keyword weight: {keyword_weight}")
-                    logger.info(f"[RAG] Semantic weight: {semantic_weight}")
+                    logger.info(f"[RAG] Keyword/Semantic weight: {keyword_weight}/{semantic_weight}")
                     logger.info(f"[RAG] Use rerank: {use_rerank}")
                     logger.info(f"[RAG] Adaptive chunks: {adaptive_chunks}")
-                    logger.info(f"[RAG] =========================")
+                    logger.info(f"[RAG] (Legacy: max_chunks={max_chunks}, max_chunks_limit={max_chunks_limit})")
+                    logger.info(f"[RAG] =============================")
 
                     
                     # Check which methods are available in RAG store
@@ -1511,6 +1514,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             chunk_percent=chunk_percent,
                             min_chunks=min_chunks,
                             max_chunks_limit=max_chunks_limit,
+                            max_percent_limit=max_percent_limit,  # NEW!
                             min_similarity=min_similarity,
                             use_rerank=use_rerank,
                             keyword_weight=keyword_weight,
@@ -1523,7 +1527,10 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             rag_context = result.get("context", "")
                             rag_sources = result.get("sources", [])
                             rag_debug_info = result.get("debug", {})
-                        rag_debug_info["collector"] = rag_debug_collector.get_debug_info()
+                        collector_info = rag_debug_collector.get_debug_info()
+                        rag_debug_info["collector"] = collector_info
+                        logger.info(f"[RAG-DEBUG] Collector info keys: {list(collector_info.keys())}")
+                        logger.info(f"[RAG-DEBUG] RAG pipeline data: intent={collector_info.get('rag_pipeline', {}).get('intent_analysis', {})}")
                     
                     # === AUTO MODE - Let AI decide best approach ===
                     elif rag_mode == "auto" and has_smart:
@@ -1541,6 +1548,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             chunk_percent=chunk_percent,
                             min_chunks=min_chunks,
                             max_chunks_limit=max_chunks_limit,
+                            max_percent_limit=max_percent_limit,  # NEW!
                             min_similarity=min_similarity,
                             use_rerank=use_rerank,
                             keyword_weight=keyword_weight,
@@ -1787,13 +1795,25 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                         for msg in history
                     ]
                 
+                # Calculate actual chunks count - for full document mode, sum total_chunks from sources
+                actual_chunks_count = len(rag_sources)
+                if rag_debug_info:
+                    # Check for full document info
+                    if rag_debug_info.get("total_chunks_loaded"):
+                        actual_chunks_count = rag_debug_info["total_chunks_loaded"]
+                    elif rag_debug_info.get("full_document_info", {}).get("total_chunks"):
+                        actual_chunks_count = rag_debug_info["full_document_info"]["total_chunks"]
+                    # Also check sources for total_chunks field (used by full doc mode)
+                    elif any(s.get("total_chunks") for s in rag_sources):
+                        actual_chunks_count = sum(s.get("total_chunks", 1) for s in rag_sources)
+                
                 rag_info_event = {
                     'type': 'rag_context',
                     'rag_sources': rag_sources,
                     'rag_context_preview': rag_context[:500] + '...' if len(rag_context) > 500 else rag_context,
                     'rag_context_full': rag_context,  # Full context for debug mode
                     'rag_context_length': len(rag_context),
-                    'chunks_count': len(rag_sources),
+                    'chunks_count': actual_chunks_count,  # FIXED: Real chunks count for full doc mode
                     'debug': rag_debug_info,  # Include debug info (generated queries, search method, etc)
                     # Full system prompt in debug mode
                     'system_prompt_preview': system_prompt_content if debug_mode else (system_prompt_content[:300] + '...' if len(system_prompt_content) > 300 else system_prompt_content),
@@ -1805,7 +1825,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     'debug_mode': debug_mode,
                     'done': False
                 }
-                logger.info(f"[RAG] Emitting RAG context info: {len(rag_sources)} chunks, {len(rag_context)} chars, debug_mode={debug_mode}")
+                logger.info(f"[RAG] Emitting RAG context info: {actual_chunks_count} chunks (sources={len(rag_sources)}), {len(rag_context)} chars, debug_mode={debug_mode}")
                 yield f"data: {json.dumps(rag_info_event)}\n\n"
             # === END RAG CONTEXT INFO ===
 

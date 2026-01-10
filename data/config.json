@@ -1,6 +1,6 @@
 {
   "activeProvider": "gemini",
-  "activeModel": "gemini-2.5-pro",
+  "activeModel": "gemini-2.5-flash",
   "providers": {
     "deepseek": {
       "id": "deepseek",
@@ -695,6 +695,21 @@
     "openai:gpt-5.2-pro": {
       "temperature": 1,
       "max_tokens": 32768,
+      "top_p": 1,
+      "frequency_penalty": 0,
+      "presence_penalty": 0,
+      "stream": true,
+      "system_prompt": "",
+      "thinking_budget": -1,
+      "include_thoughts": true,
+      "verbosity": "high",
+      "reasoning_effort": "high",
+      "cfg_scale": null,
+      "free_tool_calling": true
+    },
+    "gemini:gemini-2.5-flash": {
+      "temperature": 1,
+      "max_tokens": 65536,
       "top_p": 1,
       "frequency_penalty": 0,
       "presence_penalty": 0,

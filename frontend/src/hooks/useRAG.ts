@@ -60,24 +60,63 @@ interface UseRAGReturn {
 
 // Storage key for persisting RAG settings
 const RAG_SETTINGS_KEY = 'rag_settings';
+const RAG_SETTINGS_VERSION = 7; // v7: RESET - ensure max_percent_limit is synced with chunk_percent
 
 // Load settings from localStorage
 const loadStoredSettings = (): RAGSettings => {
   try {
     const stored = localStorage.getItem(RAG_SETTINGS_KEY);
     if (stored) {
-      return { ...DEFAULT_RAG_SETTINGS, ...JSON.parse(stored) };
+      const parsed = JSON.parse(stored);
+      // Check version - if outdated, return defaults
+      if (parsed._version !== RAG_SETTINGS_VERSION) {
+        console.info('[RAG] Settings version mismatch (stored:', parsed._version, 'current:', RAG_SETTINGS_VERSION, '), resetting to defaults');
+        localStorage.removeItem(RAG_SETTINGS_KEY);
+        return DEFAULT_RAG_SETTINGS;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { _version, ...settings } = parsed;
+      const merged = { ...DEFAULT_RAG_SETTINGS, ...settings };
+
+      // SYNC: Ensure max_percent_limit and chunk_percent are the same
+      // Use whichever is larger (user intent)
+      const syncedPercent = Math.max(merged.max_percent_limit || 30, merged.chunk_percent || 30);
+      merged.max_percent_limit = syncedPercent;
+      merged.chunk_percent = syncedPercent;
+
+      console.log('[RAG] Settings loaded from localStorage:', {
+        chunk_mode: merged.chunk_mode,
+        max_chunks: merged.max_chunks,
+        min_chunks: merged.min_chunks,
+        max_chunks_limit: merged.max_chunks_limit,
+        max_percent_limit: merged.max_percent_limit,  // MAIN setting
+        chunk_percent: merged.chunk_percent,
+        min_similarity: merged.min_similarity
+      });
+      return merged;
     }
   } catch (e) {
     console.warn('Failed to load RAG settings from localStorage:', e);
   }
+  console.log('[RAG] Using default settings');
   return DEFAULT_RAG_SETTINGS;
 };
 
 // Save settings to localStorage
 const saveSettings = (settings: RAGSettings) => {
   try {
-    localStorage.setItem(RAG_SETTINGS_KEY, JSON.stringify(settings));
+    // Add version to saved settings
+    const toSave = { ...settings, _version: RAG_SETTINGS_VERSION };
+    localStorage.setItem(RAG_SETTINGS_KEY, JSON.stringify(toSave));
+    console.log('[RAG] Settings saved:', {
+      chunk_mode: settings.chunk_mode,
+      max_chunks: settings.max_chunks,
+      min_chunks: settings.min_chunks,
+      max_chunks_limit: settings.max_chunks_limit,
+      max_percent_limit: settings.max_percent_limit,  // MAIN setting
+      chunk_percent: settings.chunk_percent,
+      min_similarity: settings.min_similarity
+    });
   } catch (e) {
     console.warn('Failed to save RAG settings to localStorage:', e);
   }
@@ -132,6 +171,7 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
     chunk_percent: ragSettings.chunk_percent,
     min_chunks: ragSettings.min_chunks,
     max_chunks_limit: ragSettings.max_chunks_limit,
+    max_percent_limit: ragSettings.max_percent_limit,  // MAIN user-facing limit!
 
     // Search settings
     min_similarity: ragSettings.min_similarity,

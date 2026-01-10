@@ -267,6 +267,32 @@ class RAGDebugCollector:
         )
         logger.debug(f"[DEBUG-COLLECTOR] Retrieval: {strategy}, techniques={techniques}")
     
+    def log_retrieval(
+        self,
+        strategy: str,
+        techniques: List[str],
+        queries: List[str] = None,
+        latency_ms: int = 0
+    ):
+        """
+        Алиас для log_retrieval_strategy с упрощённой сигнатурой.
+        Используется в smart_rag_search для логирования retrieval этапа.
+        """
+        # Используем переданный latency или вычисляем из времени старта
+        if latency_ms == 0 and self._rag_start_time:
+            latency_ms = int((time.time() - self._rag_start_time) * 1000)
+        
+        self.rag_pipeline.retrieval = RetrievalInfo(
+            strategy_used=strategy,
+            techniques_applied=techniques,
+            generated_queries=queries or [],
+            hypothetical_document="",
+            agent_iterations=[],
+            step_back_query="",
+            latency_ms=latency_ms
+        )
+        logger.debug(f"[DEBUG-COLLECTOR] Retrieval: {strategy}, techniques={techniques}, queries={queries}")
+
     def log_chunks(self, chunks: List[Dict[str, Any]]):
         """Логирует найденные чанки"""
         chunk_items = []

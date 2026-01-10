@@ -20,7 +20,6 @@ import {
     ChevronUp,
     RotateCcw,
     Database,
-    Hash,
     Percent,
     Scale,
     Sparkles,
@@ -30,8 +29,8 @@ import {
     Globe
 } from 'lucide-react';
 
-// Chunk retrieval mode
-export type ChunkMode = 'fixed' | 'percent' | 'adaptive';
+// Chunk retrieval mode - simplified: only percent or adaptive
+export type ChunkMode = 'fixed' | 'percent' | 'adaptive';  // 'fixed' kept for backward compatibility
 
 // Orchestrator settings for AI agent logic
 export interface RAGOrchestratorSettings {
@@ -50,7 +49,8 @@ export interface RAGSettings {
     max_chunks: number;              // For fixed mode (legacy)
     chunk_percent: number;           // For percent mode (0-100%)
     min_chunks: number;              // Minimum chunks even for small queries
-    max_chunks_limit: number;        // Hard limit to prevent token overflow
+    max_chunks_limit: number;        // Hard limit (absolute number)
+    max_percent_limit: number;       // Hard limit (% of document) - NEW!
 
     // === SEARCH SETTINGS ===
     min_similarity: number;
@@ -83,8 +83,8 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
         icon: '⚖️',
         settings: {
             chunk_mode: 'adaptive',
-            chunk_percent: 20,
-            max_chunks: 50,
+            chunk_percent: 30,
+            max_percent_limit: 30,
             min_similarity: 0.4,
             keyword_weight: 0.3,
             semantic_weight: 0.7,
@@ -98,7 +98,7 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
         settings: {
             chunk_mode: 'percent',
             chunk_percent: 100,
-            max_chunks_limit: 1000,
+            max_percent_limit: 100,
             min_similarity: 0.1,
             keyword_weight: 0.2,
             semantic_weight: 0.8,
@@ -107,13 +107,12 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
     },
     maximum: {
         name: 'Максимум информации',
-        description: 'Больше чанков, ниже порог - ничего не упустить',
+        description: 'Больше контекста, ниже порог — ничего не упустить',
         icon: '🔥',
         settings: {
             chunk_mode: 'percent',
-            chunk_percent: 50,
-            max_chunks: 200,
-            max_chunks_limit: 500,
+            chunk_percent: 60,
+            max_percent_limit: 60,
             min_similarity: 0.2,
             keyword_weight: 0.4,
             semantic_weight: 0.6,
@@ -126,8 +125,8 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
         icon: '🎯',
         settings: {
             chunk_mode: 'adaptive',
-            chunk_percent: 10,
-            max_chunks: 20,
+            chunk_percent: 15,
+            max_percent_limit: 15,
             min_similarity: 0.7,
             keyword_weight: 0.2,
             semantic_weight: 0.8,
@@ -139,8 +138,9 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
         description: 'Упор на точное совпадение терминов',
         icon: '🔤',
         settings: {
-            chunk_mode: 'fixed',
-            max_chunks: 30,
+            chunk_mode: 'adaptive',
+            chunk_percent: 25,
+            max_percent_limit: 25,
             min_similarity: 0.35,
             keyword_weight: 0.6,
             semantic_weight: 0.4,
@@ -153,8 +153,8 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
         icon: '🧠',
         settings: {
             chunk_mode: 'adaptive',
-            chunk_percent: 25,
-            max_chunks: 50,
+            chunk_percent: 40,
+            max_percent_limit: 40,
             min_similarity: 0.35,
             keyword_weight: 0.1,
             semantic_weight: 0.9,
@@ -166,8 +166,9 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
         description: 'Минимум обработки для скорости',
         icon: '⚡',
         settings: {
-            chunk_mode: 'fixed',
-            max_chunks: 10,
+            chunk_mode: 'adaptive',
+            chunk_percent: 10,
+            max_percent_limit: 10,
             min_similarity: 0.5,
             keyword_weight: 0.3,
             semantic_weight: 0.7,
@@ -179,16 +180,17 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
 export const DEFAULT_RAG_SETTINGS: RAGSettings = {
     // Chunk mode settings
     chunk_mode: 'adaptive',
-    max_chunks: 50,
-    chunk_percent: 20,
-    min_chunks: 5,
-    max_chunks_limit: 500,
+    max_chunks: 50,           // Legacy - kept for backward compatibility with backend
+    chunk_percent: 30,        // For percent mode - 30% of document
+    min_chunks: 5,            // Minimum chunks for any query (internal)
+    max_chunks_limit: 10000,  // Hard limit (absolute number) - internal safety limit
+    max_percent_limit: 30,    // Main user-facing setting: max % of document to use
 
     // Search settings
-    min_similarity: 0.4,
-    keyword_weight: 0.3,
-    semantic_weight: 0.7,
-    use_rerank: true,
+    min_similarity: 0.4,      // 40% similarity threshold
+    keyword_weight: 0.3,      // 30% keyword search
+    semantic_weight: 0.7,     // 70% semantic search
+    use_rerank: true,         // Enable LLM reranking by default
     include_metadata: true,
     debug_mode: false,
 
@@ -217,7 +219,8 @@ const SettingSlider: React.FC<{
     description?: string;
     format?: (value: number) => string;
     color?: string;
-}> = ({ label, value, min, max, step, onChange, disabled, icon, description, format, color = 'purple' }) => {
+    showExample?: string;  // NEW: показать пример расчёта
+}> = ({ label, value, min, max, step, onChange, disabled, icon, description, format, color = 'purple', showExample }) => {
     const percentage = ((value - min) / (max - min)) * 100;
 
     return (
@@ -246,6 +249,9 @@ const SettingSlider: React.FC<{
             />
             {description && (
                 <p className="text-xs text-muted-foreground">{description}</p>
+            )}
+            {showExample && (
+                <p className="text-xs text-purple-400/70 italic">{showExample}</p>
             )}
         </div>
     );
@@ -427,12 +433,11 @@ export const RAGSettingsPanel: React.FC<RAGSettingsPanelProps> = ({
                         Режим извлечения контекста
                     </div>
 
-                    {/* Mode selector buttons */}
+                    {/* Mode selector buttons - simplified: only percent and adaptive */}
                     <div className="flex gap-2">
                         {[
-                            { mode: 'fixed' as ChunkMode, label: 'Фикс. кол-во', icon: <Hash size={14} />, description: 'Точное число чанков' },
-                            { mode: 'percent' as ChunkMode, label: '% документа', icon: <Percent size={14} />, description: 'Процент от всего документа' },
-                            { mode: 'adaptive' as ChunkMode, label: 'Адаптивный', icon: <Brain size={14} />, description: 'AI решает сколько нужно' },
+                            { mode: 'percent' as ChunkMode, label: 'Фиксированный %', icon: <Percent size={14} />, description: 'Всегда брать заданный процент документа' },
+                            { mode: 'adaptive' as ChunkMode, label: 'Умный', icon: <Brain size={14} />, description: 'AI решает сколько нужно' },
                         ].map(({ mode, label, icon, description }) => (
                             <button
                                 key={mode}
@@ -455,44 +460,42 @@ export const RAGSettingsPanel: React.FC<RAGSettingsPanelProps> = ({
                     </div>
 
                     {/* Mode-specific settings */}
+                    {/* Note: 'fixed' mode is hidden but kept for backward compatibility */}
                     {settings.chunk_mode === 'fixed' && (
                         <SettingSlider
-                            label="Количество чанков"
-                            value={settings.max_chunks}
+                            label="Сколько контекста брать"
+                            value={settings.max_percent_limit}
                             min={5}
-                            max={200}
+                            max={100}
                             step={5}
-                            onChange={(value) => onChange({ ...settings, max_chunks: value })}
+                            onChange={(value) => onChange({ ...settings, max_percent_limit: value, chunk_mode: 'percent' })}
                             disabled={disabled}
-                            icon={<Hash size={14} />}
-                            description="Фиксированное число чанков для поиска"
+                            icon={<Percent size={14} />}
+                            format={(v) => `${v}%`}
+                            description="Процент от документа"
+                            showExample="Пример: документ 500 страниц → 20% = ~100 страниц контекста"
                         />
                     )}
 
                     {settings.chunk_mode === 'percent' && (
                         <>
+                            <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                                <p className="text-xs text-muted-foreground">
+                                    Всегда берётся заданный процент документа, независимо от сложности вопроса.
+                                </p>
+                            </div>
                             <SettingSlider
-                                label="Процент документа"
+                                label="Сколько контекста брать"
                                 value={settings.chunk_percent}
                                 min={5}
                                 max={100}
                                 step={5}
-                                onChange={(value) => onChange({ ...settings, chunk_percent: value })}
+                                onChange={(value) => onChange({ ...settings, chunk_percent: value, max_percent_limit: value })}
                                 disabled={disabled}
                                 icon={<Percent size={14} />}
                                 format={(v) => `${v}%`}
-                                description="Если документ 800 чанков и выставлено 20%, берём ~160 чанков"
-                            />
-                            <SettingSlider
-                                label="Макс. лимит чанков"
-                                value={settings.max_chunks_limit}
-                                min={50}
-                                max={1000}
-                                step={50}
-                                onChange={(value) => onChange({ ...settings, max_chunks_limit: value })}
-                                disabled={disabled}
-                                icon={<Database size={14} />}
-                                description="Жёсткий лимит чтобы не перегрузить контекст"
+                                description="Процент от всего документа"
+                                showExample="Пример: документ 500 страниц → 20% = ~100 страниц контекста"
                             />
                         </>
                     )}
@@ -502,38 +505,26 @@ export const RAGSettingsPanel: React.FC<RAGSettingsPanelProps> = ({
                             <div className="p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
                                 <div className="flex items-center gap-2 text-sm text-purple-400 mb-2">
                                     <Brain size={14} />
-                                    <span className="font-medium">Адаптивный режим</span>
+                                    <span className="font-medium">AI сам решает</span>
                                 </div>
                                 <p className="text-xs text-muted-foreground">
-                                    AI автоматически определяет сколько контекста нужно. Если ответ можно дать из 3% документа —
-                                    не будет тянуть 50%. Но если нужен полный обзор — возьмёт больше.
+                                    Простой вопрос → мало контекста. Сложный анализ → больше контекста.
+                                    Ты задаёшь только границы.
                                 </p>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <SettingSlider
-                                    label="Мин. чанков"
-                                    value={settings.min_chunks}
-                                    min={1}
-                                    max={20}
-                                    step={1}
-                                    onChange={(value) => onChange({ ...settings, min_chunks: value })}
-                                    disabled={disabled}
-                                    icon={<Hash size={14} />}
-                                    description="Минимум даже для простых вопросов"
-                                />
-                                <SettingSlider
-                                    label="Макс. % документа"
-                                    value={settings.chunk_percent}
-                                    min={10}
-                                    max={100}
-                                    step={10}
-                                    onChange={(value) => onChange({ ...settings, chunk_percent: value })}
-                                    disabled={disabled}
-                                    icon={<Percent size={14} />}
-                                    format={(v) => `${v}%`}
-                                    description="Верхняя граница"
-                                />
-                            </div>
+                            <SettingSlider
+                                label="Максимум контекста"
+                                value={settings.max_percent_limit}
+                                min={10}
+                                max={100}
+                                step={5}
+                                onChange={(value) => onChange({ ...settings, max_percent_limit: value, chunk_percent: value })}
+                                disabled={disabled}
+                                icon={<Percent size={14} />}
+                                format={(v) => `до ${v}%`}
+                                description="AI не возьмёт больше этого"
+                                showExample="Пример: документ 500 стр, лимит 30% → макс ~150 стр"
+                            />
                         </>
                     )}
 

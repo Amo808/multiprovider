@@ -307,6 +307,8 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         if (chunk.type === 'rag_context' && chunk.rag_sources) {
           console.log(`[ConversationsContext] RAG context received: ${chunk.chunks_count} chunks, ${chunk.rag_context_length} chars`);
           console.log(`[ConversationsContext] RAG debug:`, chunk.debug);
+          console.log(`[ConversationsContext] RAG debug keys:`, chunk.debug ? Object.keys(chunk.debug) : 'no debug');
+          console.log(`[ConversationsContext] RAG debug.collector keys:`, chunk.debug?.collector ? Object.keys(chunk.debug.collector) : 'no collector');
 
           // Update the assistant message with RAG sources
           setConversations(prev => ({
