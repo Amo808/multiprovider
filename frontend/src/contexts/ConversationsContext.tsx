@@ -87,34 +87,36 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
   // Track conversations currently being loaded to prevent duplicate requests
   const loadingConversationsRef = useRef<Set<string>>(new Set());
 
-  // Save to localStorage - LIGHTWEIGHT version to prevent quota exceeded
-  // Full messages are stored in Supabase, localStorage is just a cache for UI state
+  // Save to localStorage - ULTRA-LIGHTWEIGHT version to prevent quota exceeded
+  // Full messages are stored in Supabase, localStorage is just a minimal cache for UI state
+  // Safari has ~5MB limit, and RAG contexts can be huge (100k+ chars)
   useEffect(() => {
     try {
       const conversationsToSave: ConversationsState = {};
+      const MAX_MESSAGES_TO_CACHE = 5; // Only cache last 5 messages per conversation
+      const MAX_CONTENT_LENGTH = 200; // Truncate content to 200 chars
+      
       Object.entries(conversations).forEach(([id, convo]) => {
         if (convo.messages.length > 0) {
-          // Save lightweight version - only essential data
-          // Truncate message content to prevent localStorage overflow (Safari has ~5MB limit)
-          const lightMessages = convo.messages.map(msg => ({
+          // Save only last N messages with minimal data
+          const recentMessages = convo.messages.slice(-MAX_MESSAGES_TO_CACHE);
+          
+          const lightMessages = recentMessages.map(msg => ({
             id: msg.id,
             role: msg.role,
-            // Keep first 500 chars of content for preview, full content loaded from Supabase
-            content: msg.content.length > 500 ? msg.content.slice(0, 500) + '...[truncated]' : msg.content,
-            timestamp: msg.timestamp,
-            // Skip heavy meta fields (rag_context, system_prompt_full, etc.)
-            meta: msg.meta ? {
-              tokens_in: msg.meta.tokens_in,
-              tokens_out: msg.meta.tokens_out
-              // Explicitly NOT saving: rag_context_full, system_prompt_full, reasoning_content
-            } : undefined
+            // Keep only first 200 chars for preview
+            content: msg.content.length > MAX_CONTENT_LENGTH 
+              ? msg.content.slice(0, MAX_CONTENT_LENGTH) + '...' 
+              : msg.content,
+            timestamp: msg.timestamp
+            // NO meta at all - it's loaded fresh from Supabase
           }));
 
           conversationsToSave[id] = {
             messages: lightMessages as typeof convo.messages,
             loaded: convo.loaded,
             totalCount: convo.totalCount,
-            hasMore: convo.hasMore,
+            hasMore: convo.hasMore || convo.messages.length > MAX_MESSAGES_TO_CACHE,
             // Reset transient state
             isStreaming: false,
             currentResponse: '',

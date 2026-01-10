@@ -840,7 +840,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   return (
     <div
-      className="flex flex-col h-full min-h-0 bg-background relative"
+      className="flex flex-col h-full min-h-0 bg-background relative overflow-x-hidden"
       onDragEnter={handleGlobalDragEnter}
       onDragLeave={handleGlobalDragLeave}
       onDragOver={handleGlobalDragOver}
@@ -1052,7 +1052,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       )}
 
       {/* Input Area - ChatGPT style */}
-      <div className="border-t border-border bg-gradient-to-t from-background to-transparent pt-4 pb-4 px-3 sm:px-4 flex-shrink-0" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
+      <div className="border-t border-border bg-gradient-to-t from-background to-transparent pt-4 pb-4 px-3 sm:px-4 flex-shrink-0 overflow-x-hidden" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
         {/* Connection Status and Recovery */}
         {connectionLost && isStreaming && (
           <div className="mb-3 p-2.5 sm:p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-lg max-w-3xl mx-auto">
@@ -1108,9 +1108,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
 
         {/* ChatGPT-style input */}
-        <div className="max-w-3xl mx-auto w-full">
+        <div className="max-w-3xl mx-auto w-full overflow-hidden">
           <form onSubmit={handleSubmit} className="relative">
-            <div className="relative flex items-end bg-secondary/50 border border-border rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all">
+            <div className="relative flex items-end bg-secondary/50 border border-border rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all overflow-hidden max-w-full">
               {/* Hidden file input for prompt loading */}
               <input
                 ref={fileInputRef}
@@ -1121,7 +1121,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               />
 
               {/* Left buttons - shrink on mobile */}
-              <div className="flex items-center pl-2 sm:pl-3 pb-3 gap-1 flex-shrink-0 max-w-[50%] sm:max-w-none">
+              <div className="flex items-center pl-2 sm:pl-3 pb-3 gap-1 flex-shrink-0 max-w-[40%] sm:max-w-none overflow-hidden">
                 <Button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -1194,7 +1194,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               />
 
               {/* Right buttons */}
-              <div className="flex items-center pr-2 pb-2 gap-1">
+              <div className="flex items-center pr-2 pb-2 gap-1 flex-shrink-0 max-w-[50%] sm:max-w-none overflow-hidden">
                 {/* Context Viewer */}
                 <ContextViewer
                   messages={messages}

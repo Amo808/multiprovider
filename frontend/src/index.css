@@ -252,6 +252,18 @@
       max-width: calc(100vw - 2rem);
       overflow-x: hidden;
     }
+    
+    /* Prevent horizontal scroll on mobile */
+    body, html, #root {
+      overflow-x: hidden !important;
+      max-width: 100vw !important;
+    }
+    
+    /* Prevent input area from expanding beyond viewport */
+    form, .input-container {
+      max-width: 100% !important;
+      overflow-x: hidden !important;
+    }
   }
   
   /* Mobile flex-shrink helper */

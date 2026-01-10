@@ -162,19 +162,24 @@ export const useConversations = () => {
   }, []);
 
   // Save conversations to localStorage whenever they change
-  // LIGHTWEIGHT version to prevent quota exceeded (Safari ~5MB limit)
+  // ULTRA-LIGHTWEIGHT version to prevent quota exceeded (Safari ~5MB limit)
+  // RAG contexts can be 100k+ chars, so we save minimal data
   useEffect(() => {
     try {
+      const MAX_MESSAGES = 5;
+      const MAX_CONTENT = 200;
+      
       const lightConversations: Record<string, any> = {};
       Object.entries(conversations).forEach(([id, convo]) => {
         if (convo.messages && convo.messages.length > 0) {
-          // Save only essential data, truncate content
-          const lightMessages = convo.messages.map((msg: any) => ({
+          // Save only last N messages with minimal data - NO meta at all
+          const recentMessages = convo.messages.slice(-MAX_MESSAGES);
+          const lightMessages = recentMessages.map((msg: any) => ({
             id: msg.id,
             role: msg.role,
-            content: msg.content?.length > 500 ? msg.content.slice(0, 500) + '...[truncated]' : msg.content,
-            timestamp: msg.timestamp,
-            meta: msg.meta ? { tokens_in: msg.meta.tokens_in, tokens_out: msg.meta.tokens_out } : undefined
+            content: msg.content?.length > MAX_CONTENT ? msg.content.slice(0, MAX_CONTENT) + '...' : msg.content,
+            timestamp: msg.timestamp
+            // NO meta - loaded from Supabase
           }));
           lightConversations[id] = {
             messages: lightMessages,

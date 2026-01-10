@@ -127,28 +127,28 @@ export const RAGUnifiedButton: React.FC<RAGUnifiedButtonProps> = ({
     const currentModeInfo = RAG_MODES.find(m => m.value === mode);
 
     return (
-        <div className="relative">
+        <div className="relative flex-shrink-0">
             {/* Main button - compact on mobile */}
             <button
                 ref={buttonRef}
                 onClick={() => setIsOpen(!isOpen)}
                 disabled={disabled}
-                className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm transition-all ${enabled
+                className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm transition-all flex-shrink-0 min-w-0 max-w-[80px] sm:max-w-none ${enabled
                     ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
                     : 'bg-secondary/50 text-muted-foreground border border-border hover:border-purple-500/30'
                     } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                 title={enabled ? 'Настроить RAG' : 'Включить поиск по документам'}
             >
-                <FileText size={14} className="sm:w-4 sm:h-4" />
-                <span className="hidden xs:inline">RAG</span>
+                <FileText size={14} className="flex-shrink-0" />
+                <span className="hidden sm:inline truncate">RAG</span>
                 {enabled && documentsCount > 0 && (
-                    <span className="bg-purple-500/30 px-1 sm:px-1.5 py-0.5 rounded text-[10px] sm:text-xs">
+                    <span className="bg-purple-500/30 px-1 py-0.5 rounded text-[10px] flex-shrink-0 hidden sm:inline">
                         {selectedCount > 0 && selectedCount < documentsCount
-                            ? `${selectedCount}/${documentsCount}`
+                            ? `${selectedCount}`
                             : documentsCount}
                     </span>
                 )}
-                <ChevronDown size={12} className={`transition-transform hidden sm:block ${isOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown size={12} className={`transition-transform hidden sm:block flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {/* Unified Popup */}
