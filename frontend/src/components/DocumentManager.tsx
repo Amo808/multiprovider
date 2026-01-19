@@ -1,6 +1,7 @@
 /**
  * DocumentManager Component
  * Handles document upload, listing, and management for RAG
+ * Documents are now per-conversation - each chat has its own documents
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ragService, Document } from '../services/rag';
@@ -9,6 +10,7 @@ interface DocumentManagerProps {
   isOpen: boolean;
   onClose: () => void;
   onDocumentSelect?: (documentId: string) => void;
+  conversationId?: string;  // NEW: Documents belong to specific conversation
 }
 
 type TabType = 'upload' | 'documents' | 'search';
@@ -16,7 +18,8 @@ type TabType = 'upload' | 'documents' | 'search';
 const DocumentManager: React.FC<DocumentManagerProps> = ({
   isOpen,
   onClose,
-  onDocumentSelect
+  onDocumentSelect,
+  conversationId  // NEW: Receive conversationId
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('documents');
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -28,7 +31,7 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [ragStatus, setRagStatus] = useState<{ configured: boolean; supported_types: string[] } | null>(null);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -54,8 +57,10 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const docs = await ragService.listDocuments();
+      // Load documents for specific conversation
+      const docs = await ragService.listDocuments(undefined, 50, conversationId);
       setDocuments(docs);
+      console.log(`[DocumentManager] Loaded ${docs.length} documents for conversation: ${conversationId || 'ALL'}`);
     } catch (err: any) {
       setError(err.message || 'Failed to load documents');
     } finally {
@@ -63,20 +68,28 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
     }
   };
 
+  const [uploadStatus, setUploadStatus] = useState<string>('');
+
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    
+
     setUploading(true);
     setUploadProgress(0);
+    setUploadStatus('');
     setError(null);
 
     try {
       for (const file of Array.from(files)) {
-        await ragService.uploadDocument(file, undefined, (progress) => {
-          setUploadProgress(progress);
-        });
+        // Upload document with conversationId to link it to specific chat
+        await ragService.uploadDocument(
+          file,
+          undefined,
+          (progress) => setUploadProgress(progress),
+          (status) => setUploadStatus(status),
+          conversationId  // Pass conversationId
+        );
       }
-      
+
       // Refresh document list
       await loadDocuments();
       setActiveTab('documents');
@@ -85,12 +98,13 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
     } finally {
       setUploading(false);
       setUploadProgress(0);
+      setUploadStatus('');
     }
   };
 
   const handleDelete = async (documentId: string) => {
     if (!confirm('Are you sure you want to delete this document?')) return;
-    
+
     try {
       await ragService.deleteDocument(documentId);
       setDocuments(docs => docs.filter(d => d.id !== documentId));
@@ -110,10 +124,10 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
-    
+
     setSearching(true);
     setError(null);
-    
+
     try {
       const response = await ragService.search(searchQuery, { limit: 10 });
       setSearchResults(response.results);
@@ -153,7 +167,7 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
     e.stopPropagation();
     setIsDragging(false);
     dragCounterRef.current = 0;
-    
+
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFileUpload(e.dataTransfer.files);
     }
@@ -183,7 +197,7 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div 
+      <div
         className="bg-[#1a1a2e] rounded-2xl w-[800px] max-h-[80vh] overflow-hidden shadow-2xl border border-white/10"
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
@@ -209,11 +223,10 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-6 py-3 text-sm font-medium transition-colors ${
-                activeTab === tab
-                  ? 'text-purple-400 border-b-2 border-purple-400'
-                  : 'text-gray-400 hover:text-white'
-              }`}
+              className={`px-6 py-3 text-sm font-medium transition-colors ${activeTab === tab
+                ? 'text-purple-400 border-b-2 border-purple-400'
+                : 'text-gray-400 hover:text-white'
+                }`}
             >
               {tab === 'documents' && '📄 Documents'}
               {tab === 'upload' && '⬆️ Upload'}
@@ -272,9 +285,9 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
                   >
                     <div className="flex items-center space-x-4">
                       <div className="text-2xl">
-                        {doc.content_type?.includes('pdf') ? '📕' : 
-                         doc.content_type?.includes('word') ? '📘' :
-                         doc.content_type?.includes('markdown') ? '📝' : '📄'}
+                        {doc.content_type?.includes('pdf') ? '📕' :
+                          doc.content_type?.includes('word') ? '📘' :
+                            doc.content_type?.includes('markdown') ? '📝' : '📄'}
                       </div>
                       <div>
                         <div className="font-medium text-white">{doc.name}</div>
@@ -327,9 +340,8 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
           {activeTab === 'upload' && (
             <div className="space-y-4">
               <div
-                className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
-                  isDragging ? 'border-purple-500 bg-purple-500/10' : 'border-white/20 hover:border-white/40'
-                }`}
+                className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors ${isDragging ? 'border-purple-500 bg-purple-500/10' : 'border-white/20 hover:border-white/40'
+                  }`}
               >
                 <input
                   ref={fileInputRef}
@@ -339,13 +351,13 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
                   onChange={(e) => handleFileUpload(e.target.files)}
                   className="hidden"
                 />
-                
+
                 {uploading ? (
                   <div className="space-y-4">
                     <div className="text-4xl animate-bounce">📤</div>
-                    <div className="text-white">Uploading...</div>
+                    <div className="text-white">{uploadStatus || 'Uploading...'}</div>
                     <div className="w-full bg-white/10 rounded-full h-2">
-                      <div 
+                      <div
                         className="bg-purple-500 h-2 rounded-full transition-all duration-300"
                         style={{ width: `${uploadProgress}%` }}
                       />

@@ -3,6 +3,8 @@
  * Handles document upload, processing, and search
  */
 
+import { extractTextFromPDF, textToFile, isPDF } from '../utils/pdfUtils';
+
 const API_BASE_URL = '/api/rag';
 
 export interface Document {
@@ -77,27 +79,81 @@ class RAGService {
 
   /**
    * Upload a document for RAG processing
+   * For PDFs: automatically extracts text with OCR fallback for scanned documents
+   * 
+   * @param file - File to upload
+   * @param metadata - Optional metadata
+   * @param onProgress - Progress callback (0-100)
+   * @param onStatus - Status message callback
+   * @param conversationId - Optional conversation ID to link document to specific chat
    */
   async uploadDocument(
     file: File,
     metadata?: Record<string, any>,
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number) => void,
+    onStatus?: (status: string) => void,
+    conversationId?: string  // NEW: Link to specific conversation
   ): Promise<Document> {
+    let fileToUpload = file;
+
+    // For PDFs, extract text with OCR fallback
+    if (isPDF(file)) {
+      onStatus?.('Extracting text from PDF...');
+      try {
+        const result = await extractTextFromPDF(file, (progress) => {
+          // Map PDF progress to 0-50% range
+          const mappedProgress = Math.round(progress.progress * 0.5);
+          onProgress?.(mappedProgress);
+          onStatus?.(progress.message);
+        });
+
+        // Convert extracted text to .txt file for upload
+        fileToUpload = textToFile(result.text, file.name);
+
+        // Add OCR info to metadata
+        metadata = {
+          ...metadata,
+          original_filename: file.name,
+          original_type: 'application/pdf',
+          used_ocr: result.usedOCR,
+          ocr_pages: result.ocrPages,
+          page_count: result.pageCount
+        };
+
+        onStatus?.(result.usedOCR
+          ? `OCR extracted text from ${result.ocrPages.length} pages`
+          : 'Text extracted successfully'
+        );
+      } catch (err) {
+        console.error('[RAG] PDF extraction failed:', err);
+        // Fall back to uploading original PDF
+        onStatus?.('PDF extraction failed, uploading original...');
+      }
+    }
+
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', fileToUpload);
     formData.append('user_email', this.getUserEmail());
-    
+
     if (metadata) {
       formData.append('metadata', JSON.stringify(metadata));
     }
 
+    // Add conversation_id if provided
+    if (conversationId) {
+      formData.append('conversation_id', conversationId);
+    }
+
+    onStatus?.('Uploading to server...');
+
     // Use XMLHttpRequest for progress tracking
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      
+
       xhr.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable && onProgress) {
-          const progress = Math.round((event.loaded / event.total) * 100);
+          // Map upload progress to 50-100% range (after PDF extraction)
+          const progress = 50 + Math.round((event.loaded / event.total) * 50);
           onProgress(progress);
         }
       });
@@ -106,6 +162,7 @@ class RAGService {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const response = JSON.parse(xhr.responseText);
+            onStatus?.('Upload complete');
             resolve(response.document);
           } catch (e) {
             reject(new Error('Invalid response format'));
@@ -129,7 +186,7 @@ class RAGService {
       });
 
       xhr.open('POST', `${API_BASE_URL}/documents/upload`);
-      
+
       // Add auth headers
       const authHeaders = this.getAuthHeaders();
       Object.entries(authHeaders).forEach(([key, value]) => {
@@ -141,16 +198,25 @@ class RAGService {
   }
 
   /**
-   * List all documents for current user
+   * List all documents for current user, optionally filtered by conversation
+   * 
+   * @param status - Filter by status
+   * @param limit - Max documents to return
+   * @param conversationId - Optional conversation ID to filter documents
    */
-  async listDocuments(status?: string, limit: number = 50): Promise<Document[]> {
+  async listDocuments(status?: string, limit: number = 50, conversationId?: string): Promise<Document[]> {
     const params = new URLSearchParams({
       user_email: this.getUserEmail(),
       limit: limit.toString(),
     });
-    
+
     if (status) {
       params.append('status', status);
+    }
+
+    // Add conversation_id filter if provided
+    if (conversationId) {
+      params.append('conversation_id', conversationId);
     }
 
     const response = await fetch(`${API_BASE_URL}/documents?${params}`, {

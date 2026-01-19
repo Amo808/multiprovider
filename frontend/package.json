@@ -49,6 +49,7 @@
     "shiki": "^1.0.0",
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.2.1",
+    "tesseract.js": "^7.0.0",
     "yet-another-react-lightbox": "^3.18.0",
     "zod": "^3.25.76"
   },

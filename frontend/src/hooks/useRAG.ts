@@ -25,6 +25,7 @@ interface UseRAGOptions {
   defaultEnabled?: boolean;
   defaultMode?: RAGSearchMode;
   defaultSettings?: Partial<RAGSettings>;
+  conversationId?: string;  // NEW: Filter documents by conversation
 }
 
 interface UseRAGReturn {
@@ -40,9 +41,10 @@ interface UseRAGReturn {
   ragEnabled: boolean;
   ragMode: RAGSearchMode;
   ragSettings: RAGSettings;
+  conversationId: string | undefined;  // NEW: Current conversation ID
 
   // Actions
-  loadDocuments: () => Promise<void>;
+  loadDocuments: (conversationId?: string) => Promise<void>;  // UPDATED: Optional conversation filter
   selectDocument: (documentId: string) => void;
   deselectDocument: (documentId: string) => void;
   clearSelection: () => void;
@@ -52,6 +54,7 @@ interface UseRAGReturn {
   setRagMode: (mode: RAGSearchMode) => void;
   setRagSettings: (settings: RAGSettings) => void;
   updateRagSettings: (partial: Partial<RAGSettings>) => void;
+  setConversationId: (id: string | undefined) => void;  // NEW: Change conversation context
 
   // Status
   isConfigured: boolean;
@@ -60,6 +63,8 @@ interface UseRAGReturn {
 
 // Storage key for persisting RAG settings
 const RAG_SETTINGS_KEY = 'rag_settings';
+const RAG_ENABLED_KEY = 'rag_enabled';
+const RAG_SELECTED_DOCS_KEY = 'rag_selected_docs';
 const RAG_SETTINGS_VERSION = 7; // v7: RESET - ensure max_percent_limit is synced with chunk_percent
 
 // Load settings from localStorage
@@ -126,20 +131,66 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
   const {
     maxTokens = 4000,
     useHybrid = true,
-    defaultEnabled = true,
+    defaultEnabled = false,  // RAG DISABLED by default - user must explicitly enable
     defaultMode = 'smart',
-    defaultSettings
+    defaultSettings,
+    conversationId: initialConversationId  // NEW: Initial conversation ID
   } = options;
 
+  // Conversation ID state - documents are per-conversation
+  const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
+
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>(() => {
+    // Load selected documents from localStorage - now per conversation
+    try {
+      const key = initialConversationId
+        ? `${RAG_SELECTED_DOCS_KEY}_${initialConversationId}`
+        : RAG_SELECTED_DOCS_KEY;
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          console.log('[RAG] Loaded selected documents from localStorage:', parsed, 'for conversation:', initialConversationId);
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('[RAG] Failed to load selected documents:', e);
+    }
+    return [];
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ragContext, setRagContext] = useState<RAGContextResponse | null>(null);
   const [isConfigured, setIsConfigured] = useState(false);
 
-  // RAG configuration state
-  const [ragEnabled, setRagEnabled] = useState(defaultEnabled);
+  // RAG configuration state - load from localStorage
+  const [ragEnabled, setRagEnabledState] = useState(() => {
+    try {
+      const stored = localStorage.getItem(RAG_ENABLED_KEY);
+      if (stored !== null) {
+        const enabled = JSON.parse(stored);
+        console.log('[RAG] Loaded ragEnabled from localStorage:', enabled);
+        return enabled;
+      }
+    } catch (e) {
+      console.warn('[RAG] Failed to load ragEnabled:', e);
+    }
+    return defaultEnabled;
+  });
+
+  // Wrapper for setRagEnabled that persists to localStorage
+  const setRagEnabled = useCallback((enabled: boolean) => {
+    setRagEnabledState(enabled);
+    try {
+      localStorage.setItem(RAG_ENABLED_KEY, JSON.stringify(enabled));
+      console.log('[RAG] Saved ragEnabled to localStorage:', enabled);
+    } catch (e) {
+      console.warn('[RAG] Failed to save ragEnabled:', e);
+    }
+  }, []);
+
   const [ragMode, setRagMode] = useState<RAGSearchMode>(defaultMode);
 
   // Advanced RAG settings - persisted in localStorage
@@ -203,8 +254,29 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
       setIsConfigured(status.configured);
 
       if (status.configured) {
-        const docs = await ragService.listDocuments('ready');
+        // Load documents filtered by conversation if conversationId is provided
+        const docs = await ragService.listDocuments('ready', 50, conversationId);
         setDocuments(docs);
+        console.log(`[RAG] Loaded ${docs.length} documents for conversation: ${conversationId || 'ALL'}`);
+
+        // Clean up selectedDocumentIds - remove any that no longer exist
+        const existingDocIds = new Set(docs.map(d => d.id));
+        setSelectedDocumentIds(prev => {
+          const filtered = prev.filter(id => existingDocIds.has(id));
+          if (filtered.length !== prev.length) {
+            console.log('[RAG] Cleaned up selected documents - removed non-existent docs');
+            // Save cleaned list (per conversation)
+            const key = conversationId
+              ? `${RAG_SELECTED_DOCS_KEY}_${conversationId}`
+              : RAG_SELECTED_DOCS_KEY;
+            try {
+              localStorage.setItem(key, JSON.stringify(filtered));
+            } catch (e) {
+              console.warn('[RAG] Failed to save cleaned documents:', e);
+            }
+          }
+          return filtered;
+        });
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load documents');
@@ -212,27 +284,67 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [conversationId]);
 
-  // Load documents on mount
+  // Reload documents when conversation changes
   useEffect(() => {
     loadDocuments();
-  }, []);
+    // Also reload selected documents for this conversation
+    const key = conversationId
+      ? `${RAG_SELECTED_DOCS_KEY}_${conversationId}`
+      : RAG_SELECTED_DOCS_KEY;
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setSelectedDocumentIds(parsed);
+          console.log('[RAG] Loaded selected documents for conversation:', conversationId, parsed);
+        }
+      } else {
+        setSelectedDocumentIds([]);
+      }
+    } catch (e) {
+      console.warn('[RAG] Failed to load selected documents:', e);
+      setSelectedDocumentIds([]);
+    }
+  }, [conversationId, loadDocuments]);
+
+  // Helper to save selected documents to localStorage (per conversation)
+  const saveSelectedDocs = useCallback((docs: string[]) => {
+    const key = conversationId
+      ? `${RAG_SELECTED_DOCS_KEY}_${conversationId}`
+      : RAG_SELECTED_DOCS_KEY;
+    try {
+      localStorage.setItem(key, JSON.stringify(docs));
+      console.log('[RAG] Saved selected documents to localStorage:', docs, 'for conversation:', conversationId);
+    } catch (e) {
+      console.warn('[RAG] Failed to save selected documents:', e);
+    }
+  }, [conversationId]);
 
   const selectDocument = useCallback((documentId: string) => {
-    setSelectedDocumentIds(prev =>
-      prev.includes(documentId) ? prev : [...prev, documentId]
-    );
-  }, []);
+    setSelectedDocumentIds(prev => {
+      if (prev.includes(documentId)) return prev;
+      const newList = [...prev, documentId];
+      saveSelectedDocs(newList);
+      return newList;
+    });
+  }, [saveSelectedDocs]);
 
   const deselectDocument = useCallback((documentId: string) => {
-    setSelectedDocumentIds(prev => prev.filter(id => id !== documentId));
-  }, []);
+    setSelectedDocumentIds(prev => {
+      const newList = prev.filter(id => id !== documentId);
+      saveSelectedDocs(newList);
+      return newList;
+    });
+  }, [saveSelectedDocs]);
 
   const clearSelection = useCallback(() => {
     setSelectedDocumentIds([]);
+    saveSelectedDocs([]);
     setRagContext(null);
-  }, []);
+  }, [saveSelectedDocs]);
 
   const buildContext = useCallback(async (query: string): Promise<string> => {
     if (selectedDocumentIds.length === 0) {
@@ -287,6 +399,7 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
     ragEnabled,
     ragMode,
     ragSettings,
+    conversationId,        // NEW: Current conversation ID
     loadDocuments,
     selectDocument,
     deselectDocument,
@@ -297,6 +410,7 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
     setRagMode,
     setRagSettings,
     updateRagSettings,
+    setConversationId,     // NEW: Change conversation context
     isConfigured,
     documentsCount: documents.length
   };

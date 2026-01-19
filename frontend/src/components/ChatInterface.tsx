@@ -16,6 +16,11 @@ import { RAGDebugPanel } from './RAGDebugPanel';
 import { RAGPromptsEditor } from './RAGPromptsEditor';
 import { ragService } from '../services/rag';
 import { DebugPanel, RequestDebugInfo } from './DebugPanel';
+import * as pdfjsLib from 'pdfjs-dist';
+import Tesseract from 'tesseract.js';
+
+// Configure PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 // Threshold for switching to virtualized list (performance optimization)
 // Lower threshold = faster initial load for chats with many messages
@@ -86,7 +91,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const { conversations, getConversation, sendMessage, clearConversation, stopStreaming, recoverStuckRequest, updateMessages, loadMoreMessages } = useConversationsContext();
 
-  // RAG hook for document search integration
+  // RAG hook for document search integration - pass conversationId for per-chat documents
   const {
     ragEnabled,
     setRagEnabled,
@@ -100,8 +105,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     selectedDocumentIds,
     selectDocument,
     deselectDocument,
-    clearSelection
-  } = useRAG();
+    clearSelection,
+    setConversationId: setRagConversationId
+  } = useRAG({ conversationId });  // Pass conversationId to hook
+
+  // Update RAG conversation when conversation changes
+  useEffect(() => {
+    setRagConversationId(conversationId);
+  }, [conversationId, setRagConversationId]);
 
   // Toggle document selection for RAG
   const handleDocumentToggle = useCallback((docId: string) => {
@@ -426,13 +437,138 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setPendingPaste(null);
   }, [pendingPaste, inputValue, hiddenContent]);
 
-  // Load prompt from text file
+  // Extract text from PDF file - with OCR fallback for scanned documents
+  const extractTextFromPDF = useCallback(async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+    const textParts: string[] = [];
+    const emptyPages: number[] = []; // Track pages that need OCR
+
+    // First pass: try to extract text normally
+    for (let i = 1; i <= pdf.numPages; i++) {
+      onProgress?.(`Extracting page ${i}/${pdf.numPages}...`);
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+
+      // Better text extraction - handle different item types
+      let pageText = '';
+      let lastY: number | null = null;
+
+      for (const item of textContent.items) {
+        const textItem = item as any;
+
+        // Skip empty items
+        if (!textItem.str || textItem.str.trim() === '') continue;
+
+        // Check if we need a newline (different Y position = new line)
+        if (lastY !== null && textItem.transform) {
+          const currentY = textItem.transform[5];
+          if (Math.abs(currentY - lastY) > 5) {
+            pageText += '\n';
+          } else if (pageText && !pageText.endsWith(' ')) {
+            pageText += ' ';
+          }
+        }
+
+        pageText += textItem.str;
+
+        if (textItem.transform) {
+          lastY = textItem.transform[5];
+        }
+      }
+
+      // Check if page has content
+      const trimmedText = pageText.trim();
+      if (trimmedText && trimmedText.length > 10) {
+        textParts.push(`--- Page ${i} ---\n${trimmedText}`);
+      } else {
+        // Mark for OCR
+        emptyPages.push(i);
+        textParts.push(`--- Page ${i} ---\n__OCR_PLACEHOLDER_${i}__`);
+      }
+    }
+
+    // Check if we need OCR
+    const meaningfulText = textParts.join('').replace(/--- Page \d+ ---/g, '').replace(/__OCR_PLACEHOLDER_\d+__/g, '').trim();
+
+    if (!meaningfulText || emptyPages.length > pdf.numPages / 2) {
+      // More than half pages empty - likely scanned PDF, use OCR
+      onProgress?.(`Scanned PDF detected. Running OCR on ${emptyPages.length || pdf.numPages} pages...`);
+
+      // OCR all pages if mostly empty
+      const pagesToOCR = meaningfulText ? emptyPages : Array.from({ length: pdf.numPages }, (_, i) => i + 1);
+
+      for (const pageNum of pagesToOCR) {
+        onProgress?.(`OCR page ${pageNum}/${pdf.numPages}...`);
+
+        try {
+          const page = await pdf.getPage(pageNum);
+          const viewport = page.getViewport({ scale: 2.0 }); // Higher scale for better OCR
+
+          // Render page to canvas
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d')!;
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+
+          await page.render({ canvasContext: context, viewport, canvas } as any).promise;
+
+          // Run OCR with Russian + English
+          const { data } = await Tesseract.recognize(canvas, 'rus+eng', {
+            logger: (m) => {
+              if (m.status === 'recognizing text') {
+                onProgress?.(`OCR page ${pageNum}: ${Math.round((m.progress || 0) * 100)}%`);
+              }
+            }
+          });
+
+          const ocrText = data.text.trim();
+
+          if (ocrText) {
+            // Replace placeholder or add new
+            const placeholderIndex = textParts.findIndex(p => p.includes(`__OCR_PLACEHOLDER_${pageNum}__`));
+            if (placeholderIndex >= 0) {
+              textParts[placeholderIndex] = `--- Page ${pageNum} (OCR) ---\n${ocrText}`;
+            } else {
+              textParts[pageNum - 1] = `--- Page ${pageNum} (OCR) ---\n${ocrText}`;
+            }
+          }
+        } catch (ocrError) {
+          console.error(`OCR failed for page ${pageNum}:`, ocrError);
+          // Keep placeholder but mark as failed
+          const placeholderIndex = textParts.findIndex(p => p.includes(`__OCR_PLACEHOLDER_${pageNum}__`));
+          if (placeholderIndex >= 0) {
+            textParts[placeholderIndex] = `--- Page ${pageNum} ---\n[OCR failed]`;
+          }
+        }
+      }
+    }
+
+    // Clean up any remaining placeholders
+    const result = textParts
+      .map(p => p.replace(/__OCR_PLACEHOLDER_\d+__/g, '[No text extracted]'))
+      .join('\n\n');
+
+    // Final check
+    const finalText = result.replace(/--- Page \d+( \(OCR\))? ---/g, '').replace(/\[(No text extracted|OCR failed)\]/g, '').trim();
+    if (!finalText) {
+      throw new Error('Could not extract any text from PDF. The file may be corrupted or contain only images that OCR could not read.');
+    }
+
+    return result;
+  }, []);
+
+  // Load prompt from text file or PDF
   const handleLoadPromptFromFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Only allow text files
-    const allowedTypes = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'text/xml'];
+    // Check if PDF
+    const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+    // Allow text files and PDF
+    const allowedTypes = ['text/plain', 'text/markdown', 'application/json', 'text/csv', 'text/html', 'text/xml', 'application/pdf'];
     const isText = allowedTypes.includes(file.type) ||
       file.name.endsWith('.txt') ||
       file.name.endsWith('.md') ||
@@ -445,39 +581,49 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       file.name.endsWith('.xml') ||
       file.name.endsWith('.yaml') ||
       file.name.endsWith('.yml') ||
-      file.name.endsWith('.csv');
+      file.name.endsWith('.csv') ||
+      file.name.endsWith('.pdf');
 
     if (!isText) {
-      alert('Please select a text file (.txt, .md, .json, .py, .js, etc.)');
+      alert('Please select a text file (.txt, .md, .json, .py, .js, .pdf, etc.)');
       return;
     }
 
-    // Size limit for file - 10MB to allow large documents
-    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    // Size limit for file - 10MB to allow large documents (50MB for PDF)
+    const MAX_FILE_SIZE = isPDF ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
     if (file.size > MAX_FILE_SIZE) {
-      alert(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is 10MB.`);
+      alert(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is ${isPDF ? '50' : '10'}MB.`);
       return;
     }
 
     setIsLoadingFile(true);
-    setPromptSizeWarning(null);
+    setPromptSizeWarning(isPDF ? 'Extracting text from PDF...' : null);
 
     try {
-      const text = await file.text();
+      // Extract text from PDF or read text file
+      let text: string;
+      if (isPDF) {
+        text = await extractTextFromPDF(file, (progress) => {
+          setPromptSizeWarning(progress);
+        });
+      } else {
+        text = await file.text();
+      }
+
       const len = text.length;
 
       // Use hidden mode for large content
       if (len > PROMPT_DISPLAY_LIMIT) {
         setHiddenContent(text);
         setInputValue(`[Large file: ${file.name} - ${(len / 1000).toFixed(1)}k chars]\n\n${text.slice(0, 500)}...`);
-        setPromptSizeWarning(`Loaded ${(len / 1000).toFixed(1)}k characters from "${file.name}" - showing preview only`);
+        setPromptSizeWarning(`Loaded ${(len / 1000).toFixed(1)}k characters from "${file.name}"${isPDF ? ' (PDF)' : ''} - showing preview only`);
       } else if (len > PROMPT_FILE_RECOMMENDED) {
         setHiddenContent(null);
-        setPromptSizeWarning(`Loaded ${(len / 1000).toFixed(1)}k characters from "${file.name}"`);
+        setPromptSizeWarning(`Loaded ${(len / 1000).toFixed(1)}k characters from "${file.name}"${isPDF ? ' (PDF)' : ''}`);
         setInputValue(text);
       } else {
         setHiddenContent(null);
-        setPromptSizeWarning(`Loaded ${len.toLocaleString()} characters from "${file.name}"`);
+        setPromptSizeWarning(`Loaded ${len.toLocaleString()} characters from "${file.name}"${isPDF ? ' (PDF)' : ''}`);
         setInputValue(text);
       }
 
@@ -487,11 +633,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       }
     } catch (err) {
       console.error('[ChatInterface] Failed to read file:', err);
-      alert('Failed to read file. Please try again.');
+      alert(isPDF ? 'Failed to extract text from PDF. The file may be scanned/image-based or corrupted.' : 'Failed to read file. Please try again.');
     } finally {
       setIsLoadingFile(false);
     }
-  }, []);
+  }, [extractTextFromPDF]);
 
   // File drop handler - uploads files for RAG (non-blocking)
   const handleFileDrop = useCallback(async (files: File[]) => {
@@ -659,6 +805,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
 
     const messageText = contentToSend.trim();
+
+    // === RAG LOGIC ===
+    // RAG is enabled ONLY if:
+    // 1. ragEnabled = true (user explicitly enabled RAG)
+    // 2. There are documents available (documentsCount > 0)
+    // 3. User selected specific documents OR explicitly wants all documents
+    // If no documents selected AND ragEnabled, use all documents (but require explicit ragEnabled)
+    const effectiveRagEnabled = ragEnabled && documentsCount > 0;
+    const effectiveDocumentIds = selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined;
+
+    // If RAG is disabled by user, don't send any documents
+    const ragDocumentIds = effectiveRagEnabled ? effectiveDocumentIds : undefined;
+
     const request: SendMessageRequest = {
       message: messageText,
       provider: selectedProvider,
@@ -668,9 +827,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       ...(systemPrompt && systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
       // Use ragSettings for all RAG parameters including new chunk_mode and orchestrator
       rag: {
-        enabled: ragEnabled && documentsCount > 0,
-        mode: ragEnabled ? ragMode : 'off',
-        document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
+        // RAG enabled only if user explicitly enabled it AND has documents
+        enabled: effectiveRagEnabled,
+        mode: effectiveRagEnabled ? ragMode : 'off',
+        // Document IDs: only send if RAG is enabled, empty array means "no documents" (not "all")
+        document_ids: ragDocumentIds,
 
         // === CHUNK MODE SETTINGS ===
         chunk_mode: ragSettings.chunk_mode,
@@ -708,16 +869,21 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       requestHasSystemPrompt: !!request.system_prompt,
       requestSystemPromptLength: request.system_prompt?.length || 0,
       ragEnabled,
+      effectiveRagEnabled,
       documentsCount,
+      selectedDocumentIds,
+      ragDocumentIds,
       ragConfig: request.rag,
-      selectedDocumentIds: selectedDocumentIds.length,
       messageLength: messageText.length,
       isHiddenMode
     });
 
     // === DEBUG: Log RAG settings being sent ===
-    if (ragEnabled && documentsCount > 0) {
-      console.log('%c[RAG SETTINGS SENT TO BACKEND]', 'color: yellow; font-weight: bold;', {
+    if (effectiveRagEnabled) {
+      console.log('%c[RAG SETTINGS SENT TO BACKEND]', 'color: green; font-weight: bold;', {
+        enabled: request.rag?.enabled,
+        mode: request.rag?.mode,
+        document_ids: request.rag?.document_ids,
         chunk_mode: request.rag?.chunk_mode,
         max_chunks: request.rag?.max_chunks,
         chunk_percent: request.rag?.chunk_percent,
@@ -727,6 +893,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         use_rerank: request.rag?.use_rerank,
         keyword_weight: request.rag?.keyword_weight,
         semantic_weight: request.rag?.semantic_weight
+      });
+    } else {
+      console.log('%c[RAG DISABLED]', 'color: red; font-weight: bold;', {
+        ragEnabled,
+        documentsCount,
+        selectedDocumentIds: selectedDocumentIds.length,
+        reason: !ragEnabled ? 'User disabled RAG' : documentsCount === 0 ? 'No documents' : 'Unknown'
       });
     }
 
@@ -1115,7 +1288,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".txt,.md,.json,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,.csv,.sql,.sh,.bash,.ps1,.bat,.c,.cpp,.h,.hpp,.java,.rb,.go,.rs,.swift,.kt,.php"
+                accept=".txt,.md,.json,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,.csv,.sql,.sh,.bash,.ps1,.bat,.c,.cpp,.h,.hpp,.java,.rb,.go,.rs,.swift,.kt,.php,.pdf,application/pdf"
                 onChange={handleLoadPromptFromFile}
                 className="hidden"
               />
@@ -1128,7 +1301,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   disabled={isLoadingFile || isStreaming}
                   variant="ghost"
                   size="sm"
-                  title="Load prompt from file"
+                  title="Load file into message (TXT, PDF, MD, code files)"
                   className="h-8 w-8 p-0 rounded-lg hover:bg-secondary flex-shrink-0"
                 >
                   {isLoadingFile ? (
@@ -1329,6 +1502,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       <DocumentManager
         isOpen={showDocumentManager}
         onClose={() => setShowDocumentManager(false)}
+        conversationId={conversationId}  // Pass conversationId for per-chat documents
       />
 
       {/* Large Paste Confirmation Modal */}

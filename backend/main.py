@@ -76,6 +76,15 @@ from supabase_client import (
 )
 from supabase_client.api import router as rag_router
 from supabase_client.parallel_conversations import get_parallel_store
+# Conversation RAG - история чата как knowledge base
+try:
+    from conversation_rag_api import router as conversation_rag_router
+    CONVERSATION_RAG_AVAILABLE = True
+except ImportError:
+    conversation_rag_router = None
+    CONVERSATION_RAG_AVAILABLE = False
+    print("[CONV-RAG] conversation_rag_api module not available")
+
 from process_events import (
     process_emitter, ProcessType, ProcessStatus, ProcessContext,
     stream_process_events, track_compression, track_multi_model
@@ -253,9 +262,9 @@ class OrchestratorConfig(BaseModel):
 
 class RAGConfig(BaseModel):
     """RAG configuration for chat requests"""
-    enabled: bool = True  # RAG enabled by default - auto-searches user's documents
-    mode: str = "smart"  # "off", "auto", "smart", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
-    document_ids: Optional[List[str]] = None  # Specific documents to search (None = all)
+    enabled: bool = False  # RAG DISABLED by default - must be explicitly enabled
+    mode: str = "off"  # "off", "auto", "smart", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
+    document_ids: Optional[List[str]] = None  # Specific documents to search (None = all user's documents)
     
     # === CHUNK MODE SETTINGS ===
     chunk_mode: str = "adaptive"  # "fixed", "percent", "adaptive"
@@ -771,9 +780,16 @@ async def update_rag_prompts_endpoint(data: dict, _: str = Depends(get_current_u
 async def rag_upload_document(
     file: UploadFile = File(...),
     user_email: str = Depends(get_current_user),
-    metadata: Optional[str] = None
+    metadata: Optional[str] = None,
+    conversation_id: Optional[str] = None  # NEW: Link to specific conversation
 ):
-    """Upload and process a document for RAG."""
+    """Upload and process a document for RAG.
+    
+    Args:
+        file: Document file
+        metadata: Optional JSON metadata
+        conversation_id: Optional conversation ID to link document to specific chat
+    """
     rag_store = get_supabase_rag_store()
     if not rag_store:
         raise HTTPException(status_code=503, detail="Supabase RAG not available")
@@ -794,10 +810,11 @@ async def rag_upload_document(
             file_content=content,
             filename=file.filename,
             content_type=file.content_type or "application/octet-stream",
-            metadata=meta_dict
+            metadata=meta_dict,
+            conversation_id=conversation_id  # Pass conversation_id
         )
         
-        logger.info(f"[SUPABASE-RAG] Uploaded document: {doc['id']} for user {user_email}")
+        logger.info(f"[SUPABASE-RAG] Uploaded document: {doc['id']} for user {user_email}, conversation={conversation_id}")
         
         return {"document": doc}
         
@@ -810,15 +827,22 @@ async def rag_upload_document(
 async def rag_list_documents(
     user_email: str = Depends(get_current_user),
     status: Optional[str] = None,
-    limit: int = 50
+    limit: int = 50,
+    conversation_id: Optional[str] = None  # NEW: Filter by conversation
 ):
-    """List documents for current user."""
+    """List documents for current user, optionally filtered by conversation."""
     rag_store = get_supabase_rag_store()
     if not rag_store:
         raise HTTPException(status_code=503, detail="Supabase RAG not available")
     
     try:
-        docs = rag_store.list_documents(user_email, status=status, limit=limit)
+        docs = rag_store.list_documents(
+            user_email, 
+            status=status, 
+            limit=limit,
+            conversation_id=conversation_id  # Pass conversation filter
+        )
+        logger.info(f"[RAG] Listed {len(docs)} documents for user={user_email}, conversation={conversation_id}")
         return {"documents": docs}
     except Exception as e:
         logger.error(f"[SUPABASE-RAG] List failed: {e}")
@@ -1161,12 +1185,14 @@ async def refresh_provider_models(provider_id: str, _: str = Depends(get_current
         if status:
             status.connected = False
             status.error = str(e)
-            
+            status.loading = False
+        
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @api_router.post("/providers/{provider_id}/test")
 async def test_provider_connection(provider_id: str, _: str = Depends(get_current_user)):
-    """Test connection to a specific provider."""
+    """Test connection for a specific provider."""
     try:
         adapter = provider_manager.registry.get(provider_id)
         if not adapter:
@@ -1310,6 +1336,24 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         logger.info(f"[CHAT] Processing message for conversation_id: {conversation_id} user={user_email}")
         try:
             conversation_store.save_message(conversation_id, user_message, user_email=user_email)
+            
+            # Index user message for conversation RAG (async, non-blocking)
+            if CONVERSATION_RAG_AVAILABLE:
+                try:
+                    from storage.conversation_rag import get_conversation_rag_store
+                    conv_rag = get_conversation_rag_store()
+                    import asyncio
+                    asyncio.create_task(conv_rag.index_message(
+                        conversation_id=conversation_id,
+                        message_id=user_message.id,
+                        role="user",
+                        content=user_message.content,
+                        user_id=user_email,
+                        timestamp=user_message.timestamp.isoformat()
+                    ))
+                    logger.debug(f"[CONV-RAG] Queued user message indexing: {user_message.id[:8]}...")
+                except Exception as idx_err:
+                    logger.warning(f"[CONV-RAG] Failed to index user message: {idx_err}")
         except Exception as save_err:
             logger.error(f"[CHAT] Failed to save user message: {save_err}")
         
@@ -1431,7 +1475,11 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         logger.info(f"[RAG] Config received: enabled={rag_config.enabled}, mode={rag_config.mode}, document_ids={rag_config.document_ids}")
         
         rag_debug_info = {}  # For UI transparency
-        if rag_config.enabled and rag_config.mode != "off":
+        
+        # IMPORTANT: Skip RAG entirely if disabled or mode is "off"
+        if not rag_config.enabled or rag_config.mode == "off":
+            logger.info(f"[RAG] RAG is DISABLED (enabled={rag_config.enabled}, mode={rag_config.mode}) - skipping")
+        elif rag_config.enabled and rag_config.mode != "off":
             logger.info(f"[RAG] RAG is enabled, starting search...")
             try:
                 from supabase_client.rag import get_rag_store
@@ -1440,10 +1488,33 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                 logger.info(f"[RAG] RAG store initialized")
                 
                 # Check if user has any documents
-                user_docs = rag_store.list_documents(user_email, status="ready", limit=1)
+                user_docs = rag_store.list_documents(user_email, status="ready", limit=100)
                 
                 if user_docs:
-                    logger.info(f"[RAG] Searching documents for user {user_email}")
+                    # === DOCUMENT SELECTION ===
+                    # IMPORTANT: If document_ids is empty list or None, do NOT use all documents
+                    # RAG should only work with explicitly selected documents
+                    selected_doc_ids = rag_config.document_ids
+                    
+                    if selected_doc_ids is None or len(selected_doc_ids) == 0:
+                        # No documents selected - skip RAG entirely
+                        logger.info(f"[RAG] No documents selected (document_ids={selected_doc_ids}) - skipping RAG")
+                        raise Exception("No documents selected for RAG")
+                    
+                    # Filter to only selected documents that exist and are ready
+                    available_doc_ids = {doc["id"] for doc in user_docs}
+                    selected_doc_ids = [did for did in selected_doc_ids if did in available_doc_ids]
+                    logger.info(f"[RAG] Using {len(selected_doc_ids)} SELECTED documents: {selected_doc_ids}")
+                    
+                    if not selected_doc_ids:
+                        logger.warning(f"[RAG] None of the selected documents are available - skipping RAG")
+                        # Skip RAG - no valid documents selected
+                        raise Exception("Selected documents not found")
+                    
+                    # For single-document modes, use first selected document
+                    primary_doc_id = selected_doc_ids[0] if selected_doc_ids else None
+                    
+                    logger.info(f"[RAG] Searching {len(selected_doc_ids)} documents for user {user_email}")
                     
                     # Determine RAG strategy based on mode
                     # Modes: "off", "auto", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
@@ -1980,6 +2051,24 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                         logger.info(f"[CHAT] Saving assistant message conversation={conversation_id} total_latency={time.time()-start_ts:.2f}s")
                         try:
                             conversation_store.save_message(conversation_id, assistant_message, user_email=user_email)
+                            
+                            # Index assistant message for conversation RAG (async, non-blocking)
+                            if CONVERSATION_RAG_AVAILABLE:
+                                try:
+                                    from storage.conversation_rag import get_conversation_rag_store
+                                    conv_rag = get_conversation_rag_store()
+                                    asyncio.create_task(conv_rag.index_message(
+                                        conversation_id=conversation_id,
+                                        message_id=assistant_message.id,
+                                        role="assistant",
+                                        content=assistant_message.content,
+                                        user_id=user_email,
+                                        timestamp=assistant_message.timestamp.isoformat(),
+                                        model=model_id
+                                    ))
+                                    logger.debug(f"[CONV-RAG] Queued assistant message indexing: {assistant_message.id[:8]}...")
+                                except Exception as idx_err:
+                                    logger.warning(f"[CONV-RAG] Failed to index assistant message: {idx_err}")
                         except Exception as save_err:
                             logger.error(f"[CHAT] Failed to save assistant message: {save_err}")
                         
@@ -3759,6 +3848,11 @@ app.include_router(google_auth_router)
 
 # Register RAG router under /api prefix
 app.include_router(rag_router, prefix="/api")
+
+# Register Conversation RAG router (history indexing)
+if CONVERSATION_RAG_AVAILABLE and conversation_rag_router:
+    app.include_router(conversation_rag_router)
+    logger.info("[CONV-RAG] Conversation RAG router registered")
 
 # Serve static files (frontend) at root - AFTER API router registration
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"

@@ -248,6 +248,118 @@ SUPPORTED_TYPES = {
 }
 
 
+def remove_chunk_overlaps(chunks: List[str], min_overlap: int = 20, max_overlap: int = 300) -> str:
+    """
+    Remove overlapping text between consecutive chunks when concatenating.
+    
+    When chunks are created with overlap (e.g., 200 chars), consecutive chunks
+    share some text. This function detects and removes these duplicates.
+    
+    Args:
+        chunks: List of chunk texts in order
+        min_overlap: Minimum overlap length to detect (avoid false positives)
+        max_overlap: Maximum overlap to search for
+    
+    Returns:
+        Combined text with overlaps removed
+    """
+    if not chunks:
+        return ""
+    
+    if len(chunks) == 1:
+        return chunks[0]
+    
+    result = [chunks[0]]
+    
+    for i in range(1, len(chunks)):
+        prev_chunk = result[-1] if result else ""
+        curr_chunk = chunks[i]
+        
+        if not prev_chunk or not curr_chunk:
+            result.append(curr_chunk)
+            continue
+        
+        # Look for overlap: end of previous chunk should match start of current chunk
+        overlap_found = 0
+        
+        # Search for overlapping suffix/prefix
+        # Start from larger overlaps and work down to find the longest match
+        for overlap_len in range(min(max_overlap, len(prev_chunk), len(curr_chunk)), min_overlap - 1, -1):
+            prev_suffix = prev_chunk[-overlap_len:]
+            curr_prefix = curr_chunk[:overlap_len]
+            
+            if prev_suffix == curr_prefix:
+                overlap_found = overlap_len
+                break
+        
+        if overlap_found > 0:
+            # Remove the overlapping part from the beginning of current chunk
+            result.append(curr_chunk[overlap_found:])
+        else:
+            result.append(curr_chunk)
+    
+    return "".join(result)
+
+
+def deduplicate_sequential_chunks(chunks: List[Dict], content_key: str = "content") -> List[Dict]:
+    """
+    Deduplicate sequential chunks that have overlapping content.
+    Modifies content in place and returns chunks with cleaned content.
+    
+    Args:
+        chunks: List of chunk dictionaries with content
+        content_key: Key to access content in chunk dict
+    
+    Returns:
+        Same chunks with overlapping content removed
+    """
+    if not chunks or len(chunks) < 2:
+        return chunks
+    
+    # Sort by chunk_index to ensure correct order
+    sorted_chunks = sorted(chunks, key=lambda c: c.get("chunk_index", 0))
+    
+    # Extract just the content texts
+    texts = [c.get(content_key, "") for c in sorted_chunks]
+    
+    # Remove overlaps
+    combined = remove_chunk_overlaps(texts)
+    
+    # Can't easily re-split, so return combined as single chunk info
+    # Better approach: modify each chunk to remove its overlap
+    result_chunks = []
+    current_pos = 0
+    
+    for i, chunk in enumerate(sorted_chunks):
+        orig_content = chunk.get(content_key, "")
+        
+        if i == 0:
+            # First chunk - keep as is
+            result_chunks.append(chunk)
+            current_pos = len(orig_content)
+        else:
+            # Find where this chunk's unique content starts
+            prev_chunk = sorted_chunks[i - 1]
+            prev_content = prev_chunk.get(content_key, "")
+            
+            # Detect overlap with previous
+            overlap_found = 0
+            for overlap_len in range(min(CHUNK_OVERLAP + 50, len(prev_content), len(orig_content)), 19, -1):
+                if prev_content[-overlap_len:] == orig_content[:overlap_len]:
+                    overlap_found = overlap_len
+                    break
+            
+            if overlap_found > 0:
+                # Create modified chunk without the overlap
+                new_chunk = chunk.copy()
+                new_chunk[content_key] = orig_content[overlap_found:]
+                result_chunks.append(new_chunk)
+            else:
+                result_chunks.append(chunk)
+    
+    return result_chunks
+
+
 class RAGStore:
     """Supabase-backed RAG storage with vector search"""
     
@@ -477,9 +589,21 @@ class RAGStore:
         file_size: int,
         storage_path: Optional[str] = None,
         file_hash: Optional[str] = None,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        conversation_id: Optional[str] = None  # NEW: Link to specific conversation
     ) -> Dict[str, Any]:
-        """Create a document record"""
+        """Create a document record
+        
+        Args:
+            user_email: User's email
+            name: Document name
+            content_type: MIME type
+            file_size: File size in bytes
+            storage_path: Path in storage
+            file_hash: Hash for deduplication
+            metadata: Additional metadata
+            conversation_id: Optional conversation ID to link document to specific chat
+        """
         user_id = self._get_user_id(user_email)
         
         data = {
@@ -494,8 +618,12 @@ class RAGStore:
             "metadata": metadata or {}
         }
         
+        # Add conversation_id if provided
+        if conversation_id:
+            data["conversation_id"] = conversation_id
+        
         result = self.client.table("documents").insert(data).execute()
-        logger.info(f"Created document: {result.data[0]['id']} for user {user_email}")
+        logger.info(f"Created document: {result.data[0]['id']} for user {user_email}, conversation={conversation_id}")
         return result.data[0]
     
     def get_document(self, document_id: str, user_email: str) -> Optional[Dict[str, Any]]:
@@ -514,9 +642,17 @@ class RAGStore:
         self,
         user_email: str,
         status: Optional[str] = None,
-        limit: int = 50
+        limit: int = 50,
+        conversation_id: Optional[str] = None  # NEW: Filter by conversation
     ) -> List[Dict[str, Any]]:
-        """List documents for a user"""
+        """List documents for a user, optionally filtered by conversation
+        
+        Args:
+            user_email: User's email
+            status: Filter by status (e.g. 'ready', 'processing')
+            limit: Max documents to return
+            conversation_id: If provided, only return documents for this conversation
+        """
         user_id = self._get_user_id(user_email)
         
         query = self.client.table("documents")\
@@ -527,6 +663,10 @@ class RAGStore:
         
         if status:
             query = query.eq("status", status)
+        
+        # Filter by conversation_id if provided
+        if conversation_id:
+            query = query.eq("conversation_id", conversation_id)
         
         result = query.execute()
         return result.data or []
@@ -667,7 +807,8 @@ class RAGStore:
         file_content: bytes,
         filename: str,
         content_type: str,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        conversation_id: Optional[str] = None  # NEW: Link to specific conversation
     ) -> Dict[str, Any]:
         """
         Full document processing pipeline:
@@ -676,28 +817,40 @@ class RAGStore:
         3. Extract text
         4. Chunk and embed
         5. Store vectors
+        
+        Args:
+            user_email: User's email
+            file_content: File bytes
+            filename: Original filename
+            content_type: MIME type
+            metadata: Optional metadata
+            conversation_id: Optional conversation ID to link document to specific chat
         """
         user_id = self._get_user_id(user_email)
         
         # Calculate file hash for deduplication
         file_hash = hashlib.sha256(file_content).hexdigest()
         
-        # Check for duplicate
-        existing = self.client.table("documents")\
+        # Check for duplicate - only within same conversation if conversation_id provided
+        query = self.client.table("documents")\
             .select("id")\
             .eq("user_id", user_id)\
-            .eq("file_hash", file_hash)\
-            .execute()
+            .eq("file_hash", file_hash)
+        
+        if conversation_id:
+            query = query.eq("conversation_id", conversation_id)
+        
+        existing = query.execute()
         
         if existing.data:
-            logger.info(f"Document already exists: {existing.data[0]['id']}")
+            logger.info(f"Document already exists: {existing.data[0]['id']} (conversation={conversation_id})")
             return self.get_document(existing.data[0]["id"], user_email)
         
         # Generate storage path with sanitized filename
         safe_filename = sanitize_filename(filename)
         storage_path = f"{user_id}/{uuid4()}/{safe_filename}"
         
-        logger.info(f"Uploading document: {filename} -> {safe_filename}")
+        logger.info(f"Uploading document: {filename} -> {safe_filename} (conversation={conversation_id})")
         
         # Upload to storage
         try:
@@ -710,7 +863,7 @@ class RAGStore:
             logger.error(f"Failed to upload to storage: {e}")
             raise
         
-        # Create document record
+        # Create document record with conversation_id
         doc = self.create_document(
             user_email=user_email,
             name=filename,
@@ -718,7 +871,8 @@ class RAGStore:
             file_size=len(file_content),
             storage_path=storage_path,
             file_hash=file_hash,
-            metadata=metadata
+            metadata=metadata,
+            conversation_id=conversation_id  # Pass conversation_id
         )
         
         # Process asynchronously
@@ -1914,7 +2068,6 @@ Next search query (or DONE):"""
                     del chunk["documents"]  # Clean up nested data
             
             all_chunks.extend(chunks)
-        
         return all_chunks
 
     def get_document_chapters(
@@ -1966,6 +2119,7 @@ Next search query (or DONE):"""
         ]
         
         for chunk in chunks:
+            content = chunk.get("content", "")
             content = chunk.get("content", "")
             metadata = chunk.get("metadata", {}) or {}
             chunk_idx = chunk.get("chunk_index", 0)
@@ -2088,6 +2242,8 @@ Next search query (or DONE):"""
             if chapter_chunks:
                 logger.info(f"[RAG] Found {len(chapter_chunks)} chunks via content search for chapter {chapter_number}")
                 content_parts = [c["content"] for c in chapter_chunks]
+                # Remove overlapping content between consecutive chunks
+                deduplicated_content = remove_chunk_overlaps(content_parts)
                 sources = [{
                     "index": i + 1,
                     "document_id": document_id,
@@ -2096,7 +2252,7 @@ Next search query (or DONE):"""
                     "chapter": chapter_number,
                     "citation": f"Глава {chapter_number}, фрагмент {i + 1}"
                 } for i, chunk in enumerate(chapter_chunks)]
-                return "\n\n".join(content_parts), sources
+                return deduplicated_content, sources
             
             logger.warning(f"[RAG] Chapter {chapter_number} not found even via content search")
             return "", []
@@ -2128,7 +2284,8 @@ Next search query (or DONE):"""
                 "citation": f"Глава {chapter_number}, фрагмент {i + 1}"
             })
         
-        full_content = "\n\n".join(content_parts)
+        # Remove overlapping content between consecutive chunks
+        full_content = remove_chunk_overlaps(content_parts)
         
         return full_content, sources
 
@@ -3004,8 +3161,12 @@ Chapter number:"""
             context_parts.append(doc_header)
             total_chars += len(doc_header)
             
-            # Add all chunks
-            for chunk in chunks:
+            # Sort chunks by index and remove overlaps
+            sorted_chunks = sorted(chunks, key=lambda c: c.get("chunk_index", 0))
+            
+            # Collect chunk contents for this document
+            doc_chunk_contents = []
+            for chunk in sorted_chunks:
                 chunk_content = chunk["content"]
                 chunk_chars = len(chunk_content)
                 
@@ -3019,9 +3180,14 @@ Chapter number:"""
                     source_entry["citation"] = f"📚 {doc_name} (загружено {chunks_loaded} из {total_doc_chunks} чанков)"
                     break
                 
-                context_parts.append(chunk_content)
+                doc_chunk_contents.append(chunk_content)
                 total_chars += chunk_chars
                 chunks_loaded += 1
+            
+            # Remove overlapping parts between chunks and join
+            if doc_chunk_contents:
+                deduplicated_content = remove_chunk_overlaps(doc_chunk_contents)
+                context_parts.append(deduplicated_content)
             
             if truncated:
                 break
