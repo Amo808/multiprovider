@@ -923,7 +923,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       )}
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 ios-scroll">
+      <div className="flex-1 overflow-y-auto min-h-0 ios-scroll">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-lg mx-auto px-6">
@@ -1108,9 +1108,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
 
         {/* ChatGPT-style input */}
-        <div className="max-w-3xl mx-auto w-full">
+        <div className="max-w-3xl mx-auto w-full overflow-hidden">
           <form onSubmit={handleSubmit} className="relative">
-            <div className="relative flex items-end bg-secondary/50 border border-border rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all max-w-full">
+            <div className="relative flex items-end bg-secondary/50 border border-border rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all overflow-hidden max-w-full">
               {/* Hidden file input for prompt loading */}
               <input
                 ref={fileInputRef}

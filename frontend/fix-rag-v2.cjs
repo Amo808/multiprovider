@@ -25,18 +25,18 @@ if (content.includes(oldPopup)) {
 } else {
     console.log('❌ Could not find popup class to replace');
     console.log('Trying alternative approach...');
-    
+
     // Попробуем заменить только ключевую часть
     const oldKey = 'fixed md:absolute bottom-0 md:bottom-full left-0 right-0 md:left-auto md:right-auto md:mb-2';
     const newKey = 'fixed inset-x-0 bottom-0 md:inset-auto md:left-1/2 md:bottom-24 md:-translate-x-1/2';
-    
+
     if (content.includes(oldKey)) {
         content = content.replace(oldKey, newKey);
         fs.writeFileSync(ragPath, content);
         console.log('✅ Fixed RAG popup (alternative method)');
     } else {
         console.log('❌ Alternative method also failed');
-        
+
         // Покажем что там сейчас
         const match = content.match(/className="fixed[^"]*md:absolute[^"]*"/);
         if (match) {

@@ -2487,15 +2487,20 @@ Next search query (or DONE):"""
                     logger.info(f"[SMART-RAG] Fixed mode but max_chunks({max_chunks}) >= total({len(all_chunks)}) - keeping full_document")
                     
             elif chunk_mode == "percent":
-                if target_chunks < len(all_chunks) * 0.8:
+                # FIXED: Respect user's explicit percentage choice!
+                # If user set ANY percentage < 80%, use search mode to respect it
+                if chunk_percent < 80:
                     user_wants_limited = True
                     logger.info(f"[SMART-RAG] ✓ User set PERCENT mode ({chunk_percent}%) = {target_chunks} chunks - switching to search")
                 else:
-                    logger.info(f"[SMART-RAG] Percent mode but target({target_chunks}) >= 80% of total - keeping full_document")
+                    logger.info(f"[SMART-RAG] Percent mode at {chunk_percent}% (>= 80%) - keeping full_document")
                     
             elif chunk_mode == "adaptive":
-                # In adaptive mode, check if target_chunks is significantly less than total
-                if target_chunks < len(all_chunks) * 0.5:
+                # In adaptive mode, check max_percent_limit (user's cap setting)
+                if max_percent_limit < 80:
+                    user_wants_limited = True
+                    logger.info(f"[SMART-RAG] ✓ ADAPTIVE mode with max_percent_limit={max_percent_limit}% < 80% - switching to search")
+                elif target_chunks < len(all_chunks) * 0.5:
                     user_wants_limited = True
                     logger.info(f"[SMART-RAG] ✓ ADAPTIVE mode but target({target_chunks}) < 50% of total({len(all_chunks)}) - switching to search")
                 else:
