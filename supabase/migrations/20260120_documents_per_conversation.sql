@@ -2,6 +2,7 @@
 -- Migration: Add conversation_id to documents for per-chat document ownership
 -- =============================================================================
 -- This makes documents belong to specific conversations instead of being global
+-- Updated: 2026-01-21 - Trigger Render redeploy
 -- =============================================================================
 
 -- Add conversation_id column to rag_documents
