@@ -665,8 +665,10 @@ class RAGStore:
             query = query.eq("status", status)
         
         # Filter by conversation_id if provided
+        # Include documents that belong to this conversation OR are global (NULL)
         if conversation_id:
-            query = query.eq("conversation_id", conversation_id)
+            # Use OR filter: conversation_id = provided OR conversation_id IS NULL (global docs)
+            query = query.or_(f"conversation_id.eq.{conversation_id},conversation_id.is.null")
         
         result = query.execute()
         return result.data or []
