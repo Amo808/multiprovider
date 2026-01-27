@@ -1578,9 +1578,24 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     
                     # === CALCULATE HISTORY TOKENS FOR RAG LIMIT ===
                     # Estimate tokens used by history so RAG knows how much space is left
+                    # NOTE: For Russian/Chinese text, actual tokens are ~2-2.5x more than chars/4!
                     history_chars = sum(len(msg.content) for msg in history)
-                    history_tokens_estimate = history_chars // 4  # rough estimate
-                    user_message_tokens = len(request.message) // 4
+                    
+                    # Detect if text is primarily non-ASCII (Russian, Chinese, etc.)
+                    all_history_text = ''.join(msg.content for msg in history)
+                    non_ascii_count = sum(1 for c in all_history_text if ord(c) > 127)
+                    non_ascii_ratio_rag = non_ascii_count / max(history_chars, 1)
+                    
+                    if non_ascii_ratio_rag > 0.3:
+                        # Russian/Chinese: ~2 chars per token (conservative)
+                        history_tokens_estimate = history_chars // 2
+                        user_message_tokens = len(request.message) // 2
+                        logger.info(f"[RAG] Non-ASCII ratio: {non_ascii_ratio_rag:.2f}, using conservative token estimate")
+                    else:
+                        # English: ~3.3 chars per token (conservative)
+                        history_tokens_estimate = (history_chars * 3) // 10
+                        user_message_tokens = (len(request.message) * 3) // 10
+                    
                     completion_reserve = 8192  # Reserve for model response
                     
                     # Get model limits
@@ -1862,8 +1877,22 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         
         # === SMART MAX_TOKENS ADJUSTMENT ===
         # Calculate actual tokens used by messages to prevent context overflow
+        # NOTE: For Russian/Chinese text, actual tokens are ~2-2.5x more than chars/4!
+        # Using conservative estimate: chars // 2 for safety
         total_message_chars = sum(len(msg.content) for msg in history)
-        estimated_message_tokens = total_message_chars // 4  # rough estimate
+        
+        # Detect if text is primarily non-ASCII (Russian, Chinese, etc.)
+        non_ascii_chars = sum(1 for c in ''.join(m.content for m in history) if ord(c) > 127)
+        non_ascii_ratio = non_ascii_chars / max(total_message_chars, 1)
+        
+        # Use more conservative estimate for non-ASCII text
+        if non_ascii_ratio > 0.3:
+            # Russian/Chinese: ~2 chars per token (conservative)
+            estimated_message_tokens = total_message_chars // 2
+            logger.info(f"[CHAT] Non-ASCII ratio: {non_ascii_ratio:.2f}, using conservative token estimate (chars//2)")
+        else:
+            # English: ~4 chars per token
+            estimated_message_tokens = (total_message_chars * 3) // 10  # ~3.3 chars per token, still conservative
         
         # Get model limits
         from supabase_client.rag import get_model_limit
@@ -1872,8 +1901,12 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         max_completion_from_config = model_limits.get("max_completion_tokens")
         
         # Calculate available tokens for completion
-        safety_buffer = 1000  # Small buffer for tokenization differences
+        # Use larger safety buffer to account for tokenization differences
+        safety_buffer = 5000  # Increased buffer for safety
         available_for_completion = total_context_limit - estimated_message_tokens - safety_buffer
+        
+        logger.info(f"[CHAT] Token estimation: total_chars={total_message_chars}, estimated_tokens={estimated_message_tokens}, "
+                   f"context_limit={total_context_limit}, available_for_completion={available_for_completion}")
         
         # Apply limits
         if max_completion_from_config:
