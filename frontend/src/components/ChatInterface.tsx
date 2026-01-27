@@ -89,7 +89,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   // Smart auto-scroll state (like ChatGPT)
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const lastScrollTopRef = useRef(0);
@@ -711,7 +711,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       console.log('[ChatInterface] Edit blocked: reorder or streaming in progress');
       return;
     }
-    
+
     // Create updated messages array
     const newMessages = [...messages];
     if (newMessages[index] && newMessages[index].role === 'user') {
@@ -719,12 +719,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         ...newMessages[index],
         content: newContent
       };
-      
+
       // Update locally
       if (updateMessages) {
         updateMessages(conversationId, newMessages);
       }
-      
+
       // TODO: Optionally save to backend
       console.log('[ChatInterface] Message edited at index', index);
     }
@@ -751,10 +751,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       }
       return acc;
     }, { prompt: 0, completion: 0, cost: 0 });
-    
+
     // Debug: log token aggregation
     console.log(`[ChatInterface] Token aggregation: ${messages.length} messages, prompt=${totals.prompt}, completion=${totals.completion}`);
-    
+
     onTokenUsageUpdate?.({
       prompt_tokens: totals.prompt,
       completion_tokens: totals.completion,
@@ -802,21 +802,21 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   // - Resumes auto-scroll when user scrolls back to bottom
   useEffect(() => {
     if (!autoScrollEnabled) return;
-    
+
     const timer = setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
     return () => clearTimeout(timer);
   }, [messages.length, currentResponse, autoScrollEnabled]);
-  
+
   // Handle scroll events to detect user scrolling
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    
+
     const { scrollTop, scrollHeight, clientHeight } = container;
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 100; // 100px threshold
-    
+
     // Check if user scrolled up (away from bottom)
     if (scrollTop < lastScrollTopRef.current && !isAtBottom) {
       // User scrolled UP - disable auto-scroll
@@ -827,16 +827,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       userScrolledRef.current = false;
       setAutoScrollEnabled(true);
     }
-    
+
     lastScrollTopRef.current = scrollTop;
   }, []);
-  
+
   // Reset auto-scroll when conversation changes or user sends a message
   useEffect(() => {
     setAutoScrollEnabled(true);
     userScrolledRef.current = false;
   }, [conversationId]);
-  
+
   // Also reset when streaming starts (user sent a new message)
   useEffect(() => {
     if (isStreaming) {
@@ -1171,7 +1171,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       )}
 
       {/* Messages Area */}
-      <div 
+      <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto min-h-0 ios-scroll"

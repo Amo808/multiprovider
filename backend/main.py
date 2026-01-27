@@ -147,6 +147,22 @@ prompt_builder = None
 app_config = None
 USE_SUPABASE = os.getenv("USE_SUPABASE", "1") == "1"
 
+# Cache for user_id lookup (email -> UUID)
+_user_id_cache: dict = {}
+
+def get_user_id_from_email(email: str) -> str:
+    """Get Supabase user UUID from email. Cached for performance."""
+    global _user_id_cache
+    if email not in _user_id_cache:
+        try:
+            from supabase_client.client import get_or_create_user
+            user = get_or_create_user(email)
+            _user_id_cache[email] = user["id"]
+        except Exception as e:
+            logger.warning(f"[AUTH] Failed to get user_id for {email}: {e}, using email as fallback")
+            return email  # Fallback to email if Supabase fails
+    return _user_id_cache[email]
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan."""
@@ -1342,12 +1358,14 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     from storage.conversation_rag import get_conversation_rag_store
                     conv_rag = get_conversation_rag_store()
                     import asyncio
+                    # Get proper user UUID (not email) for Supabase RLS
+                    db_user_id = get_user_id_from_email(user_email)
                     asyncio.create_task(conv_rag.index_message(
                         conversation_id=conversation_id,
                         message_id=user_message.id,
                         role="user",
                         content=user_message.content,
-                        user_id=user_email,
+                        user_id=db_user_id,
                         timestamp=user_message.timestamp.isoformat()
                     ))
                     logger.debug(f"[CONV-RAG] Queued user message indexing: {user_message.id[:8]}...")
@@ -1840,9 +1858,40 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         
         # Generation parameters
         generation_config = request.config or app_config.get("generation", {})
+        requested_max_tokens = generation_config.get("max_tokens", 8192)
+        
+        # === SMART MAX_TOKENS ADJUSTMENT ===
+        # Calculate actual tokens used by messages to prevent context overflow
+        total_message_chars = sum(len(msg.content) for msg in history)
+        estimated_message_tokens = total_message_chars // 4  # rough estimate
+        
+        # Get model limits
+        from supabase_client.rag import get_model_limit
+        model_limits = get_model_limit(model_id)
+        total_context_limit = model_limits.get("context_limit", 128000)
+        max_completion_from_config = model_limits.get("max_completion_tokens")
+        
+        # Calculate available tokens for completion
+        safety_buffer = 1000  # Small buffer for tokenization differences
+        available_for_completion = total_context_limit - estimated_message_tokens - safety_buffer
+        
+        # Apply limits
+        if max_completion_from_config:
+            # Model has a specific max completion limit
+            final_max_tokens = min(requested_max_tokens, max_completion_from_config, available_for_completion)
+        else:
+            final_max_tokens = min(requested_max_tokens, available_for_completion)
+        
+        # Ensure at least some tokens for response
+        final_max_tokens = max(final_max_tokens, 1000)
+        
+        if final_max_tokens < requested_max_tokens:
+            logger.warning(f"[CHAT] Reduced max_tokens from {requested_max_tokens} to {final_max_tokens} "
+                          f"(context_limit={total_context_limit}, message_tokens~{estimated_message_tokens})")
+        
         params = GenerationParams(
             temperature=generation_config.get("temperature", 0.7),
-            max_tokens=generation_config.get("max_tokens", 8192),  # Default for DeepSeek
+            max_tokens=final_max_tokens,
             top_p=generation_config.get("top_p", 1.0),
             frequency_penalty=generation_config.get("frequency_penalty", 0.0),
             presence_penalty=generation_config.get("presence_penalty", 0.0),
@@ -2116,12 +2165,14 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                                 try:
                                     from storage.conversation_rag import get_conversation_rag_store
                                     conv_rag = get_conversation_rag_store()
+                                    # Get proper user UUID (not email) for Supabase RLS
+                                    db_user_id = get_user_id_from_email(user_email)
                                     asyncio.create_task(conv_rag.index_message(
                                         conversation_id=conversation_id,
                                         message_id=assistant_message.id,
                                         role="assistant",
                                         content=assistant_message.content,
-                                        user_id=user_email,
+                                        user_id=db_user_id,
                                         timestamp=assistant_message.timestamp.isoformat(),
                                         model=model_id
                                     ))

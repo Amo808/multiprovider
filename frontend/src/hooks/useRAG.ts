@@ -237,7 +237,6 @@ export function useRAG(options: UseRAGOptions = {}): UseRAGReturn {
       include_history: ragSettings.orchestrator.include_history,
       history_limit: ragSettings.orchestrator.history_limit,
       include_memory: ragSettings.orchestrator.include_memory,
-      auto_retrieve: ragSettings.orchestrator.auto_retrieve,
       adaptive_chunks: ragSettings.orchestrator.adaptive_chunks,
       enable_web_search: ragSettings.orchestrator.enable_web_search,
       enable_code_execution: ragSettings.orchestrator.enable_code_execution,

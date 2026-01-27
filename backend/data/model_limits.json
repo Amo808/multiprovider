@@ -75,8 +75,9 @@
             "rag_context_percent": 60
         },
         "deepseek-reasoner": {
-            "context_limit": 64000,
-            "rag_context_percent": 50
+            "context_limit": 131072,
+            "rag_context_percent": 40,
+            "max_completion_tokens": 32768
         },
         "deepseek-v3": {
             "context_limit": 131072,

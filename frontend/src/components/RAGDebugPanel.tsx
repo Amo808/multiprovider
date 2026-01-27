@@ -181,8 +181,8 @@ export const RAGDebugPanel: React.FC<RAGDebugPanelProps> = ({
                             <button
                                 onClick={() => setActiveTab('prompts')}
                                 className={`px-3 py-1.5 rounded text-sm transition-colors ${activeTab === 'prompts'
-                                        ? 'bg-purple-500 text-white'
-                                        : 'text-gray-400 hover:text-white'
+                                    ? 'bg-purple-500 text-white'
+                                    : 'text-gray-400 hover:text-white'
                                     }`}
                             >
                                 📝 Промпты
@@ -190,8 +190,8 @@ export const RAGDebugPanel: React.FC<RAGDebugPanelProps> = ({
                             <button
                                 onClick={() => setActiveTab('strategies')}
                                 className={`px-3 py-1.5 rounded text-sm transition-colors ${activeTab === 'strategies'
-                                        ? 'bg-purple-500 text-white'
-                                        : 'text-gray-400 hover:text-white'
+                                    ? 'bg-purple-500 text-white'
+                                    : 'text-gray-400 hover:text-white'
                                     }`}
                             >
                                 🔍 Стратегии
@@ -199,8 +199,8 @@ export const RAGDebugPanel: React.FC<RAGDebugPanelProps> = ({
                             <button
                                 onClick={() => setActiveTab('debug')}
                                 className={`px-3 py-1.5 rounded text-sm transition-colors ${activeTab === 'debug'
-                                        ? 'bg-purple-500 text-white'
-                                        : 'text-gray-400 hover:text-white'
+                                    ? 'bg-purple-500 text-white'
+                                    : 'text-gray-400 hover:text-white'
                                     }`}
                             >
                                 🐛 Debug
@@ -388,8 +388,8 @@ const PromptsTab: React.FC<{
                             <div
                                 key={key}
                                 className={`border rounded-lg p-3 ${mode.recommended
-                                        ? 'border-green-500/50 bg-green-500/10'
-                                        : 'border-gray-700/50 hover:border-gray-600'
+                                    ? 'border-green-500/50 bg-green-500/10'
+                                    : 'border-gray-700/50 hover:border-gray-600'
                                     }`}
                             >
                                 <div className="flex items-center gap-2 mb-1">
