@@ -77,6 +77,14 @@
         "deepseek-reasoner": {
             "context_limit": 64000,
             "rag_context_percent": 50
+        },
+        "deepseek-v3": {
+            "context_limit": 131072,
+            "rag_context_percent": 50
+        },
+        "deepseek-v3-0324": {
+            "context_limit": 131072,
+            "rag_context_percent": 50
         }
     }
 }

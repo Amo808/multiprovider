@@ -137,16 +137,14 @@ export const RAGStatusIndicator: React.FC<{ active: boolean; documentsCount?: nu
  */
 export type RAGMode = 'off' | 'auto' | 'smart' | 'basic' | 'advanced' | 'ultimate' | 'hyde' | 'agentic' | 'full' | 'chapter';
 
+// Упрощённый набор режимов
 const RAG_MODES: { value: RAGMode; label: string; description: string; icon: string }[] = [
-    { value: 'smart', label: 'Умный', description: 'AI понимает запрос автоматически', icon: '🧠' },
-    { value: 'auto', label: 'Авто', description: 'Автоматический выбор стратегии', icon: '✨' },
-    { value: 'full', label: 'Полный', description: 'Загрузить весь документ', icon: '📚' },
-    { value: 'chapter', label: 'По главам', description: 'Работа с отдельными главами', icon: '📖' },
-    { value: 'basic', label: 'Базовый', description: 'Быстрый гибридный поиск', icon: '⚡' },
-    { value: 'advanced', label: 'Расширенный', description: 'Multi-query + rerank', icon: '🔍' },
-    { value: 'ultimate', label: 'Максимальный', description: 'Авто-выбор лучшей стратегии', icon: '🎯' },
-    { value: 'hyde', label: 'HyDE', description: 'Для структурных запросов', icon: '�' },
-    { value: 'agentic', label: 'Агент', description: 'AI агент итеративного поиска', icon: '🤖' },
+    { value: 'smart', label: 'Умный', description: 'AI сам выбирает лучшую стратегию', icon: '🧠' },
+    { value: 'full', label: 'Полный', description: 'Весь документ целиком', icon: '📚' },
+    { value: 'chapter', label: 'По главам', description: 'Работа с конкретными главами', icon: '📖' },
+    { value: 'basic', label: 'Базовый', description: 'Быстрый простой поиск', icon: '⚡' },
+    { value: 'advanced', label: 'Расширенный', description: 'Multi-query + переранжирование', icon: '🔬' },
+    { value: 'agentic', label: 'Агент', description: 'Итеративный поиск для сложных вопросов', icon: '🤖' },
 ];
 
 interface RAGToggleProps {

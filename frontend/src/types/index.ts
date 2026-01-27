@@ -231,7 +231,6 @@ export interface RAGOrchestratorConfig {
   include_history?: boolean;        // Include conversation history
   history_limit?: number;           // Max messages from history (0 = disabled)
   include_memory?: boolean;         // Use long-term memory (Mem0)
-  auto_retrieve?: boolean;          // Automatically search documents
   adaptive_chunks?: boolean;        // AI decides how many chunks (3% or 50%)
   enable_web_search?: boolean;      // Allow web search (future)
   enable_code_execution?: boolean;  // Allow code execution (future)

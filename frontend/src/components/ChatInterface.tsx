@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, RefreshCw, AlertCircle, Square, FileText, Upload, AlertTriangle, Bug } from 'lucide-react';
+import { Send, Bot, RefreshCw, AlertCircle, Square, FileText, Upload, AlertTriangle, Bug, ChevronDown } from 'lucide-react';
 import { ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversationsContext } from '../contexts/ConversationsContext';
 import { useMessageReorder } from '../hooks/useMessageReorder';
@@ -87,7 +87,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Smart auto-scroll state (like ChatGPT)
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const lastScrollTopRef = useRef(0);
+  const userScrolledRef = useRef(false);
 
   const { conversations, getConversation, sendMessage, clearConversation, stopStreaming, recoverStuckRequest, updateMessages, loadMoreMessages } = useConversationsContext();
 
@@ -699,6 +705,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   };
 
+  // Handle editing a user message
+  const handleEditMessage = useCallback(async (index: number, newContent: string) => {
+    if (isReordering || isStreaming) {
+      console.log('[ChatInterface] Edit blocked: reorder or streaming in progress');
+      return;
+    }
+    
+    // Create updated messages array
+    const newMessages = [...messages];
+    if (newMessages[index] && newMessages[index].role === 'user') {
+      newMessages[index] = {
+        ...newMessages[index],
+        content: newContent
+      };
+      
+      // Update locally
+      if (updateMessages) {
+        updateMessages(conversationId, newMessages);
+      }
+      
+      // TODO: Optionally save to backend
+      console.log('[ChatInterface] Message edited at index', index);
+    }
+  }, [messages, conversationId, updateMessages, isReordering, isStreaming]);
+
   // Handle branching from a specific message - creates new conversation with history up to that point
   const handleBranchFrom = useCallback((index: number) => {
     if (onBranchFrom) {
@@ -720,6 +751,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       }
       return acc;
     }, { prompt: 0, completion: 0, cost: 0 });
+    
+    // Debug: log token aggregation
+    console.log(`[ChatInterface] Token aggregation: ${messages.length} messages, prompt=${totals.prompt}, completion=${totals.completion}`);
+    
     onTokenUsageUpdate?.({
       prompt_tokens: totals.prompt,
       completion_tokens: totals.completion,
@@ -761,13 +796,54 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   };
 
-  // Auto-scroll to bottom (debounced to prevent performance issues)
+  // Auto-scroll to bottom - SMART like ChatGPT
+  // - Auto-scrolls when new content appears IF user hasn't scrolled up
+  // - Stops auto-scroll when user scrolls up
+  // - Resumes auto-scroll when user scrolls back to bottom
   useEffect(() => {
+    if (!autoScrollEnabled) return;
+    
     const timer = setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
     return () => clearTimeout(timer);
-  }, [messages.length, currentResponse.length > 0]);
+  }, [messages.length, currentResponse, autoScrollEnabled]);
+  
+  // Handle scroll events to detect user scrolling
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100; // 100px threshold
+    
+    // Check if user scrolled up (away from bottom)
+    if (scrollTop < lastScrollTopRef.current && !isAtBottom) {
+      // User scrolled UP - disable auto-scroll
+      userScrolledRef.current = true;
+      setAutoScrollEnabled(false);
+    } else if (isAtBottom) {
+      // User is at bottom - enable auto-scroll
+      userScrolledRef.current = false;
+      setAutoScrollEnabled(true);
+    }
+    
+    lastScrollTopRef.current = scrollTop;
+  }, []);
+  
+  // Reset auto-scroll when conversation changes or user sends a message
+  useEffect(() => {
+    setAutoScrollEnabled(true);
+    userScrolledRef.current = false;
+  }, [conversationId]);
+  
+  // Also reset when streaming starts (user sent a new message)
+  useEffect(() => {
+    if (isStreaming) {
+      setAutoScrollEnabled(true);
+      userScrolledRef.current = false;
+    }
+  }, [isStreaming]);
 
   // Auto-resize textarea (debounced for large inputs)
   useEffect(() => {
@@ -853,7 +929,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           include_history: ragSettings.orchestrator.include_history,
           history_limit: ragSettings.orchestrator.history_limit,
           include_memory: ragSettings.orchestrator.include_memory,
-          auto_retrieve: ragSettings.orchestrator.auto_retrieve,
           adaptive_chunks: ragSettings.orchestrator.adaptive_chunks,
           enable_web_search: ragSettings.orchestrator.enable_web_search,
           enable_code_execution: ragSettings.orchestrator.enable_code_execution,
@@ -1096,7 +1171,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       )}
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto min-h-0 ios-scroll">
+      <div 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto min-h-0 ios-scroll"
+      >
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-lg mx-auto px-6">
@@ -1207,12 +1286,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 onDelete={handleDeleteMessage}
                 onBranchFrom={onBranchFrom ? handleBranchFrom : undefined}
                 onFileDrop={handleFileDrop}
+                onEditMessage={handleEditMessage}
               />
             )}
           </>
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Scroll to bottom button - shows when user scrolled up */}
+      {!autoScrollEnabled && messages.length > 0 && (
+        <div className="absolute bottom-32 left-1/2 -translate-x-1/2 z-40">
+          <button
+            onClick={() => {
+              setAutoScrollEnabled(true);
+              messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className={`flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-full shadow-lg hover:bg-primary/90 transition-all ${isStreaming ? 'animate-bounce' : ''}`}
+          >
+            <ChevronDown size={18} />
+            <span className="text-sm font-medium">
+              {isStreaming ? 'New content below' : 'Scroll to bottom'}
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* File Upload Progress Indicator */}
       {uploadingFiles && (

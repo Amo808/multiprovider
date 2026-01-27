@@ -22,6 +22,7 @@ interface DraggableMessageListProps {
   onDelete?: (index: number) => void;
   onBranchFrom?: (index: number) => void;
   onFileDrop?: (files: File[]) => void;
+  onEditMessage?: (index: number, newContent: string) => void;
 }
 
 // Ghost navigation overlay - shows message structure
@@ -101,7 +102,8 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
   onReorder,
   onDelete,
   onBranchFrom,
-  onFileDrop: _onFileDrop
+  onFileDrop: _onFileDrop,
+  onEditMessage
 }) => {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -321,6 +323,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
 
     // Only handle message drags
     if (!e.dataTransfer.types.includes('application/x-message-drag')) {
+      console.log('[DnD] Drop ignored: not a message drag');
       setDraggedIndex(null);
       setDragOverIndex(null);
       return;
@@ -328,7 +331,25 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
 
     const dragIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
 
-    if (isNaN(dragIndex) || dragIndex === dropIndex) {
+    console.log('[DnD] Drop event:', { dragIndex, dropIndex, messagesCount: messages.length });
+
+    if (isNaN(dragIndex)) {
+      console.log('[DnD] Drop cancelled: invalid drag index');
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    if (dragIndex === dropIndex) {
+      console.log('[DnD] Drop cancelled: same position');
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    // SAFETY: Validate indices
+    if (dragIndex < 0 || dragIndex >= messages.length || dropIndex < 0 || dropIndex >= messages.length) {
+      console.error('[DnD] Drop blocked: invalid indices', { dragIndex, dropIndex, max: messages.length - 1 });
       setDraggedIndex(null);
       setDragOverIndex(null);
       return;
@@ -338,7 +359,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
     onReorder(dragIndex, dropIndex);
     setDraggedIndex(null);
     setDragOverIndex(null);
-  }, [onReorder]);
+  }, [onReorder, messages.length]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -390,7 +411,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
         </div>
       )}
 
-      <div ref={containerRef} className="py-6 max-w-3xl mx-auto px-4 overflow-hidden" onDragOver={handleDrag}>
+      <div ref={containerRef} className="py-6 max-w-3xl mx-auto px-4" onDragOver={handleDrag}>
         {/* Loading indicator while rendering more messages */}
         {hasMoreToRender && (
           <div className="flex items-center justify-center py-2 mb-4">
@@ -496,6 +517,7 @@ export const DraggableMessageList: React.FC<DraggableMessageListProps> = ({
                 thinkingContent={isLastMessage ? thinkingContent : undefined}
                 isThinking={isLastMessage ? isThinking : false}
                 onBranchFrom={onBranchFrom ? () => onBranchFrom(index) : undefined}
+                onEdit={message.role === 'user' && onEditMessage ? (newContent) => onEditMessage(index, newContent) : undefined}
               />
             </div>
           );

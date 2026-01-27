@@ -59,7 +59,6 @@ interface RAGDebugPanelProps {
             include_history?: boolean;
             history_limit?: number;
             include_memory?: boolean;
-            auto_retrieve?: boolean;
             adaptive_chunks?: boolean;
         };
     };
@@ -502,7 +501,6 @@ const DebugTab: React.FC<{
             include_history?: boolean;
             history_limit?: number;
             include_memory?: boolean;
-            auto_retrieve?: boolean;
             adaptive_chunks?: boolean;
         };
     };
@@ -619,12 +617,6 @@ const DebugTab: React.FC<{
                                                 {currentSettings.orchestrator.include_memory ? '✓' : '✗'}
                                             </span>
                                             <span className="text-gray-300">Память</span>
-                                        </div>
-                                        <div className="flex items-center gap-1.5">
-                                            <span className={currentSettings.orchestrator.auto_retrieve ? 'text-green-400' : 'text-gray-500'}>
-                                                {currentSettings.orchestrator.auto_retrieve ? '✓' : '✗'}
-                                            </span>
-                                            <span className="text-gray-300">Авто-retrieval</span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
                                             <span className={currentSettings.orchestrator.adaptive_chunks ? 'text-green-400' : 'text-gray-500'}>

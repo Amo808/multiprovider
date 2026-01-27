@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useReducer, memo } from 'react';
-import { Bot, Copy, Brain, Zap, ChevronDown, Trash2, Clock, Sparkles, Eye, EyeOff, GitBranch, Check, X, RotateCcw, FileText, BookOpen } from 'lucide-react';
+import { Bot, Copy, Brain, Zap, ChevronDown, Trash2, Clock, Sparkles, Eye, EyeOff, GitBranch, Check, X, RotateCcw, FileText, BookOpen, Pencil } from 'lucide-react';
 import { Message, ModelInfo, RAGSource, RAGDebugInfo } from '../types';
 import { cn } from '../lib/utils';
 
@@ -19,6 +19,7 @@ interface MessageBubbleProps {
   onDelete?: () => void;
   onBranchFrom?: (index: number) => void;
   onRegenerate?: () => void;
+  onEdit?: (newContent: string) => void;
 }
 
 // Memoized thinking section
@@ -352,9 +353,26 @@ const CodeBlock = memo<{
   const [highlightedCode, setHighlightedCode] = useState<React.ReactNode>(null);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(children);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(children);
+      } else {
+        // Fallback for non-secure contexts
+        const textArea = document.createElement('textarea');
+        textArea.value = children;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy code:', err);
+    }
   };
 
   // Lazy load syntax highlighting only when user clicks
@@ -568,70 +586,83 @@ const SimpleMarkdown = memo<{ content: string }>(({ content }) => {
 
   // Render inline elements (bold, italic, inline code, links)
   const renderInlineContent = (text: string): React.ReactNode => {
-    // Split into paragraphs
+    // Split into paragraphs - be careful not to lose content
     const paragraphs = text.split(/\n\n+/);
 
     return paragraphs.map((para, i) => {
       if (!para.trim()) return null;
 
-      // Check for headers
-      const headerMatch = para.match(/^(#{1,6})\s+(.+)$/m);
-      if (headerMatch) {
+      // Check for headers - only if the ENTIRE paragraph is a header (single line starting with #)
+      // This prevents losing content after headers
+      const headerMatch = para.match(/^(#{1,6})\s+(.+)$/);
+      if (headerMatch && !para.includes('\n')) {
         const level = headerMatch[1].length;
         const HeaderTag = `h${level}` as keyof JSX.IntrinsicElements;
-        return <HeaderTag key={i} className="font-bold mt-4 mb-2">{headerMatch[2]}</HeaderTag>;
+        return <HeaderTag key={i} className="font-bold mt-4 mb-2">{renderInlineText(headerMatch[2])}</HeaderTag>;
       }
 
-      // Check for list
-      if (para.match(/^[-*]\s/m)) {
+      // Check for list - only if first line starts with list marker
+      const firstLine = para.split('\n')[0];
+      if (firstLine.match(/^[-*]\s/)) {
         const items = para.split(/\n/).filter(l => l.trim());
         return (
           <ul key={i} className="list-disc pl-6 my-2 space-y-1">
             {items.map((item, j) => (
-              <li key={j} className="text-[15px]">{item.replace(/^[-*]\s+/, '')}</li>
+              <li key={j} className="text-[15px]">{renderInlineText(item.replace(/^[-*]\s+/, ''))}</li>
             ))}
           </ul>
         );
       }
 
       // Check for numbered list
-      if (para.match(/^\d+\.\s/m)) {
+      if (firstLine.match(/^\d+\.\s/)) {
         const items = para.split(/\n/).filter(l => l.trim());
         return (
           <ol key={i} className="list-decimal pl-6 my-2 space-y-1">
             {items.map((item, j) => (
-              <li key={j} className="text-[15px]">{item.replace(/^\d+\.\s+/, '')}</li>
+              <li key={j} className="text-[15px]">{renderInlineText(item.replace(/^\d+\.\s+/, ''))}</li>
             ))}
           </ol>
         );
       }
 
       // Regular paragraph with inline formatting
-      let processed = para;
-
-      // Handle inline code
-      processed = processed.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-muted text-sm font-mono">$1</code>');
-
-      // Handle bold
-      processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-      // Handle italic
-      processed = processed.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-      // Handle links
-      processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">$1</a>');
-
-      // Handle line breaks within paragraph
-      processed = processed.replace(/\n/g, '<br/>');
-
       return (
         <p
           key={i}
           className="text-[15px] leading-7 my-2"
-          dangerouslySetInnerHTML={{ __html: processed }}
+          dangerouslySetInnerHTML={{ __html: processInlineFormatting(para) }}
         />
       );
     });
+  };
+
+  // Process inline formatting (bold, italic, code, links)
+  const processInlineFormatting = (text: string): string => {
+    let processed = text;
+
+    // Handle inline code
+    processed = processed.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-muted text-sm font-mono">$1</code>');
+
+    // Handle bold
+    processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    // Handle italic
+    processed = processed.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+    // Handle links
+    processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">$1</a>');
+
+    // Handle line breaks within paragraph
+    processed = processed.replace(/\n/g, '<br/>');
+
+    return processed;
+  };
+
+  // Render inline text (for headers and list items where we can't use dangerouslySetInnerHTML easily)
+  const renderInlineText = (text: string): React.ReactNode => {
+    // Simple text for now - could be enhanced
+    return text;
   };
 
   return <div className="prose prose-sm max-w-none dark:prose-invert">{renderContent()}</div>;
@@ -650,18 +681,56 @@ export const MessageBubble = memo<MessageBubbleProps>(({
   isThinking,
   onDelete,
   onBranchFrom,
-  onRegenerate
+  onRegenerate,
+  onEdit
 }) => {
   const [copied, setCopied] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState('');
   const [, forceUpdate] = useReducer(x => x + 1, 0);
 
   const handleCopy = async () => {
     const content = isStreaming ? currentResponse : message.content;
     if (content) {
-      await navigator.clipboard.writeText(content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      try {
+        // Try modern clipboard API first
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(content);
+        } else {
+          // Fallback for non-secure contexts or older browsers
+          const textArea = document.createElement('textarea');
+          textArea.value = content;
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          textArea.style.top = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+        }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+        // Try fallback even if clipboard API failed
+        try {
+          const textArea = document.createElement('textarea');
+          textArea.value = content;
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        } catch {
+          console.error('Fallback copy also failed');
+        }
+      }
     }
   };
 
@@ -684,45 +753,100 @@ export const MessageBubble = memo<MessageBubbleProps>(({
 
   // User message - simple, right aligned
   if (isUser) {
+    const handleStartEdit = () => {
+      setEditContent(message.content || '');
+      setIsEditing(true);
+    };
+
+    const handleSaveEdit = () => {
+      if (onEdit && editContent.trim()) {
+        onEdit(editContent.trim());
+      }
+      setIsEditing(false);
+    };
+
+    const handleCancelEdit = () => {
+      setIsEditing(false);
+      setEditContent('');
+    };
+
     return (
       <div className="flex justify-end mb-6 group">
         <div className="max-w-[85%] md:max-w-[70%] overflow-hidden">
-          <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground px-4 py-2.5 rounded-2xl rounded-br-md">
-            {/* Use SmartContent for large user messages to prevent freeze */}
-            <div className="text-[15px] leading-relaxed">
-              <SmartContent content={displayContent || ''} />
+          {isEditing ? (
+            // Edit mode
+            <div className="bg-secondary dark:bg-[#2f2f2f] rounded-2xl rounded-br-md p-3">
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className="w-full min-h-[80px] bg-background/50 rounded-lg p-2 text-[15px] resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2 mt-2">
+                <button
+                  onClick={handleCancelEdit}
+                  className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground rounded-md hover:bg-secondary transition-colors"
+                >
+                  Отмена
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                >
+                  Сохранить
+                </button>
+              </div>
             </div>
-          </div>
-          {/* Actions on hover */}
-          <div className="flex justify-end mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <div className="flex items-center gap-1">
-              <button
-                onClick={handleCopy}
-                className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-secondary/50 transition-colors"
-                title="Copy"
-              >
-                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
-              {onDelete && (
-                <>
-                  {showDeleteConfirm ? (
-                    <div className="flex items-center gap-0.5 bg-card border border-border rounded-md p-0.5">
-                      <button onClick={() => { onDelete(); setShowDeleteConfirm(false); }} className="p-1 text-green-500 hover:bg-green-500/10 rounded" title="Confirm">
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => setShowDeleteConfirm(false)} className="p-1 text-muted-foreground hover:bg-secondary rounded" title="Cancel">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <button onClick={() => setShowDeleteConfirm(true)} className="p-1.5 text-muted-foreground hover:text-destructive rounded-md hover:bg-destructive/10 transition-colors" title="Delete">
-                      <Trash2 className="w-3.5 h-3.5" />
+          ) : (
+            // View mode
+            <>
+              <div className="bg-secondary dark:bg-[#2f2f2f] text-foreground px-4 py-2.5 rounded-2xl rounded-br-md">
+                {/* Use SmartContent for large user messages to prevent freeze */}
+                <div className="text-[15px] leading-relaxed">
+                  <SmartContent content={displayContent || ''} />
+                </div>
+              </div>
+              {/* Actions on hover */}
+              <div className="flex justify-end mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex items-center gap-1">
+                  {onEdit && (
+                    <button
+                      onClick={handleStartEdit}
+                      className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-secondary/50 transition-colors"
+                      title="Редактировать"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
                     </button>
                   )}
-                </>
-              )}
-            </div>
-          </div>
+                  <button
+                    onClick={handleCopy}
+                    className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-secondary/50 transition-colors"
+                    title="Copy"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                  {onDelete && (
+                    <>
+                      {showDeleteConfirm ? (
+                        <div className="flex items-center gap-0.5 bg-card border border-border rounded-md p-0.5">
+                          <button onClick={() => { onDelete(); setShowDeleteConfirm(false); }} className="p-1 text-green-500 hover:bg-green-500/10 rounded" title="Confirm">
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => setShowDeleteConfirm(false)} className="p-1 text-muted-foreground hover:bg-secondary rounded" title="Cancel">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setShowDeleteConfirm(true)} className="p-1.5 text-muted-foreground hover:text-destructive rounded-md hover:bg-destructive/10 transition-colors" title="Delete">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );

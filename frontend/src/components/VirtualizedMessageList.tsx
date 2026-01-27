@@ -111,25 +111,32 @@ export const VirtualizedMessageList: React.FC<VirtualizedMessageListProps> = ({
     const parentRef = useRef<HTMLDivElement>(null);
 
     // Estimate row heights - user messages are usually shorter
+    // NOTE: This is just an ESTIMATE for initial layout.
+    // The actual height is measured by virtualizer.measureElement
     const estimateSize = useCallback((index: number) => {
         const message = messages[index];
-        if (!message) return 150;
+        if (!message) return 200;
 
         const contentLength = message.content?.length || 0;
         const isUser = message.role === 'user';
 
         // Rough estimation based on content length
+        // These are just initial guesses - actual size is measured dynamically
         if (isUser) {
-            // User messages are simpler, usually 80-150px
-            if (contentLength < 100) return 80;
-            if (contentLength < 500) return 120;
-            return Math.min(200, 120 + Math.floor(contentLength / 100) * 20);
+            // User messages are simpler
+            if (contentLength < 100) return 100;
+            if (contentLength < 500) return 150;
+            if (contentLength < 2000) return 250;
+            return 300 + Math.floor(contentLength / 500) * 30;
         } else {
-            // Assistant messages can be much longer with code blocks
-            if (contentLength < 200) return 150;
-            if (contentLength < 1000) return 250;
-            if (contentLength < 3000) return 400;
-            return Math.min(800, 400 + Math.floor(contentLength / 500) * 50);
+            // Assistant messages can be much longer with code blocks, lists, etc.
+            if (contentLength < 200) return 200;
+            if (contentLength < 1000) return 350;
+            if (contentLength < 3000) return 600;
+            if (contentLength < 10000) return 1000;
+            // For very long messages, estimate more generously
+            // ~20px per 100 chars is a rough estimate for rendered markdown
+            return 1000 + Math.floor((contentLength - 10000) / 100) * 15;
         }
     }, [messages]);
 
@@ -176,7 +183,6 @@ export const VirtualizedMessageList: React.FC<VirtualizedMessageListProps> = ({
         <div
             ref={parentRef}
             className="h-full overflow-auto"
-            style={{ contain: 'strict' }}
         >
             {/* Load more button */}
             {hasMore && (

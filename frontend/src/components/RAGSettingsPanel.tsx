@@ -37,7 +37,6 @@ export interface RAGOrchestratorSettings {
     include_history: boolean;        // Include conversation history
     history_limit: number;           // Max messages from history
     include_memory: boolean;         // Use long-term memory (Mem0)
-    auto_retrieve: boolean;          // Automatically search documents
     adaptive_chunks: boolean;        // AI decides how many chunks needed
     enable_web_search: boolean;      // Allow web search (future)
     enable_code_execution: boolean;  // Allow code execution (future)
@@ -68,8 +67,7 @@ export interface RAGSettings {
 export const DEFAULT_ORCHESTRATOR_SETTINGS: RAGOrchestratorSettings = {
     include_history: true,
     history_limit: 10,
-    include_memory: true,
-    auto_retrieve: true,
+    include_memory: false,  // Disabled by default - user must opt-in
     adaptive_chunks: true,
     enable_web_search: false,
     enable_code_execution: false
@@ -633,24 +631,13 @@ export const RAGSettingsPanel: React.FC<RAGSettingsPanelProps> = ({
 
                         <SettingToggle
                             label="Долгосрочная память"
-                            checked={settings.orchestrator?.include_memory ?? true}
+                            checked={settings.orchestrator?.include_memory ?? false}
                             onChange={(checked) => onChange({
                                 ...settings,
                                 orchestrator: { ...DEFAULT_ORCHESTRATOR_SETTINGS, ...settings.orchestrator, include_memory: checked }
                             })}
                             disabled={disabled}
                             icon={<Brain size={14} />}
-                        />
-
-                        <SettingToggle
-                            label="Авто-retrieval"
-                            checked={settings.orchestrator?.auto_retrieve ?? true}
-                            onChange={(checked) => onChange({
-                                ...settings,
-                                orchestrator: { ...DEFAULT_ORCHESTRATOR_SETTINGS, ...settings.orchestrator, auto_retrieve: checked }
-                            })}
-                            disabled={disabled}
-                            icon={<Database size={14} />}
                         />
 
                         <SettingToggle
@@ -667,7 +654,7 @@ export const RAGSettingsPanel: React.FC<RAGSettingsPanelProps> = ({
 
                     {settings.orchestrator?.include_history && (
                         <SettingSlider
-                            label="Лимит истории"
+                            label="Лимит истории (для модели)"
                             value={settings.orchestrator?.history_limit ?? 10}
                             min={0}
                             max={50}
@@ -678,7 +665,7 @@ export const RAGSettingsPanel: React.FC<RAGSettingsPanelProps> = ({
                             })}
                             disabled={disabled}
                             icon={<History size={14} />}
-                            description="Сколько сообщений из истории включать (0 = без лимита)"
+                            description="Сколько последних сообщений видит модель (0 = без лимита). Все сообщения видны в UI."
                         />
                     )}
 

@@ -392,10 +392,14 @@ class SupabaseConversationStore:
                 meta["provider"] = msg["provider"]
             if msg.get("reasoning_content"):
                 meta["reasoning_content"] = msg["reasoning_content"]
+                meta["thought_content"] = msg["reasoning_content"]  # Also set thought_content for UI
+            # Map DB field names to API field names that UI expects
             if msg.get("tokens_input"):
-                meta["tokens_input"] = msg["tokens_input"]
+                meta["tokens_in"] = msg["tokens_input"]
+                meta["tokens_input"] = msg["tokens_input"]  # Keep both for compatibility
             if msg.get("tokens_output"):
-                meta["tokens_output"] = msg["tokens_output"]
+                meta["tokens_out"] = msg["tokens_output"]
+                meta["tokens_output"] = msg["tokens_output"]  # Keep both for compatibility
             
             messages.append(Message(
                 id=msg["id"],
@@ -464,11 +468,12 @@ class SupabaseConversationStore:
                 message_id=getattr(message, 'id', None),
                 model=meta.get('model'),
                 provider=meta.get('provider'),
-                reasoning_content=meta.get('reasoning_content'),
-                tokens_input=meta.get('tokens_input'),
-                tokens_output=meta.get('tokens_output'),
-                tokens_reasoning=meta.get('tokens_reasoning'),
-                latency_ms=meta.get('latency_ms'),
+                reasoning_content=meta.get('reasoning_content') or meta.get('thought_content'),
+                # Support both naming conventions: tokens_in/tokens_out (main.py) and tokens_input/tokens_output (DB)
+                tokens_input=meta.get('tokens_in') or meta.get('tokens_input'),
+                tokens_output=meta.get('tokens_out') or meta.get('tokens_output'),
+                tokens_reasoning=meta.get('tokens_reasoning') or meta.get('thought_tokens'),
+                latency_ms=meta.get('latency_ms') or (int(meta.get('total_latency', 0) * 1000) if meta.get('total_latency') else None),
                 tool_calls=meta.get('tool_calls'),
                 tool_results=meta.get('tool_results'),
                 metadata=meta

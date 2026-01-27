@@ -964,6 +964,21 @@ class RAGStore:
             self.update_document_status(document_id, "ready", total_chunks=len(chunks))
             logger.info(f"Document {document_id}: processing complete, {len(chunks)} chunks stored")
             
+            # Build meta layer for quick answers about document structure
+            try:
+                # Get user_email from document record
+                doc = self.client.table("documents")\
+                    .select("user_id")\
+                    .eq("id", document_id)\
+                    .single()\
+                    .execute()
+                if doc.data:
+                    user_email = doc.data.get("user_id", "dev@example.com")
+                    self.build_document_meta(document_id, user_email)
+                    logger.info(f"Document {document_id}: meta layer built")
+            except Exception as meta_err:
+                logger.warning(f"Document {document_id}: failed to build meta layer: {meta_err}")
+            
             return len(chunks)
             
         except Exception as e:
@@ -2517,7 +2532,8 @@ Next search query (or DONE):"""
         use_rerank: bool = True,
         keyword_weight: float = 0.3,
         semantic_weight: float = 0.7,
-        adaptive_chunks: bool = True  # From orchestrator
+        adaptive_chunks: bool = True,  # From orchestrator
+        model_name: str = "gpt-4o"  # Model for context limit calculation
     ) -> Tuple[str, List[Dict], Dict]:
         """
         🚀 SMART RAG - Universal intelligent document retrieval
@@ -2553,6 +2569,18 @@ Next search query (or DONE):"""
         else:
             doc = self.get_document(document_id, user_email)
             document_name = doc["name"] if doc else "Unknown"
+        
+        # === TRY META LAYER FIRST ===
+        # Check if question can be answered from document metadata (structure, chapter count, etc.)
+        quick_answer = self.get_quick_answer(document_id, user_email, query)
+        if quick_answer:
+            logger.info(f"[SMART-RAG] Question answered from META layer: '{query[:50]}...'")
+            return quick_answer, [], {
+                "mode": "meta_layer",
+                "source": "document_meta",
+                "query": query,
+                "document_id": document_id
+            }
         
         # Get document structure
         chapters = self.get_document_chapters(user_email, document_id)
@@ -2836,7 +2864,7 @@ Next search query (or DONE):"""
         context = self.adaptive_context_compression(
             context=context,
             max_tokens=max_tokens,
-            model_name="gpt-4o"  # можно сделать параметром если нужно
+            model_name=model_name  # Use actual model for correct limit calculation
         )
         
         # Log to debug collector
@@ -3930,35 +3958,31 @@ Content range: ~{batch_start_char:,} to ~{batch_end_char:,} characters
         model_name: str = "gpt-4"
     ) -> str:
         """
-        Адаптивное сжатие контекста если он не помещается в лимит модели.
+        Адаптивное сжатие контекста если он не помещается в лимит.
         
         Args:
             context: Исходный контекст
-            max_tokens: Максимальное количество токенов для completion
-            model_name: Название модели (для определения лимитов)
+            max_tokens: Максимальное количество токенов ДЛЯ RAG (уже учтены история, completion и т.д.)
+            model_name: Название модели (для логирования)
         
         Returns:
             Сжатый контекст
         """
-        # === LOAD LIMITS FROM CONFIG FILE ===
-        model_config = get_model_limit(model_name)
-        total_context_limit = model_config["context_limit"]
-        rag_percent = model_config["rag_context_percent"]
-        safety_buffer = model_config["safety_buffer_tokens"]
-        
-        logger.info(f"[RAG] Model '{model_name}': limit={total_context_limit}, rag_percent={rag_percent}%, buffer={safety_buffer}")
-        
-        # Оставляем запас для completion + system prompt + history
-        # Используем процент из конфига для RAG контекста
-        available_tokens = int(total_context_limit * (rag_percent / 100)) - safety_buffer
+        # max_tokens уже учитывает историю и другие расходы - используем напрямую
+        # Добавляем небольшой буфер безопасности (10%)
+        safety_margin = 0.9
+        available_tokens = int(max_tokens * safety_margin)
         
         current_tokens = len(context) // 4  # грубая оценка (1 token ≈ 4 chars)
         
+        logger.info(f"[RAG] Compression check for '{model_name}': context={current_tokens:,} tokens, budget={max_tokens:,}, available={available_tokens:,}")
+        
         if current_tokens <= available_tokens:
+            logger.info(f"[RAG] Context fits in budget ({current_tokens:,} <= {available_tokens:,}) - no compression needed")
             return context  # помещается, ничего не делаем
         
         # Нужно сжатие
-        logger.warning(f"[RAG] Context too large: {current_tokens:,} tokens, available: {available_tokens:,}. Compressing...")
+        logger.warning(f"[RAG] Context too large: {current_tokens:,} tokens > {available_tokens:,} available. Compressing...")
         
         # Стратегия сжатия: обрезаем до лимита, оставляя начало и конец
         target_chars = available_tokens * 4
@@ -3975,6 +3999,201 @@ Content range: ~{batch_start_char:,} to ~{batch_end_char:,} characters
         logger.info(f"[RAG] Context compressed: {len(context):,} -> {len(compressed):,} chars ({current_tokens:,} -> {len(compressed)//4:,} tokens)")
         
         return compressed
+
+    # ==================== META LAYER METHODS ====================
+    
+    def get_document_meta(self, document_id: str, user_email: str) -> Optional[Dict]:
+        """
+        Get document metadata from meta layer.
+        Returns structure info, chapter list, summaries without loading chunks.
+        """
+        try:
+            result = self.client.table("document_meta")\
+                .select("*")\
+                .eq("document_id", document_id)\
+                .single()\
+                .execute()
+            
+            return result.data
+        except Exception as e:
+            logger.debug(f"[META] No meta found for document {document_id}: {e}")
+            return None
+    
+    def build_document_meta(self, document_id: str, user_email: str) -> Dict:
+        """
+        Build and store document metadata (structure, chapters, basic stats).
+        Called after document processing to populate meta layer.
+        """
+        user_id = self._get_user_id(user_email)
+        
+        # Get document info
+        doc = self.get_document(document_id, user_email)
+        if not doc:
+            return {"error": "Document not found"}
+        
+        # Get chapters
+        chapters = self.get_document_chapters(user_email, document_id)
+        
+        # Get all chunks for stats
+        all_chunks = self.get_all_document_chunks(user_email, [document_id])
+        
+        total_chars = sum(len(c.get("content", "")) for c in all_chunks)
+        
+        # Detect document type based on content patterns
+        doc_type = self._detect_document_type(all_chunks[:10])  # Check first 10 chunks
+        
+        # Detect language
+        language = self._detect_language(all_chunks[:5])
+        
+        # Build chapter list with structure
+        chapter_list = []
+        for ch in chapters:
+            chapter_list.append({
+                "number": ch.get("chapter_number"),
+                "title": ch.get("title", ""),
+                "start_chunk": ch.get("start_chunk", 0),
+                "end_chunk": ch.get("end_chunk", 0),
+                "preview": ch.get("preview", "")[:100]
+            })
+        
+        meta_data = {
+            "document_id": document_id,
+            "user_id": user_id,
+            "total_chapters": len(chapters),
+            "chapter_list": chapter_list,
+            "total_chunks": len(all_chunks),
+            "total_chars": total_chars,
+            "document_type": doc_type,
+            "language": language,
+            "meta_status": "ready"
+        }
+        
+        # Upsert to database
+        try:
+            self.client.table("document_meta")\
+                .upsert(meta_data, on_conflict="document_id")\
+                .execute()
+            
+            logger.info(f"[META] Built meta for document {document_id}: {len(chapters)} chapters, {len(all_chunks)} chunks")
+            return meta_data
+            
+        except Exception as e:
+            logger.error(f"[META] Failed to save meta: {e}")
+            return {"error": str(e)}
+    
+    def get_quick_answer(self, document_id: str, user_email: str, question: str) -> Optional[str]:
+        """
+        Try to answer a question from meta layer without loading chunks.
+        Handles questions like "how many chapters?", "what's this about?", etc.
+        """
+        meta = self.get_document_meta(document_id, user_email)
+        
+        # If no meta exists, try to build it
+        if not meta:
+            meta = self.build_document_meta(document_id, user_email)
+            if "error" in meta:
+                return None
+        
+        question_lower = question.lower()
+        
+        # Chapter count questions
+        if any(p in question_lower for p in ['сколько глав', 'количество глав', 'how many chapters', 'chapter count']):
+            total = meta.get("total_chapters", 0)
+            chapters = meta.get("chapter_list", [])
+            
+            if total > 0:
+                chapter_nums = [str(ch.get("number", "?")) for ch in chapters[:10]]
+                preview = ", ".join(chapter_nums)
+                if len(chapters) > 10:
+                    preview += f" ... (и ещё {len(chapters) - 10})"
+                
+                return f"""📚 **Структура документа:**
+
+• Всего глав: **{total}**
+• Номера глав: {preview}
+• Всего чанков: {meta.get('total_chunks', 0)}
+• Тип документа: {meta.get('document_type', 'неизвестно')}
+
+_Эта информация из мета-слоя документа._"""
+            
+        # Document structure questions
+        if any(p in question_lower for p in ['структура', 'оглавление', 'содержание', 'structure', 'table of contents', 'toc']):
+            chapters = meta.get("chapter_list", [])
+            if chapters:
+                toc_lines = []
+                for ch in chapters[:20]:  # Show first 20 chapters
+                    title = ch.get("title", "")
+                    num = ch.get("number", "?")
+                    toc_lines.append(f"  • Глава {num}: {title}" if title else f"  • Глава {num}")
+                
+                toc_text = "\n".join(toc_lines)
+                if len(chapters) > 20:
+                    toc_text += f"\n  ... и ещё {len(chapters) - 20} глав"
+                
+                return f"""📖 **Оглавление документа:**
+
+{toc_text}
+
+_Всего глав: {meta.get('total_chapters', 0)}_"""
+        
+        # Document stats questions
+        if any(p in question_lower for p in ['размер', 'объём', 'сколько текста', 'size', 'how long', 'length']):
+            return f"""📊 **Статистика документа:**
+
+• Глав: {meta.get('total_chapters', 0)}
+• Чанков: {meta.get('total_chunks', 0)}  
+• Символов: {meta.get('total_chars', 0):,}
+• Примерно слов: ~{meta.get('total_chars', 0) // 6:,}
+• Примерно токенов: ~{meta.get('total_chars', 0) // 4:,}
+• Тип: {meta.get('document_type', 'неизвестно')}
+• Язык: {meta.get('language', 'неизвестно')}"""
+        
+        return None  # Question not answerable from meta
+    
+    def _detect_document_type(self, sample_chunks: List[Dict]) -> str:
+        """Detect document type from content patterns."""
+        if not sample_chunks:
+            return "unknown"
+        
+        combined = " ".join(c.get("content", "")[:500] for c in sample_chunks).lower()
+        
+        # Legal document patterns
+        if any(p in combined for p in ['статья', 'article', 'п.', 'пункт', 'подпункт', 'кодекс', 'закон', 'федеральный']):
+            return "legal"
+        
+        # Book patterns
+        if any(p in combined for p in ['глава', 'chapter', 'часть', 'том', 'книга']):
+            return "book"
+        
+        # Technical/code
+        if any(p in combined for p in ['function', 'class', 'import', 'def ', 'return', 'const ', 'var ']):
+            return "code"
+        
+        # Academic
+        if any(p in combined for p in ['abstract', 'introduction', 'methodology', 'conclusion', 'references', 'аннотация']):
+            return "academic"
+        
+        return "document"
+    
+    def _detect_language(self, sample_chunks: List[Dict]) -> str:
+        """Detect primary language of document."""
+        if not sample_chunks:
+            return "unknown"
+        
+        combined = " ".join(c.get("content", "")[:200] for c in sample_chunks)
+        
+        # Count Cyrillic vs Latin characters
+        cyrillic = sum(1 for c in combined if '\u0400' <= c <= '\u04FF')
+        latin = sum(1 for c in combined if 'a' <= c.lower() <= 'z')
+        
+        if cyrillic > latin * 2:
+            return "ru"
+        elif latin > cyrillic * 2:
+            return "en"
+        elif cyrillic > 0 and latin > 0:
+            return "mixed"
+        
+        return "unknown"
 
 
 # ==================== SINGLETON ====================

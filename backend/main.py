@@ -255,7 +255,6 @@ class OrchestratorConfig(BaseModel):
     include_history: bool = True
     history_limit: int = 50
     include_memory: bool = False
-    auto_retrieve: bool = True
     adaptive_chunks: bool = True
     enable_web_search: bool = False
     enable_code_execution: bool = False
@@ -1365,6 +1364,33 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             logger.error(f"[CHAT] Failed to load history: {load_err}")
             history = []
         
+        # === APPLY HISTORY LIMIT FROM ORCHESTRATOR SETTINGS ===
+        # This affects ONLY what is sent to the model, not what is shown in UI
+        rag_config_for_history = request.rag or RAGConfig()
+        orchestrator_settings = rag_config_for_history.orchestrator
+        
+        original_history_count = len(history)
+        if orchestrator_settings:
+            include_history = orchestrator_settings.include_history
+            history_limit = orchestrator_settings.history_limit
+            
+            if not include_history:
+                # User disabled history - only send current message to model
+                history = []
+                logger.info(f"[CHAT] History DISABLED by user settings (include_history=False). "
+                           f"Cleared {original_history_count} messages from context.")
+            elif history_limit and history_limit > 0 and len(history) > history_limit:
+                # Apply history limit - keep only last N messages
+                history = history[-history_limit:]
+                logger.info(f"[CHAT] History LIMITED by user settings (history_limit={history_limit}). "
+                           f"Kept {len(history)} of {original_history_count} messages.")
+            else:
+                logger.info(f"[CHAT] History settings: include_history={include_history}, "
+                           f"history_limit={history_limit}, messages={len(history)}")
+        else:
+            logger.info(f"[CHAT] No orchestrator settings, using full history ({len(history)} messages)")
+        # === END HISTORY LIMIT ===
+        
         # === AUTO CONTEXT COMPRESSION (RAG-based) ===
         compression_stats = None
         try:
@@ -1451,18 +1477,30 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         logger.info(f"[CHAT] === COMPRESSION DONE, proceeding to MEM0 ===")
         
         # === MEM0 MEMORY CONTEXT ===
-        # Get relevant memories for personalization (if Mem0 is enabled)
+        # Get relevant memories for personalization (if Mem0 is enabled AND user enabled it in settings)
         memory_context = ""
-        try:
-            mem0_store = get_mem0_store()
-            if mem0_store.is_enabled() and user_email:
-                # Get the last user message for context search
-                last_user_msg = request.message
-                memory_context = await get_memory_context(user_email, last_user_msg)
-                if memory_context:
-                    logger.info(f"[MEM0] Retrieved memory context for user {user_email}")
-        except Exception as e:
-            logger.warning(f"[MEM0] Failed to get memory context: {e}")
+        
+        # Check if user enabled memory in orchestrator settings
+        rag_config_for_mem0 = request.rag or RAGConfig()
+        orchestrator_mem0 = rag_config_for_mem0.orchestrator
+        include_memory = True  # Default: enabled
+        if orchestrator_mem0:
+            include_memory = orchestrator_mem0.include_memory
+            logger.info(f"[MEM0] User setting include_memory={include_memory}")
+        
+        if include_memory:
+            try:
+                mem0_store = get_mem0_store()
+                if mem0_store.is_enabled() and user_email:
+                    # Get the last user message for context search
+                    last_user_msg = request.message
+                    memory_context = await get_memory_context(user_email, last_user_msg)
+                    if memory_context:
+                        logger.info(f"[MEM0] Retrieved memory context for user {user_email}")
+            except Exception as e:
+                logger.warning(f"[MEM0] Failed to get memory context: {e}")
+        else:
+            logger.info(f"[MEM0] Memory DISABLED by user settings (include_memory=False)")
         # === END MEM0 MEMORY CONTEXT ===
         
         # === DOCUMENT RAG CONTEXT ===
@@ -1519,6 +1557,25 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                     # Determine RAG strategy based on mode
                     # Modes: "off", "auto", "basic", "advanced", "ultimate", "hyde", "agentic", "full", "chapter"
                     rag_mode = rag_config.mode or "smart"
+                    
+                    # === CALCULATE HISTORY TOKENS FOR RAG LIMIT ===
+                    # Estimate tokens used by history so RAG knows how much space is left
+                    history_chars = sum(len(msg.content) for msg in history)
+                    history_tokens_estimate = history_chars // 4  # rough estimate
+                    user_message_tokens = len(request.message) // 4
+                    completion_reserve = 8192  # Reserve for model response
+                    
+                    # Get model limits
+                    from supabase_client.rag import get_model_limit
+                    model_limits = get_model_limit(model_id)
+                    total_context_limit = model_limits["context_limit"]
+                    
+                    # Calculate available tokens for RAG
+                    available_for_rag = total_context_limit - history_tokens_estimate - user_message_tokens - completion_reserve
+                    available_for_rag = max(available_for_rag, 10000)  # Minimum 10K tokens for RAG
+                    
+                    logger.info(f"[RAG] Token budget: model_limit={total_context_limit}, history~{history_tokens_estimate}, user_msg~{user_message_tokens}, completion_reserve={completion_reserve}")
+                    logger.info(f"[RAG] Available for RAG context: ~{available_for_rag} tokens ({available_for_rag * 4} chars)")
                     
                     # === EXTRACT ALL RAG SETTINGS FROM CONFIG ===
                     # Chunk mode settings
@@ -1580,7 +1637,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             query=request.message,
                             user_email=user_email,
                             document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
-                            max_tokens=100000,
+                            max_tokens=available_for_rag,  # Use calculated available tokens
                             debug_collector=rag_debug_collector,
                             # === PASS ALL USER SETTINGS ===
                             chunk_mode=chunk_mode,
@@ -1593,7 +1650,8 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             use_rerank=use_rerank,
                             keyword_weight=keyword_weight,
                             semantic_weight=semantic_weight,
-                            adaptive_chunks=adaptive_chunks
+                            adaptive_chunks=adaptive_chunks,
+                            model_name=model_id  # Pass actual model for correct limit calculation
                         )
                         if isinstance(result, tuple):
                             rag_context, rag_sources, rag_debug_info = result
@@ -1614,7 +1672,7 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             query=request.message,
                             user_email=user_email,
                             document_id=rag_config.document_ids[0] if rag_config.document_ids else None,
-                            max_tokens=50000,
+                            max_tokens=available_for_rag,  # Use calculated available tokens
                             debug_collector=rag_debug_collector,
                             # === PASS ALL USER SETTINGS ===
                             chunk_mode=chunk_mode,
@@ -1627,7 +1685,8 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             use_rerank=use_rerank,
                             keyword_weight=keyword_weight,
                             semantic_weight=semantic_weight,
-                            adaptive_chunks=adaptive_chunks
+                            adaptive_chunks=adaptive_chunks,
+                            model_name=model_id  # Pass actual model for correct limit calculation
                         )
                         if isinstance(result, tuple):
                             rag_context, rag_sources, rag_debug_info = result
@@ -2074,17 +2133,21 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                         
                         # === SAVE TO MEM0 MEMORY ===
                         # Extract and store facts from this conversation exchange
-                        try:
-                            mem0_result = await add_conversation_to_memory(
-                                user_id=user_email,
-                                user_message=request.message,
-                                assistant_response=full_content,
-                                model=model_id
-                            )
-                            if mem0_result:
-                                logger.info(f"[MEM0] Saved conversation to memory for user {user_email}: {mem0_result}")
-                        except Exception as mem0_err:
-                            logger.warning(f"[MEM0] Failed to save to memory: {mem0_err}")
+                        # Only save if user has memory enabled in settings
+                        if include_memory:
+                            try:
+                                mem0_result = await add_conversation_to_memory(
+                                    user_id=user_email,
+                                    user_message=request.message,
+                                    assistant_response=full_content,
+                                    model=model_id
+                                )
+                                if mem0_result:
+                                    logger.info(f"[MEM0] Saved conversation to memory for user {user_email}: {mem0_result}")
+                            except Exception as mem0_err:
+                                logger.warning(f"[MEM0] Failed to save to memory: {mem0_err}")
+                        else:
+                            logger.debug(f"[MEM0] Memory save SKIPPED - user disabled memory (include_memory=False)")
                         # === END MEM0 SAVE ===
                         
                         # Complete process

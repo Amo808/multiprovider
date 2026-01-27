@@ -1012,14 +1012,25 @@ def get_conversation_rag_store(supabase_client=None) -> ConversationRAGStore:
     """Get or create the conversation RAG store singleton"""
     global _conversation_rag_store
     
+    # Auto-initialize Supabase client if not provided
+    if supabase_client is None:
+        try:
+            from supabase_client.client import get_supabase_service_client
+            supabase_client = get_supabase_service_client()
+            logger.info("[ConversationRAG] Auto-initialized Supabase client")
+        except Exception as e:
+            logger.warning(f"[ConversationRAG] Could not auto-init Supabase: {e}")
+    
     if _conversation_rag_store is None:
         embedding_provider = os.getenv("EMBEDDING_PROVIDER", "openai")
         _conversation_rag_store = ConversationRAGStore(
             supabase_client=supabase_client,
             embedding_provider=embedding_provider
         )
+        logger.info(f"[ConversationRAG] Store created, supabase={supabase_client is not None}")
     elif supabase_client and _conversation_rag_store.supabase is None:
         _conversation_rag_store.supabase = supabase_client
+        logger.info("[ConversationRAG] Supabase client attached to existing store")
     
     return _conversation_rag_store
 

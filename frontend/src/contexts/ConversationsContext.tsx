@@ -71,7 +71,22 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
       }
 
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        // IMPORTANT: localStorage contains truncated messages (200 chars)
+        // Set loaded=false so that full messages are fetched from Supabase
+        // Also clear truncated messages to avoid showing partial content
+        // This fixes the bug where messages appear truncated after page reload
+        Object.keys(parsed).forEach(id => {
+          if (parsed[id]) {
+            parsed[id].loaded = false;
+            // Clear truncated messages - they will be loaded fresh from Supabase
+            // This prevents "flashing" of truncated content
+            if (parsed[id].messages) {
+              parsed[id].messages = [];
+            }
+          }
+        });
+        return parsed;
       }
 
       return {};

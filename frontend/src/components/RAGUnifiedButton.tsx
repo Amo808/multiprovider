@@ -24,7 +24,6 @@ import {
     Info,
     History,
     Cpu,
-    Globe,
     Sparkles
 } from 'lucide-react';
 import {
@@ -34,19 +33,16 @@ import {
     ChunkMode
 } from './RAGSettingsPanel';
 
-// RAG modes
+// RAG modes - упрощённый набор
 export type RAGMode = 'off' | 'auto' | 'smart' | 'basic' | 'advanced' | 'ultimate' | 'hyde' | 'agentic' | 'full' | 'chapter';
 
 const RAG_MODES: { value: RAGMode; label: string; description: string; icon: string }[] = [
-    { value: 'smart', label: 'Умный', description: 'AI понимает запрос автоматически', icon: '🧠' },
-    { value: 'auto', label: 'Авто', description: 'Автоматический выбор стратегии', icon: '✨' },
-    { value: 'full', label: 'Полный', description: 'Загрузить весь документ', icon: '📚' },
-    { value: 'chapter', label: 'По главам', description: 'Работа с отдельными главами', icon: '📖' },
-    { value: 'basic', label: 'Базовый', description: 'Быстрый гибридный поиск', icon: '⚡' },
-    { value: 'advanced', label: 'Расширенный', description: 'Multi-query + rerank', icon: '🔍' },
-    { value: 'ultimate', label: 'Максимальный', description: 'Авто-выбор лучшей стратегии', icon: '🎯' },
-    { value: 'hyde', label: 'HyDE', description: 'Для структурных запросов', icon: '📐' },
-    { value: 'agentic', label: 'Агент', description: 'AI агент итеративного поиска', icon: '🤖' },
+    { value: 'smart', label: 'Умный', description: 'AI сам выбирает лучшую стратегию', icon: '🧠' },
+    { value: 'full', label: 'Полный', description: 'Весь документ целиком', icon: '📚' },
+    { value: 'chapter', label: 'По главам', description: 'Работа с конкретными главами', icon: '📖' },
+    { value: 'basic', label: 'Базовый', description: 'Быстрый простой поиск', icon: '⚡' },
+    { value: 'advanced', label: 'Расширенный', description: 'Multi-query + переранжирование', icon: '�' },
+    { value: 'agentic', label: 'Агент', description: 'Итеративный поиск для сложных вопросов', icon: '🤖' },
 ];
 
 interface RAGUnifiedButtonProps {
@@ -630,7 +626,7 @@ const SettingsTab: React.FC<{
                     <div className="mt-3 space-y-2 pl-1">
                         <ToggleRow
                             label="История диалога"
-                            description="Включать предыдущие сообщения"
+                            description="Включать сообщения в контекст модели (UI показывает все)"
                             checked={settings.orchestrator.include_history}
                             onChange={(v) => handleChange({
                                 ...settings,
@@ -640,7 +636,7 @@ const SettingsTab: React.FC<{
                         />
                         {settings.orchestrator.include_history && (
                             <SliderSetting
-                                label="Макс. сообщений"
+                                label="Макс. сообщений в контексте"
                                 value={settings.orchestrator.history_limit}
                                 min={1}
                                 max={50}
@@ -653,23 +649,13 @@ const SettingsTab: React.FC<{
                         )}
                         <ToggleRow
                             label="Долгосрочная память"
-                            description="Использовать Mem0 для памяти"
+                            description="Запоминать факты между сессиями (Mem0)"
                             checked={settings.orchestrator.include_memory}
                             onChange={(v) => handleChange({
                                 ...settings,
                                 orchestrator: { ...settings.orchestrator, include_memory: v }
                             })}
                             icon={<Brain size={12} />}
-                        />
-                        <ToggleRow
-                            label="Авто-поиск"
-                            description="Автоматически искать в документах"
-                            checked={settings.orchestrator.auto_retrieve}
-                            onChange={(v) => handleChange({
-                                ...settings,
-                                orchestrator: { ...settings.orchestrator, auto_retrieve: v }
-                            })}
-                            icon={<Search size={12} />}
                         />
                         <ToggleRow
                             label="Адаптивные чанки"
@@ -680,16 +666,6 @@ const SettingsTab: React.FC<{
                                 orchestrator: { ...settings.orchestrator, adaptive_chunks: v }
                             })}
                             icon={<Sparkles size={12} />}
-                        />
-                        <ToggleRow
-                            label="Веб-поиск"
-                            description="Поиск в интернете (beta)"
-                            checked={settings.orchestrator.enable_web_search}
-                            onChange={(v) => handleChange({
-                                ...settings,
-                                orchestrator: { ...settings.orchestrator, enable_web_search: v }
-                            })}
-                            icon={<Globe size={12} />}
                         />
                     </div>
                 )}

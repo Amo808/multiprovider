@@ -91,13 +91,21 @@ const TokenCounter: React.FC<TokenCounterProps> = ({
             <div className="space-y-1 pt-1 border-t border-border">
               <div className="flex items-center justify-between text-[9px] text-muted-foreground">
                 <span>Context Usage</span>
-                <span>{total_tokens.toLocaleString()} / {contextLength.toLocaleString()}</span>
+                <div className="flex items-center gap-1">
+                  <span>{total_tokens.toLocaleString()} / {contextLength.toLocaleString()}</span>
+                  <span className="text-green-500" title="Auto-compression enabled: chat history is compressed when needed">
+                    ♾️
+                  </span>
+                </div>
               </div>
               <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                 <div 
-                  className={`${contextPercentage>90?'bg-red-500':contextPercentage>70?'bg-yellow-500':'bg-blue-500'} h-full transition-all`} 
+                  className={`${contextPercentage>90?'bg-yellow-500':contextPercentage>70?'bg-blue-500':'bg-green-500'} h-full transition-all`} 
                   style={{width: `${Math.min(contextPercentage,100)}%`}} 
                 />
+              </div>
+              <div className="text-[8px] text-green-600 text-center">
+                Auto-compression: unlimited chat history
               </div>
             </div>
           )}
