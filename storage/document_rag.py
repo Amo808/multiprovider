@@ -7,9 +7,10 @@ without actually putting the full document in the prompt.
 Features:
 - Smart hierarchical chunking (preserves context)
 - Hybrid search (BM25 + Vector)
-- Reranking with cross-encoder
+- Reranking with cross-encoder (optional)
 - Precise citations (page, paragraph, line)
 - Context window optimization
+- OpenAI embeddings (text-embedding-3-small)
 """
 
 import os
@@ -25,7 +26,20 @@ import logging
 
 # Vector & Embedding
 import numpy as np
-from sentence_transformers import SentenceTransformer, CrossEncoder
+
+# OpenAI for embeddings
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
+# Cross-encoder for reranking (optional)
+try:
+    from sentence_transformers import CrossEncoder
+    CROSS_ENCODER_AVAILABLE = True
+except ImportError:
+    CROSS_ENCODER_AVAILABLE = False
 
 # Document parsing
 try:
@@ -55,6 +69,10 @@ except ImportError:
     SUPABASE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# OpenAI embedding configuration
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIM = 1536
 
 
 @dataclass
@@ -486,24 +504,29 @@ class DocumentParser:
 class HybridSearchEngine:
     """
     Hybrid search combining:
-    - Dense retrieval (vector similarity)
+    - Dense retrieval (OpenAI vector similarity)
     - Sparse retrieval (BM25 keyword matching)
-    - Cross-encoder reranking
+    - Cross-encoder reranking (optional)
     """
     
     def __init__(
         self,
-        embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
         vector_weight: float = 0.5,
         bm25_weight: float = 0.3,
         rerank_weight: float = 0.2
     ):
-        logger.info(f"Loading embedding model: {embedding_model}")
-        self.embedder = SentenceTransformer(embedding_model)
+        # OpenAI client for embeddings
+        self._openai_client = None
         
-        logger.info(f"Loading reranker model: {reranker_model}")
-        self.reranker = CrossEncoder(reranker_model)
+        # Reranker (optional)
+        self.reranker = None
+        if CROSS_ENCODER_AVAILABLE:
+            try:
+                logger.info(f"Loading reranker model: {reranker_model}")
+                self.reranker = CrossEncoder(reranker_model)
+            except Exception as e:
+                logger.warning(f"Could not load reranker: {e}")
         
         self.vector_weight = vector_weight
         self.bm25_weight = bm25_weight
@@ -512,20 +535,78 @@ class HybridSearchEngine:
         # BM25 index (built per search session)
         self.bm25_index = None
         self.bm25_corpus = None
+        
+        logger.info("[HybridSearch] Initialized with OpenAI embeddings (text-embedding-3-small)")
+    
+    @property
+    def openai_client(self):
+        """Lazy load OpenAI client"""
+        if self._openai_client is None:
+            # Get API key from multiple sources
+            api_key = os.getenv("OPENAI_API_KEY")
+            invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+            
+            if not api_key or api_key in invalid_keys:
+                # Try secrets.json
+                secrets_path = Path(__file__).parent.parent / "data" / "secrets.json"
+                if secrets_path.exists():
+                    try:
+                        with open(secrets_path, 'r', encoding='utf-8') as f:
+                            secrets = json.load(f)
+                            secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                            if secrets_key and secrets_key not in invalid_keys:
+                                api_key = secrets_key
+                    except Exception:
+                        pass
+            
+            if api_key and api_key not in invalid_keys and OPENAI_AVAILABLE:
+                self._openai_client = OpenAI(api_key=api_key)
+        return self._openai_client
     
     def embed_chunks(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
-        """Generate embeddings for all chunks"""
-        texts = [c.content for c in chunks]
-        embeddings = self.embedder.encode(texts, show_progress_bar=True)
+        """Generate embeddings for all chunks using OpenAI"""
+        if not self.openai_client:
+            logger.error("[HybridSearch] OpenAI client not available")
+            return chunks
         
-        for chunk, emb in zip(chunks, embeddings):
-            chunk.embedding = emb.tolist()
+        texts = [c.content[:8000] for c in chunks]
+        
+        try:
+            # Process in batches (OpenAI supports up to 2048 inputs)
+            batch_size = 100
+            all_embeddings = []
+            
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i + batch_size]
+                response = self.openai_client.embeddings.create(
+                    input=batch,
+                    model=EMBEDDING_MODEL
+                )
+                all_embeddings.extend([item.embedding for item in response.data])
+            
+            for chunk, emb in zip(chunks, all_embeddings):
+                chunk.embedding = emb
+            
+            logger.info(f"[HybridSearch] Created embeddings for {len(chunks)} chunks")
+        except Exception as e:
+            logger.error(f"[HybridSearch] Embedding error: {e}")
         
         return chunks
     
     def embed_query(self, query: str) -> np.ndarray:
-        """Generate embedding for query"""
-        return self.embedder.encode([query])[0]
+        """Generate embedding for query using OpenAI"""
+        if not self.openai_client:
+            return np.zeros(EMBEDDING_DIM)
+        
+        try:
+            response = self.openai_client.embeddings.create(
+                input=query[:8000],
+                model=EMBEDDING_MODEL
+            )
+            return np.array(response.data[0].embedding)
+        except Exception as e:
+            logger.error(f"[HybridSearch] Query embedding error: {e}")
+            return np.zeros(EMBEDDING_DIM)
     
     def build_bm25_index(self, chunks: List[DocumentChunk]):
         """Build BM25 index from chunks"""
@@ -599,26 +680,29 @@ class HybridSearchEngine:
         # Sort by combined score
         results.sort(key=lambda x: x.final_score, reverse=True)
         
-        # 4. Rerank top results
+        # 4. Rerank top results (if reranker available)
         top_results = results[:top_k]
-        if top_results:
-            rerank_pairs = [(query, r.chunk.content) for r in top_results]
-            rerank_scores = self.reranker.predict(rerank_pairs)
-            
-            # Normalize rerank scores
-            max_rerank = max(rerank_scores) if max(rerank_scores) > 0 else 1.0
-            min_rerank = min(rerank_scores)
-            rerank_range = max_rerank - min_rerank if max_rerank != min_rerank else 1.0
-            
-            for i, result in enumerate(top_results):
-                result.rerank_score = (rerank_scores[i] - min_rerank) / rerank_range
-                result.final_score = (
-                    (1 - self.rerank_weight) * result.final_score +
-                    self.rerank_weight * result.rerank_score
-                )
-            
-            # Re-sort by final score
-            top_results.sort(key=lambda x: x.final_score, reverse=True)
+        if top_results and self.reranker is not None:
+            try:
+                rerank_pairs = [(query, r.chunk.content) for r in top_results]
+                rerank_scores = self.reranker.predict(rerank_pairs)
+                
+                # Normalize rerank scores
+                max_rerank = max(rerank_scores) if max(rerank_scores) > 0 else 1.0
+                min_rerank = min(rerank_scores)
+                rerank_range = max_rerank - min_rerank if max_rerank != min_rerank else 1.0
+                
+                for i, result in enumerate(top_results):
+                    result.rerank_score = (rerank_scores[i] - min_rerank) / rerank_range
+                    result.final_score = (
+                        (1 - self.rerank_weight) * result.final_score +
+                        self.rerank_weight * result.rerank_score
+                    )
+                
+                # Re-sort by final score
+                top_results.sort(key=lambda x: x.final_score, reverse=True)
+            except Exception as e:
+                logger.warning(f"[HybridSearch] Reranking failed: {e}")
         
         return top_results[:rerank_top_k]
     
@@ -635,14 +719,13 @@ class AdvancedDocumentRAG:
     """
     Complete Document RAG system with:
     - Smart chunking
-    - Hybrid search
+    - Hybrid search (OpenAI embeddings + BM25)
     - Precise citations
     - Context enrichment
     """
     
     def __init__(
         self,
-        embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         chunk_size: int = 512,
         chunk_overlap: int = 128,
         supabase_url: str = None,
@@ -652,7 +735,7 @@ class AdvancedDocumentRAG:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap
         )
-        self.search_engine = HybridSearchEngine(embedding_model=embedding_model)
+        self.search_engine = HybridSearchEngine()
         
         # Document storage
         self.documents: Dict[str, Dict] = {}  # doc_id -> {name, chunks}

@@ -18,8 +18,8 @@ export { Logo } from './Logo';
 // Document & RAG Components
 export { default as DocumentManager } from './DocumentManager';
 export { RAGSources, RAGStatusIndicator, RAGToggle } from './RAGSources';
-export { RAGSettingsPanel, RAGSettingsInline, DEFAULT_RAG_SETTINGS, RAG_PRESETS } from './RAGSettingsPanel';
-export type { RAGSettings } from './RAGSettingsPanel';
+export { RAGSettingsPanel, RAGSettingsInline, DEFAULT_RAG_SETTINGS, RAG_PRESETS, EMBEDDING_MODELS } from './RAGSettingsPanel';
+export type { RAGSettings, EmbeddingProvider } from './RAGSettingsPanel';
 
 // Process & Multi-Model Components
 export { ProcessViewer, ProcessCard } from './ProcessViewer';

@@ -32,6 +32,16 @@ import {
 // Chunk retrieval mode - simplified: only percent or adaptive
 export type ChunkMode = 'fixed' | 'percent' | 'adaptive';  // 'fixed' kept for backward compatibility
 
+// Embedding provider options - OpenAI only (local models removed)
+export type EmbeddingProvider = 'openai';
+
+// Embedding model options - OpenAI models only
+export const EMBEDDING_MODELS: { id: string; name: string; dimensions: number }[] = [
+    { id: 'text-embedding-3-small', name: 'text-embedding-3-small (рекомендуется)', dimensions: 1536 },
+    { id: 'text-embedding-3-large', name: 'text-embedding-3-large (точнее, дороже)', dimensions: 3072 },
+    { id: 'text-embedding-ada-002', name: 'text-embedding-ada-002 (legacy)', dimensions: 1536 },
+];
+
 // Orchestrator settings for AI agent logic
 export interface RAGOrchestratorSettings {
     include_history: boolean;        // Include conversation history
@@ -43,6 +53,10 @@ export interface RAGOrchestratorSettings {
 }
 
 export interface RAGSettings {
+    // === EMBEDDING SETTINGS ===
+    embedding_provider: EmbeddingProvider;  // 'openai' or 'local'
+    embedding_model: string;                // Model ID for embeddings
+
     // === CHUNK MODE ===
     chunk_mode: ChunkMode;           // "fixed", "percent", "adaptive"
     max_chunks: number;              // For fixed mode (legacy)
@@ -176,13 +190,17 @@ export const RAG_PRESETS: Record<string, { name: string; description: string; ic
 };
 
 export const DEFAULT_RAG_SETTINGS: RAGSettings = {
-    // Chunk mode settings
-    chunk_mode: 'adaptive',
-    max_chunks: 50,           // Legacy - kept for backward compatibility with backend
-    chunk_percent: 30,        // For percent mode - 30% of document
-    min_chunks: 5,            // Minimum chunks for any query (internal)
+    // Embedding settings - OpenAI by default (requires OPENAI_API_KEY in backend/.env)
+    embedding_provider: 'openai',
+    embedding_model: 'text-embedding-3-small',
+
+    // Chunk mode settings - DEFAULT: 100% of document with fixed percent mode
+    chunk_mode: 'percent',    // Fixed percent mode by default (not adaptive)
+    max_chunks: 10000,        // Legacy - kept for backward compatibility with backend
+    chunk_percent: 100,       // For percent mode - 100% of document by default
+    min_chunks: 5,            // Minimum chunks even for small queries
     max_chunks_limit: 10000,  // Hard limit (absolute number) - internal safety limit
-    max_percent_limit: 30,    // Main user-facing setting: max % of document to use
+    max_percent_limit: 100,   // Main user-facing setting: 100% of document by default
 
     // Search settings
     min_similarity: 0.4,      // 40% similarity threshold
@@ -424,6 +442,37 @@ export const RAGSettingsPanel: React.FC<RAGSettingsPanelProps> = ({
 
             {/* Settings content - scrollable */}
             <div className="p-4 space-y-5 overflow-y-auto flex-1">
+                {/* === EMBEDDING MODEL SETTINGS === */}
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                        <Cpu size={14} />
+                        Модель эмбеддингов (OpenAI)
+                    </div>
+
+                    <div className="p-3 bg-secondary/30 rounded-lg space-y-3">
+                        {/* Model selector - OpenAI only */}
+                        <div>
+                            <select
+                                value={settings.embedding_model}
+                                onChange={(e) => onChange({ ...settings, embedding_model: e.target.value })}
+                                disabled={disabled}
+                                className="w-full px-3 py-1.5 text-sm bg-secondary border border-border rounded-lg 
+                                    text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500/50
+                                    disabled:opacity-50"
+                            >
+                                {EMBEDDING_MODELS.map(model => (
+                                    <option key={model.id} value={model.id}>
+                                        {model.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <p className="text-xs text-muted-foreground mt-1">
+                                ⚠️ Требуется OPENAI_API_KEY в backend/.env
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
                 {/* === CHUNK MODE SELECTOR === */}
                 <div className="space-y-4">
                     <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">

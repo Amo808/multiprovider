@@ -81,6 +81,10 @@ export interface ChatResponse {
   system_prompt_preview?: string; // Preview of the system prompt
   system_prompt_full?: string; // Full system prompt with RAG context for debug
   system_prompt_length?: number;
+  // Debug mode fields
+  history_messages?: Array<{role: string; content: string}>; // Conversation history for debug
+  history_count?: number;
+  debug_mode?: boolean;
   meta?: {
     tokens_in?: number;
     tokens_out?: number;

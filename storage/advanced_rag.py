@@ -7,6 +7,7 @@ import re
 import hashlib
 import logging
 import asyncio
+import json
 from typing import List, Optional, Dict, Any, Tuple
 from uuid import uuid4
 from datetime import datetime
@@ -15,16 +16,45 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
-# Try to import embedding model
+# OpenAI embeddings configuration
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIM = 1536
+
+# Try to import OpenAI
 try:
-    from sentence_transformers import SentenceTransformer
-    EMBEDDING_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
-    EMBEDDING_DIM = 384
-    logger.info("[RAG] Loaded sentence-transformers embedding model")
+    from openai import OpenAI
+    _openai_client = None
+    
+    def get_openai_client():
+        global _openai_client
+        if _openai_client is None:
+            # Get API key from multiple sources
+            api_key = os.getenv("OPENAI_API_KEY")
+            invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+            
+            if not api_key or api_key in invalid_keys:
+                # Try secrets.json
+                secrets_path = Path(__file__).parent.parent / "data" / "secrets.json"
+                if secrets_path.exists():
+                    try:
+                        with open(secrets_path, 'r', encoding='utf-8') as f:
+                            secrets = json.load(f)
+                            secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                            if secrets_key and secrets_key not in invalid_keys:
+                                api_key = secrets_key
+                    except Exception:
+                        pass
+            
+            if api_key and api_key not in invalid_keys:
+                _openai_client = OpenAI(api_key=api_key)
+        return _openai_client
+    
+    OPENAI_AVAILABLE = True
+    logger.info("[RAG] OpenAI embeddings configured (text-embedding-3-small)")
 except ImportError:
-    EMBEDDING_MODEL = None
-    EMBEDDING_DIM = 384
-    logger.warning("[RAG] sentence-transformers not installed, embeddings disabled")
+    OPENAI_AVAILABLE = False
+    get_openai_client = lambda: None
+    logger.warning("[RAG] OpenAI not installed, embeddings disabled")
 
 # Supported file types
 SUPPORTED_TYPES = {
@@ -323,26 +353,43 @@ class AdvancedRAGStore:
         return self._client
     
     def create_embedding(self, text: str) -> Optional[List[float]]:
-        """Create embedding for text"""
-        if EMBEDDING_MODEL is None:
+        """Create embedding for text using OpenAI"""
+        if not OPENAI_AVAILABLE:
+            logger.warning("[RAG] OpenAI not available for embeddings")
             return None
         
         try:
-            embedding = EMBEDDING_MODEL.encode(text[:8000])  # Limit text length
-            return embedding.tolist()
+            client = get_openai_client()
+            if client is None:
+                logger.warning("[RAG] OpenAI client not initialized (missing API key?)")
+                return None
+            
+            response = client.embeddings.create(
+                input=text[:8000],  # Limit text length
+                model=EMBEDDING_MODEL
+            )
+            return response.data[0].embedding
         except Exception as e:
             logger.error(f"[RAG] Embedding error: {e}")
             return None
     
     def create_embeddings_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
-        """Create embeddings for multiple texts"""
-        if EMBEDDING_MODEL is None:
+        """Create embeddings for multiple texts using OpenAI"""
+        if not OPENAI_AVAILABLE:
             return [None] * len(texts)
         
         try:
+            client = get_openai_client()
+            if client is None:
+                return [None] * len(texts)
+            
+            # OpenAI supports batch embedding in a single call
             truncated = [t[:8000] for t in texts]
-            embeddings = EMBEDDING_MODEL.encode(truncated)
-            return [e.tolist() for e in embeddings]
+            response = client.embeddings.create(
+                input=truncated,
+                model=EMBEDDING_MODEL
+            )
+            return [item.embedding for item in response.data]
         except Exception as e:
             logger.error(f"[RAG] Batch embedding error: {e}")
             return [None] * len(texts)

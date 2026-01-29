@@ -27,16 +27,29 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
     const apiRequest = useMemo(() => {
         const apiMessages = [];
 
-        // System message with RAG context
+        // System message with RAG context clearly marked
         let effectiveSystemPrompt = systemPrompt || 'You are a helpful AI assistant.';
-        if (ragContext) {
-            effectiveSystemPrompt = `${effectiveSystemPrompt}\n\n${ragContext}`;
-        }
 
-        apiMessages.push({
-            role: 'system',
-            content: effectiveSystemPrompt
-        });
+        // Combine system prompt + RAG context with clear visual separator
+        if (ragContext) {
+            const combinedSystemContent = `${effectiveSystemPrompt}
+
+═══════════════════════════════════════════════════════════════
+📚 RAG КОНТЕКСТ (извлечено из документов)
+═══════════════════════════════════════════════════════════════
+${ragContext}
+═══════════════════════════════════════════════════════════════`;
+
+            apiMessages.push({
+                role: 'system',
+                content: combinedSystemContent
+            });
+        } else {
+            apiMessages.push({
+                role: 'system',
+                content: effectiveSystemPrompt
+            });
+        }
 
         // Add conversation history
         messages.forEach(msg => {
@@ -60,8 +73,7 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
             temperature: generationConfig.temperature,
             max_tokens: generationConfig.max_tokens,
             top_p: generationConfig.top_p,
-            stream: generationConfig.stream,
-            _rag_context_included: !!ragContext
+            stream: generationConfig.stream
         };
     }, [messages, currentInput, systemPrompt, ragContext, generationConfig]);
 
@@ -118,9 +130,15 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
                             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-gray-800">
                                 <div>
                                     <h2 className="text-lg font-semibold text-white">API Request JSON</h2>
-                                    <p className="text-xs text-gray-400">
-                                        {messages.length} сообщений • ~{estimatedTokens.toLocaleString()} токенов
-                                    </p>
+                                    <div className="flex items-center gap-3 text-xs text-gray-400">
+                                        <span>{messages.length} сообщений</span>
+                                        <span>~{estimatedTokens.toLocaleString()} токенов</span>
+                                        {ragContext && (
+                                            <span className="px-2 py-0.5 bg-blue-600/30 text-blue-300 rounded-full">
+                                                📚 RAG: {Math.ceil(ragContext.length / 4).toLocaleString()} tok
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
 
                                 <div className="flex items-center gap-2">
@@ -140,8 +158,21 @@ export const ContextViewer: React.FC<ContextViewerProps> = ({
                                 </div>
                             </div>
 
-                            {/* JSON Content - with word wrap */}
+                            {/* JSON Content */}
                             <div className="flex-1 overflow-auto p-4">
+                                {ragContext && (
+                                    <div className="mb-4 p-3 bg-blue-900/30 border border-blue-700/50 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-blue-400 font-semibold">📚 RAG Context включён</span>
+                                            <span className="text-xs text-gray-400">
+                                                ({ragContext.length.toLocaleString()} символов, ~{Math.ceil(ragContext.length / 4).toLocaleString()} токенов)
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-gray-400">
+                                            В system prompt ниже RAG-контекст выделен линиями ═══ и заголовком "📚 RAG КОНТЕКСТ"
+                                        </p>
+                                    </div>
+                                )}
                                 <pre className="bg-gray-950 p-4 rounded-lg text-sm font-mono text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
                                     {contextJson}
                                 </pre>

@@ -28,23 +28,18 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
-# Try to import embedding model
-try:
-    from sentence_transformers import SentenceTransformer
-    EMBEDDING_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
-    EMBEDDING_DIM = 384
-    logger.info("[ConversationRAG] Loaded sentence-transformers embedding model")
-except ImportError:
-    EMBEDDING_MODEL = None
-    EMBEDDING_DIM = 384
-    logger.warning("[ConversationRAG] sentence-transformers not installed")
+# OpenAI embeddings configuration
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIM = 1536
 
-# Try OpenAI for embeddings (higher quality, 1536 dim)
+# Try OpenAI for embeddings
 try:
     from openai import AsyncOpenAI
     OPENAI_AVAILABLE = True
+    logger.info("[ConversationRAG] OpenAI embeddings configured (text-embedding-3-small)")
 except ImportError:
     OPENAI_AVAILABLE = False
+    logger.warning("[ConversationRAG] OpenAI not installed, embeddings disabled")
 
 
 class ChunkType(Enum):
@@ -316,37 +311,86 @@ class ConversationRAGStore:
     def __init__(
         self,
         supabase_client=None,
-        embedding_provider: str = "local",  # "local" or "openai"
+        embedding_provider: str = "openai",  # "openai" or "local" - OpenAI by default
         openai_api_key: Optional[str] = None
     ):
         self.supabase = supabase_client
         self.embedding_provider = embedding_provider
-        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        
+        # Get API key from multiple sources
+        api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+        
+        logger.debug(f"[ConversationRAG] Initial API key from env: {api_key[:20] if api_key else 'None'}...")
+        
+        if not api_key or api_key in invalid_keys:
+            # Try secrets.json
+            try:
+                from pathlib import Path
+                import json
+                secrets_path = Path(__file__).parent.parent / "data" / "secrets.json"
+                logger.debug(f"[ConversationRAG] Looking for secrets at: {secrets_path}")
+                if secrets_path.exists():
+                    with open(secrets_path, 'r', encoding='utf-8') as f:
+                        secrets = json.load(f)
+                        secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                        if secrets_key and secrets_key not in invalid_keys:
+                            api_key = secrets_key
+                            logger.info(f"[ConversationRAG] Loaded OpenAI key from secrets.json")
+                        else:
+                            logger.warning(f"[ConversationRAG] secrets.json key is invalid or empty")
+                else:
+                    logger.warning(f"[ConversationRAG] secrets.json not found at {secrets_path}")
+            except Exception as e:
+                logger.error(f"[ConversationRAG] Failed to load secrets.json: {e}")
+        
+        self.openai_api_key = api_key
         self.chunker = ConversationHistoryChunker()
         
         # OpenAI client for embeddings
         self.openai_client = None
-        if OPENAI_AVAILABLE and self.openai_api_key and embedding_provider == "openai":
+        if OPENAI_AVAILABLE and self.openai_api_key and self.openai_api_key not in invalid_keys and embedding_provider == "openai":
             self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+            logger.info(f"[ConversationRAG] OpenAI client initialized successfully")
     
     async def get_embedding(self, text: str) -> Optional[List[float]]:
-        """Get embedding for text"""
-        if self.embedding_provider == "openai" and self.openai_client:
-            try:
-                response = await self.openai_client.embeddings.create(
-                    model="text-embedding-3-small",
-                    input=text
-                )
-                return response.data[0].embedding
-            except Exception as e:
-                logger.error(f"[ConversationRAG] OpenAI embedding error: {e}")
-                # Fallback to local
-                if EMBEDDING_MODEL:
-                    return EMBEDDING_MODEL.encode(text).tolist()
+        """Get embedding for text using OpenAI"""
+        invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+        
+        if not self.openai_client:
+            # Try to reload API key from secrets.json
+            if not self.openai_api_key or self.openai_api_key in invalid_keys:
+                try:
+                    from pathlib import Path
+                    import json
+                    secrets_path = Path(__file__).parent.parent / "data" / "secrets.json"
+                    if secrets_path.exists():
+                        with open(secrets_path, 'r', encoding='utf-8') as f:
+                            secrets = json.load(f)
+                            secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                            if secrets_key and secrets_key not in invalid_keys:
+                                self.openai_api_key = secrets_key
+                                logger.info("[ConversationRAG] Reloaded OpenAI key from secrets.json in get_embedding")
+                except Exception as e:
+                    logger.warning(f"[ConversationRAG] Failed to reload secrets: {e}")
+            
+            # Try to initialize client
+            if OPENAI_AVAILABLE and self.openai_api_key and self.openai_api_key not in invalid_keys:
+                self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+                logger.info("[ConversationRAG] OpenAI client initialized in get_embedding")
+            else:
+                logger.warning("[ConversationRAG] OpenAI client not available - no valid API key")
                 return None
-        elif EMBEDDING_MODEL:
-            return EMBEDDING_MODEL.encode(text).tolist()
-        return None
+        
+        try:
+            response = await self.openai_client.embeddings.create(
+                model=EMBEDDING_MODEL,
+                input=text[:8000]  # Limit text length
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"[ConversationRAG] OpenAI embedding error: {e}")
+            return None
     
     async def index_message(
         self,
@@ -407,6 +451,34 @@ class ConversationRAGStore:
         """Save chunks to Supabase conversation_chunks table (unified for messages and docs)"""
         if not self.supabase:
             return
+        
+        # Ensure user exists in users table before inserting chunks with user_id
+        if user_id:
+            try:
+                # Check if user exists
+                user_check = self.supabase.table("users").select("id").eq("id", user_id).execute()
+                if not user_check.data:
+                    # Try to create user with a default email pattern
+                    try:
+                        # Create user record
+                        self.supabase.table("users").insert({
+                            "id": user_id,
+                            "email": f"user_{user_id[:8]}@multech.local",  # Placeholder email
+                            "display_name": f"User {user_id[:8]}",
+                            "created_at": datetime.now().isoformat()
+                        }).execute()
+                        logger.info(f"[ConversationRAG] Created user record for {user_id}")
+                    except Exception as create_err:
+                        # If creation fails (maybe due to duplicate), check again
+                        logger.warning(f"[ConversationRAG] Could not create user {user_id}: {create_err}")
+                        # Re-check if user was created by another process
+                        user_recheck = self.supabase.table("users").select("id").eq("id", user_id).execute()
+                        if not user_recheck.data:
+                            logger.warning(f"[ConversationRAG] User {user_id} still not found, saving chunks without user_id")
+                            user_id = None
+            except Exception as e:
+                logger.warning(f"[ConversationRAG] Failed to check/create user: {e}, saving chunks without user_id")
+                user_id = None
         
         for chunk in chunks:
             try:
@@ -1022,7 +1094,7 @@ def get_conversation_rag_store(supabase_client=None) -> ConversationRAGStore:
             logger.warning(f"[ConversationRAG] Could not auto-init Supabase: {e}")
     
     if _conversation_rag_store is None:
-        embedding_provider = os.getenv("EMBEDDING_PROVIDER", "openai")
+        embedding_provider = os.getenv("EMBEDDING_PROVIDER", "openai")  # Default to OpenAI
         _conversation_rag_store = ConversationRAGStore(
             supabase_client=supabase_client,
             embedding_provider=embedding_provider

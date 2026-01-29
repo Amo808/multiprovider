@@ -95,13 +95,23 @@ const RAGContextSection = memo<{
   contextFull?: string;
   debug?: RAGDebugInfo;
   systemPromptPreview?: string;
-}>(({ sources, contextPreview, contextFull, debug, systemPromptPreview }) => {
+  systemPromptFull?: string;
+  chunksCount?: number;  // Real chunks count from backend
+  historyMessages?: Array<{role: string; content: string}>;
+  historyCount?: number;
+  debugMode?: boolean;
+}>(({ sources, contextPreview, contextFull, debug, systemPromptPreview, systemPromptFull, chunksCount, historyMessages, historyCount, debugMode }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [showFullContext, setShowFullContext] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [showFullRequest, setShowFullRequest] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   if (!sources || sources.length === 0) return null;
+
+  // Real chunks count - prioritize backend value, fallback to sources.length
+  const realChunksCount = chunksCount || sources.length;
 
   // Handle clicks with event stop to prevent interference
   const handleToggle = (e: React.MouseEvent) => {
@@ -128,6 +138,59 @@ const RAGContextSection = memo<{
     setShowSystemPrompt(!showSystemPrompt);
   };
 
+  const handleFullRequestToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShowFullRequest(!showFullRequest);
+  };
+
+  // Build full API request JSON for debug
+  const buildFullRequestJson = () => {
+    const apiMessages = [];
+    
+    // System message with RAG context
+    if (systemPromptFull || systemPromptPreview) {
+      apiMessages.push({
+        role: 'system',
+        content: systemPromptFull || systemPromptPreview
+      });
+    }
+    
+    // Add conversation history
+    if (historyMessages && historyMessages.length > 0) {
+      historyMessages.forEach(msg => {
+        apiMessages.push({
+          role: msg.role,
+          content: msg.content
+        });
+      });
+    }
+    
+    return {
+      model: '<current-model>',
+      messages: apiMessages,
+      stream: true,
+      _debug_info: {
+        total_chunks_used: realChunksCount,
+        rag_context_chars: contextFull?.length || 0,
+        history_messages: historyCount || 0
+      }
+    };
+  };
+
+  const handleCopyFullRequest = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const json = JSON.stringify(buildFullRequestJson(), null, 2);
+      await navigator.clipboard.writeText(json);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
   return (
     <div className="mb-3">
       <button
@@ -138,7 +201,7 @@ const RAGContextSection = memo<{
         <BookOpen className="w-4 h-4 text-blue-500" />
         <span>Document context</span>
         <span className="text-xs bg-blue-500/20 text-blue-500 px-1.5 py-0.5 rounded">
-          {sources.length} {sources.length === 1 ? 'chunk' : 'chunks'}
+          {realChunksCount} {realChunksCount === 1 ? 'chunk' : 'chunks'}
         </span>
         <ChevronDown className={cn("w-4 h-4 transition-transform", isOpen && "rotate-180")} />
       </button>

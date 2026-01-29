@@ -7,6 +7,8 @@
  * - Выбор режима поиска
  * - Настройки чанков и поиска
  * - Debug панель
+ * 
+ * ВАЖНО: Все кнопки имеют type="button" чтобы не вызывать submit формы!
  */
 import React, { useState, useRef, useEffect } from 'react';
 import {
@@ -127,6 +129,7 @@ export const RAGUnifiedButton: React.FC<RAGUnifiedButtonProps> = ({
             {/* Main button - compact on mobile */}
             <button
                 ref={buttonRef}
+                type="button"
                 onClick={() => setIsOpen(!isOpen)}
                 disabled={disabled}
                 className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm transition-all flex-shrink-0 min-w-0 max-w-[80px] sm:max-w-none ${enabled
@@ -172,6 +175,7 @@ export const RAGUnifiedButton: React.FC<RAGUnifiedButtonProps> = ({
                             <div className="flex items-center gap-2">
                                 {/* Power toggle */}
                                 <button
+                                    type="button"
                                     onClick={() => onEnableChange(!enabled)}
                                     className={`px-3 py-1 text-xs font-medium rounded-lg transition-colors ${enabled
                                         ? 'bg-purple-500 text-white'
@@ -183,6 +187,7 @@ export const RAGUnifiedButton: React.FC<RAGUnifiedButtonProps> = ({
                                 {/* Debug button */}
                                 {onOpenDebug && (
                                     <button
+                                        type="button"
                                         onClick={() => {
                                             onOpenDebug();
                                             setIsOpen(false);
@@ -195,6 +200,7 @@ export const RAGUnifiedButton: React.FC<RAGUnifiedButtonProps> = ({
                                 )}
                                 {/* Close button */}
                                 <button
+                                    type="button"
                                     onClick={() => setIsOpen(false)}
                                     className="p-1.5 hover:bg-secondary rounded-lg text-muted-foreground hover:text-foreground transition-colors md:hidden"
                                 >
@@ -213,6 +219,7 @@ export const RAGUnifiedButton: React.FC<RAGUnifiedButtonProps> = ({
                                     { id: 'prompts' as TabId, label: '📝 Промпты' },
                                 ].map(tab => (
                                     <button
+                                        type="button"
                                         key={tab.id}
                                         onClick={() => {
                                             if (tab.id === 'prompts' && onOpenPromptsEditor) {
@@ -248,6 +255,7 @@ export const RAGUnifiedButton: React.FC<RAGUnifiedButtonProps> = ({
                                         Включите RAG чтобы использовать поиск по вашим документам при генерации ответов
                                     </p>
                                     <button
+                                        type="button"
                                         onClick={() => onEnableChange(true)}
                                         className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
                                     >
@@ -321,6 +329,7 @@ const DocumentsTab: React.FC<{
                 </span>
                 <div className="flex gap-2">
                     <button
+                        type="button"
                         onClick={onSelectAll}
                         disabled={allSelected}
                         className="text-xs text-purple-400 hover:text-purple-300 disabled:opacity-50"
@@ -329,6 +338,7 @@ const DocumentsTab: React.FC<{
                     </button>
                     <span className="text-muted-foreground">•</span>
                     <button
+                        type="button"
                         onClick={onDeselectAll}
                         disabled={selectedCount === 0}
                         className="text-xs text-purple-400 hover:text-purple-300 disabled:opacity-50"
@@ -344,6 +354,7 @@ const DocumentsTab: React.FC<{
                     const isSelected = selectedDocumentIds.includes(doc.id);
                     return (
                         <button
+                            type="button"
                             key={doc.id}
                             onClick={() => onDocumentToggle(doc.id)}
                             className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-all ${isSelected
@@ -382,6 +393,7 @@ const ModeTab: React.FC<{
             <div className="grid grid-cols-2 gap-2">
                 {RAG_MODES.map((m) => (
                     <button
+                        type="button"
                         key={m.value}
                         onClick={() => onModeChange(m.value)}
                         className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-left transition-all ${mode === m.value
@@ -455,6 +467,7 @@ const SettingsTab: React.FC<{
                 <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-medium text-muted-foreground">🎯 Быстрые пресеты</span>
                     <button
+                        type="button"
                         onClick={() => handleChange(DEFAULT_RAG_SETTINGS)}
                         className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
                     >
@@ -465,6 +478,7 @@ const SettingsTab: React.FC<{
                 <div className="flex flex-wrap gap-1">
                     {Object.entries(RAG_PRESETS).slice(0, 4).map(([key, preset]) => (
                         <button
+                            type="button"
                             key={key}
                             onClick={() => handleChange({ ...settings, ...preset.settings })}
                             className="px-2 py-1 text-xs bg-secondary/50 hover:bg-secondary rounded-lg transition-colors"
@@ -473,6 +487,7 @@ const SettingsTab: React.FC<{
                         </button>
                     ))}
                     <button
+                        type="button"
                         onClick={() => setShowPresets(!showPresets)}
                         className="px-2 py-1 text-xs text-purple-400 hover:text-purple-300"
                     >
@@ -483,6 +498,7 @@ const SettingsTab: React.FC<{
                     <div className="flex flex-wrap gap-1 mt-1">
                         {Object.entries(RAG_PRESETS).slice(4).map(([key, preset]) => (
                             <button
+                                type="button"
                                 key={key}
                                 onClick={() => handleChange({ ...settings, ...preset.settings })}
                                 className="px-2 py-1 text-xs bg-secondary/50 hover:bg-secondary rounded-lg transition-colors"
@@ -506,6 +522,7 @@ const SettingsTab: React.FC<{
                         { mode: 'adaptive' as ChunkMode, label: 'Умный', icon: <Brain size={12} />, desc: 'AI решает сам' },
                     ].map(({ mode, label, icon, desc }) => (
                         <button
+                            type="button"
                             key={mode}
                             onClick={() => handleChange({ ...settings, chunk_mode: mode })}
                             title={desc}
@@ -560,7 +577,7 @@ const SettingsTab: React.FC<{
                 <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-medium text-muted-foreground">⚖️ Баланс поиска</span>
                     {!weightsValid && (
-                        <button onClick={normalizeWeights} className="text-[10px] text-amber-400">
+                        <button type="button" onClick={normalizeWeights} className="text-[10px] text-amber-400">
                             <Info size={10} className="inline mr-0.5" />
                             Норм.
                         </button>
@@ -614,6 +631,7 @@ const SettingsTab: React.FC<{
                 <button
                     onClick={() => setShowOrchestrator(!showOrchestrator)}
                     className="flex items-center justify-between w-full text-xs font-medium text-muted-foreground hover:text-foreground"
+                    type="button"
                 >
                     <span className="flex items-center gap-1">
                         <Cpu size={12} />
@@ -718,6 +736,7 @@ const ToggleChip: React.FC<{
     onChange: (checked: boolean) => void;
 }> = ({ label, checked, onChange }) => (
     <button
+        type="button"
         onClick={() => onChange(!checked)}
         className={`px-2 py-1 text-xs rounded-lg transition-all ${checked
             ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
@@ -746,6 +765,7 @@ const ToggleRow: React.FC<{
             </div>
         </div>
         <button
+            type="button"
             onClick={() => onChange(!checked)}
             className={`
         relative inline-flex h-5 w-9 items-center rounded-full transition-colors

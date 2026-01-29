@@ -65,7 +65,7 @@ interface UseRAGReturn {
 const RAG_SETTINGS_KEY = 'rag_settings';
 const RAG_ENABLED_KEY = 'rag_enabled';
 const RAG_SELECTED_DOCS_KEY = 'rag_selected_docs';
-const RAG_SETTINGS_VERSION = 7; // v7: RESET - ensure max_percent_limit is synced with chunk_percent
+const RAG_SETTINGS_VERSION = 11; // v11: Default to LOCAL embeddings (no API key required), 100% document
 
 // Load settings from localStorage
 const loadStoredSettings = (): RAGSettings => {

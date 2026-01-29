@@ -73,9 +73,26 @@ class AdvancedDocumentRAG:
         """Lazy load OpenAI client"""
         if self._openai_client is None:
             from openai import OpenAI
+            
+            # Get API key from multiple sources
             api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY is required for embeddings")
+            invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+            
+            if not api_key or api_key in invalid_keys:
+                # Try secrets.json
+                secrets_path = Path(__file__).parent.parent / "data" / "secrets.json"
+                if secrets_path.exists():
+                    try:
+                        with open(secrets_path, 'r', encoding='utf-8') as f:
+                            secrets = json.load(f)
+                            secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                            if secrets_key and secrets_key not in invalid_keys:
+                                api_key = secrets_key
+                    except Exception:
+                        pass
+            
+            if not api_key or api_key in invalid_keys:
+                raise ValueError("OPENAI_API_KEY is required for embeddings (set in .env or via UI)")
             self._openai_client = OpenAI(api_key=api_key)
         return self._openai_client
     

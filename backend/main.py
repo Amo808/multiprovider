@@ -150,17 +150,34 @@ USE_SUPABASE = os.getenv("USE_SUPABASE", "1") == "1"
 # Cache for user_id lookup (email -> UUID)
 _user_id_cache: dict = {}
 
-def get_user_id_from_email(email: str) -> str:
-    """Get Supabase user UUID from email. Cached for performance."""
+def get_user_id_from_email(email: str, force_refresh: bool = False) -> str:
+    """Get Supabase user UUID from email. Creates user if not exists. Cached for performance."""
     global _user_id_cache
-    if email not in _user_id_cache:
+    
+    # If force refresh or not in cache, get/create user
+    if force_refresh or email not in _user_id_cache:
         try:
             from supabase_client.client import get_or_create_user
             user = get_or_create_user(email)
             _user_id_cache[email] = user["id"]
+            logger.debug(f"[AUTH] User ID for {email}: {user['id']}")
         except Exception as e:
-            logger.warning(f"[AUTH] Failed to get user_id for {email}: {e}, using email as fallback")
-            return email  # Fallback to email if Supabase fails
+            logger.warning(f"[AUTH] Failed to get/create user for {email}: {e}")
+            # If we have a cached value, try to use it but verify it exists
+            if email in _user_id_cache:
+                try:
+                    from supabase_client.client import get_supabase_service_client
+                    client = get_supabase_service_client()
+                    result = client.table("users").select("id").eq("id", _user_id_cache[email]).execute()
+                    if result.data:
+                        return _user_id_cache[email]  # Cached ID is still valid
+                    else:
+                        # Cached ID no longer exists, clear cache and retry
+                        del _user_id_cache[email]
+                        return get_user_id_from_email(email, force_refresh=True)
+                except Exception:
+                    pass
+            return email  # Ultimate fallback to email if everything fails
     return _user_id_cache[email]
 
 @asynccontextmanager
@@ -725,10 +742,16 @@ async def rag_status():
         }
     
     try:
-        from supabase_client.rag import SUPPORTED_TYPES
+        from supabase_client.rag import SUPPORTED_TYPES, EMBEDDING_PROVIDER, EMBEDDING_MODEL, LOCAL_EMBEDDINGS_AVAILABLE
         return {
             "configured": True,
-            "supported_types": list(SUPPORTED_TYPES.keys())
+            "supported_types": list(SUPPORTED_TYPES.keys()),
+            "embedding": {
+                "provider": rag_store.embedding_provider,
+                "model": rag_store.embedding_model,
+                "local_available": LOCAL_EMBEDDINGS_AVAILABLE,
+                "available_providers": ["openai"] + (["local"] if LOCAL_EMBEDDINGS_AVAILABLE else [])
+            }
         }
     except Exception as e:
         return {
@@ -1286,6 +1309,13 @@ async def get_history(user_email: str = Depends(get_current_user)):
 async def send_message(request: ChatRequest, http_request: Request, user_email: str = Depends(get_current_user)):
     """Send a chat message and get streaming response (scoped to user)."""
     
+    # Ensure user exists in Supabase users table (critical for FK constraints)
+    try:
+        from supabase_client.client import get_or_create_user
+        get_or_create_user(user_email)
+    except Exception as e:
+        logger.warning(f"[CHAT] Failed to ensure user exists: {e}")
+    
     # DEBUG: Log incoming request with RAG config
     logger.info(f"[CHAT] Incoming request: provider={request.provider}, model={request.model}, user={user_email}")
     logger.info(f"[CHAT] RAG config in request: {request.rag}")
@@ -1548,19 +1578,18 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                 
                 if user_docs:
                     # === DOCUMENT SELECTION ===
-                    # IMPORTANT: If document_ids is empty list or None, do NOT use all documents
-                    # RAG should only work with explicitly selected documents
+                    # If no documents explicitly selected, use ALL user's documents
                     selected_doc_ids = rag_config.document_ids
                     
                     if selected_doc_ids is None or len(selected_doc_ids) == 0:
-                        # No documents selected - skip RAG entirely
-                        logger.info(f"[RAG] No documents selected (document_ids={selected_doc_ids}) - skipping RAG")
-                        raise Exception("No documents selected for RAG")
+                        # No documents selected - use ALL available documents
+                        selected_doc_ids = [doc["id"] for doc in user_docs]
+                        logger.info(f"[RAG] No documents selected - using ALL {len(selected_doc_ids)} documents")
                     
                     # Filter to only selected documents that exist and are ready
                     available_doc_ids = {doc["id"] for doc in user_docs}
                     selected_doc_ids = [did for did in selected_doc_ids if did in available_doc_ids]
-                    logger.info(f"[RAG] Using {len(selected_doc_ids)} SELECTED documents: {selected_doc_ids}")
+                    logger.info(f"[RAG] Using {len(selected_doc_ids)} documents: {selected_doc_ids[:3]}{'...' if len(selected_doc_ids) > 3 else ''}")
                     
                     if not selected_doc_ids:
                         logger.warning(f"[RAG] None of the selected documents are available - skipping RAG")
@@ -1841,6 +1870,256 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
             except Exception as e:
                 logger.warning(f"[RAG] Failed to get RAG context: {e}")
         # === END DOCUMENT RAG CONTEXT ===
+        
+        # === SMART CONTEXT COMPRESSION ===
+        # Instead of dumb truncation, use AI to intelligently compress the context
+        # This preserves important information while fitting within model limits
+        if rag_context:
+            from supabase_client.rag import get_model_limit
+            model_limits = get_model_limit(model_id)
+            total_context_limit = model_limits.get("context_limit", 128000)
+            
+            # Calculate how much history already uses
+            history_chars = sum(len(msg.content) for msg in history)
+            system_prompt_chars = len(request.system_prompt or "")
+            user_message_chars = len(request.message)
+            
+            # Detect non-ASCII for better token estimation
+            all_text = ''.join(m.content for m in history) + (request.system_prompt or "") + request.message
+            non_ascii_ratio = sum(1 for c in all_text if ord(c) > 127) / max(len(all_text), 1)
+            
+            if non_ascii_ratio > 0.3:
+                # Russian/Chinese: ~2 chars per token
+                chars_per_token = 2
+            else:
+                # English: ~4 chars per token
+                chars_per_token = 4
+            
+            existing_tokens = (history_chars + system_prompt_chars + user_message_chars) // chars_per_token
+            
+            # Reserve tokens for response (min 4096 for good answers)
+            response_reserve = 8192
+            safety_buffer = 5000  # Extra safety margin
+            
+            available_for_rag_tokens = total_context_limit - existing_tokens - response_reserve - safety_buffer
+            available_for_rag_chars = available_for_rag_tokens * chars_per_token
+            
+            rag_context_chars = len(rag_context)
+            rag_context_tokens_estimate = rag_context_chars // chars_per_token
+            
+            logger.info(f"[RAG-COMPRESS] Model limit: {total_context_limit} tokens")
+            logger.info(f"[RAG-COMPRESS] Existing content: ~{existing_tokens} tokens ({history_chars + system_prompt_chars + user_message_chars} chars)")
+            logger.info(f"[RAG-COMPRESS] RAG context: ~{rag_context_tokens_estimate} tokens ({rag_context_chars} chars)")
+            logger.info(f"[RAG-COMPRESS] Available for RAG: ~{available_for_rag_tokens} tokens ({available_for_rag_chars} chars)")
+            
+            if rag_context_chars > available_for_rag_chars:
+                # Context too large - use AI compression
+                original_chars = rag_context_chars
+                compression_ratio = available_for_rag_chars / rag_context_chars
+                
+                logger.info(f"[RAG-COMPRESS] 🧠 Context exceeds limit! Need to compress to {compression_ratio*100:.1f}% of original")
+                
+                # Try AI-powered compression first
+                compressed_context = None
+                compression_method = "none"
+                
+                try:
+                    # Use a fast, cheap model for compression (GPT-4o-mini or similar)
+                    compression_model = "gpt-4o-mini"  # Fast and cheap
+                    
+                    # Get OpenAI key from multiple sources (priority order):
+                    # 1. In-memory adapter config (set via UI)
+                    # 2. Environment variable
+                    # 3. secrets.json file
+                    openai_key = None
+                    invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+                    
+                    # Try 1: In-memory adapter (most current, set via UI)
+                    try:
+                        openai_adapter = provider_manager.registry.get("openai")
+                        if openai_adapter and hasattr(openai_adapter, 'config') and openai_adapter.config.api_key:
+                            key_from_adapter = openai_adapter.config.api_key
+                            if key_from_adapter and key_from_adapter not in invalid_keys:
+                                openai_key = key_from_adapter
+                                logger.debug(f"[RAG-COMPRESS] Using OpenAI key from in-memory adapter config")
+                    except Exception as e:
+                        logger.debug(f"[RAG-COMPRESS] Could not get key from adapter: {e}")
+                    
+                    # Try 2: Environment variable
+                    if not openai_key or openai_key in invalid_keys:
+                        env_key = os.getenv("OPENAI_API_KEY")
+                        if env_key and env_key not in invalid_keys:
+                            openai_key = env_key
+                            logger.debug(f"[RAG-COMPRESS] Using OpenAI key from environment variable")
+                    
+                    # Try 3: secrets.json
+                    if not openai_key or openai_key in invalid_keys:
+                        secrets_path = Path(__file__).parent.parent / "data" / "secrets.json"
+                        if secrets_path.exists():
+                            try:
+                                with open(secrets_path, 'r') as f:
+                                    secrets = json.load(f)
+                                    secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                                    if secrets_key and secrets_key not in invalid_keys:
+                                        openai_key = secrets_key
+                                        logger.debug(f"[RAG-COMPRESS] Using OpenAI key from secrets.json")
+                            except Exception:
+                                pass
+                    
+                    # Validate key is not a placeholder and has correct format
+                    if openai_key and openai_key not in invalid_keys and openai_key.startswith("sk-"):
+                        import aiohttp
+                        
+                        # Prepare compression prompt
+                        target_chars = int(available_for_rag_chars * 0.85)  # Leave some margin
+                        
+                        compression_prompt = f"""Ты — AI-компрессор контекста. Твоя задача — сжать следующий текст до ~{target_chars:,} символов, сохранив ВСЮ важную информацию.
+
+ПРАВИЛА СЖАТИЯ:
+1. Сохрани все факты, имена, даты, числа, цитаты
+2. Убери воду, повторы, очевидные вещи
+3. Сохрани структуру (главы, разделы) если есть
+4. Используй сокращённые формулировки, но не теряй смысл
+5. Для художественного текста: сохрани ключевые события, диалоги, повороты сюжета
+6. Для технического: сохрани все термины, определения, примеры кода
+7. НЕ добавляй свои комментарии, только сжатый оригинал
+
+ВОПРОС ПОЛЬЗОВАТЕЛЯ (для контекста что важно сохранить):
+{request.message[:500]}
+
+ТЕКСТ ДЛЯ СЖАТИЯ ({rag_context_chars:,} символов → нужно ~{target_chars:,}):
+{rag_context}
+
+СЖАТЫЙ ТЕКСТ:"""
+
+                        # Call compression model
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(
+                                "https://api.openai.com/v1/chat/completions",
+                                headers={
+                                    "Authorization": f"Bearer {openai_key}",
+                                    "Content-Type": "application/json"
+                                },
+                                json={
+                                    "model": compression_model,
+                                    "messages": [{"role": "user", "content": compression_prompt}],
+                                    "max_tokens": available_for_rag_tokens,
+                                    "temperature": 0.3  # Lower temp for factual compression
+                                },
+                                timeout=aiohttp.ClientTimeout(total=60)
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    compressed_context = data["choices"][0]["message"]["content"]
+                                    compression_method = f"AI ({compression_model})"
+                                    logger.info(f"[RAG-COMPRESS] ✅ AI compression successful: {original_chars:,} → {len(compressed_context):,} chars ({len(compressed_context)*100//original_chars}%)")
+                                else:
+                                    error_text = await resp.text()
+                                    logger.warning(f"[RAG-COMPRESS] AI compression failed: {resp.status} - {error_text[:200]}")
+                                    
+                except Exception as e:
+                    logger.warning(f"[RAG-COMPRESS] AI compression error: {e}")
+                
+                # Fallback to smart truncation if AI compression failed
+                if not compressed_context:
+                    logger.info(f"[RAG-COMPRESS] Falling back to smart truncation")
+                    compression_method = "smart_truncate"
+                    
+                    # Check if question is about "whole book" / overview
+                    overview_keywords = ["вся книга", "всей книги", "о чём", "о чем", "краткое содержание", 
+                                        "суть книги", "общий смысл", "весь текст", "summary", "overview",
+                                        "главная мысль", "основная идея", "все главы"]
+                    is_overview_question = any(kw in request.message.lower() for kw in overview_keywords)
+                    
+                    if is_overview_question:
+                        # For overview questions: sample evenly from the whole document
+                        logger.info(f"[RAG-COMPRESS] Detected overview question, sampling evenly from whole document")
+                        
+                        # Split by chapters/sections
+                        chapter_markers = ["ГЛАВА ", "Глава ", "\n# ", "\n## ", "\n---\n"]
+                        sections = [rag_context]
+                        
+                        for marker in chapter_markers:
+                            if marker in rag_context:
+                                # Split and keep the marker with each section
+                                parts = rag_context.split(marker)
+                                sections = [parts[0]] + [marker + p for p in parts[1:] if p.strip()]
+                                break
+                        
+                        if len(sections) > 1:
+                            # Calculate how much we can take from each section
+                            target_chars = available_for_rag_chars - 500  # Reserve for notice
+                            chars_per_section = target_chars // len(sections)
+                            
+                            sampled_parts = []
+                            for i, section in enumerate(sections):
+                                if len(section) <= chars_per_section:
+                                    sampled_parts.append(section)
+                                else:
+                                    # Take beginning of each section (usually has key info)
+                                    # Find a good break point
+                                    break_at = min(chars_per_section, len(section))
+                                    # Try to break at paragraph
+                                    para_break = section.rfind("\n\n", 0, break_at)
+                                    if para_break > break_at * 0.6:
+                                        break_at = para_break
+                                    sampled_parts.append(section[:break_at] + "\n[...продолжение раздела опущено...]")
+                            
+                            compressed_context = "\n\n".join(sampled_parts)
+                            compression_method = "smart_sample_chapters"
+                            logger.info(f"[RAG-COMPRESS] Sampled {len(sections)} sections, {chars_per_section} chars each")
+                        else:
+                            # No clear sections, fall back to taking beginning, middle, end
+                            third = available_for_rag_chars // 3
+                            beginning = rag_context[:third]
+                            middle_start = len(rag_context) // 2 - third // 2
+                            middle = rag_context[middle_start:middle_start + third]
+                            end = rag_context[-third:]
+                            
+                            compressed_context = (
+                                beginning + 
+                                "\n\n[...пропуск...]\n\n" + 
+                                middle + 
+                                "\n\n[...пропуск...]\n\n" + 
+                                end
+                            )
+                            compression_method = "smart_sample_thirds"
+                            logger.info(f"[RAG-COMPRESS] Sampled beginning/middle/end, ~{third} chars each")
+                    else:
+                        # For specific questions: keep beginning (usually most relevant from RAG ranking)
+                        truncate_at = available_for_rag_chars
+                        
+                        # Look for section breaks (double newlines, chapter markers, etc.)
+                        section_markers = ["\n\n", "\n---\n", "\n===", "\n## ", "\n# ", "ГЛАВА ", "Глава "]
+                        best_break = truncate_at
+                        
+                        for marker in section_markers:
+                            pos = rag_context.rfind(marker, 0, truncate_at)
+                            if pos > truncate_at * 0.7:  # At least 70% of content
+                                best_break = pos
+                                break
+                        
+                        compressed_context = rag_context[:best_break]
+                    
+                    # Add notice about truncation
+                    truncation_notice = f"\n\n[⚠️ КОНТЕКСТ СЖАТ: показано {len(compressed_context):,} из {original_chars:,} символов ({len(compressed_context)*100//original_chars}%) — остальное не поместилось в лимит модели {model_id}]"
+                    compressed_context += truncation_notice
+                
+                # Use compressed context
+                rag_context = compressed_context
+                
+                # Update debug info
+                if rag_debug_info:
+                    rag_debug_info["compressed"] = True
+                    rag_debug_info["compression_method"] = compression_method
+                    rag_debug_info["original_chars"] = original_chars
+                    rag_debug_info["compressed_chars"] = len(rag_context)
+                    rag_debug_info["compression_ratio"] = f"{len(rag_context)*100//original_chars}%"
+                    
+                logger.info(f"[RAG-COMPRESS] Final context: {len(rag_context):,} chars (method: {compression_method})")
+            else:
+                logger.info(f"[RAG-COMPRESS] ✅ RAG context fits within limits, no compression needed")
+        # === END SMART CONTEXT COMPRESSION ===
         
         # Add system prompt if provided
         system_prompt_content = request.system_prompt or ""

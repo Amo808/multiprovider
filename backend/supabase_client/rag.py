@@ -230,9 +230,14 @@ def sanitize_filename(filename: str) -> str:
     return f"{name}{ext}"
 
 
-# Embedding configuration
+# Embedding configuration - OpenAI only
+EMBEDDING_PROVIDER = "openai"  # Only OpenAI supported
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 EMBEDDING_DIMENSION = 1536  # OpenAI text-embedding-3-small
+
+# Local embeddings removed - OpenAI only
+LOCAL_EMBEDDINGS_AVAILABLE = False
+
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "1000"))  # characters per chunk
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))  # overlap between chunks
 
@@ -363,10 +368,16 @@ def deduplicate_sequential_chunks(chunks: List[Dict], content_key: str = "conten
 class RAGStore:
     """Supabase-backed RAG storage with vector search"""
     
-    def __init__(self):
+    def __init__(self, embedding_provider: str = None, embedding_model: str = None):
         self._client = None
         self._embedding_client = None
         self._user_cache = {}
+        
+        # OpenAI only
+        self.embedding_provider = "openai"
+        self.embedding_model = embedding_model or EMBEDDING_MODEL
+        
+        logger.info(f"[RAG] Initialized with OpenAI embeddings, model={self.embedding_model}")
     
     @property
     def client(self):
@@ -379,9 +390,30 @@ class RAGStore:
         """Lazy load OpenAI client for embeddings"""
         if self._embedding_client is None:
             from openai import OpenAI
+            
+            # Get API key from multiple sources (priority order):
+            # 1. Environment variable
+            # 2. secrets.json file
             api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY required for embeddings")
+            invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+            
+            if not api_key or api_key in invalid_keys:
+                # Try secrets.json
+                secrets_path = Path(__file__).parent.parent.parent / "data" / "secrets.json"
+                if secrets_path.exists():
+                    try:
+                        with open(secrets_path, 'r', encoding='utf-8') as f:
+                            secrets = json.load(f)
+                            secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                            if secrets_key and secrets_key not in invalid_keys:
+                                api_key = secrets_key
+                                logger.debug(f"[RAG] Using OpenAI key from secrets.json for embeddings")
+                    except Exception as e:
+                        logger.debug(f"[RAG] Could not load secrets.json: {e}")
+            
+            if not api_key or api_key in invalid_keys:
+                raise ValueError("OPENAI_API_KEY required for embeddings (set in .env or via UI in API Keys settings)")
+            
             self._embedding_client = OpenAI(api_key=api_key)
         return self._embedding_client
     
@@ -777,24 +809,24 @@ class RAGStore:
         
         return chunks
     
-    # ==================== EMBEDDINGS ====================
+    # ==================== EMBEDDINGS (OpenAI only) ====================
     
     def create_embedding(self, text: str) -> List[float]:
         """Create embedding for text using OpenAI"""
         response = self.embedding_client.embeddings.create(
-            model=EMBEDDING_MODEL,
+            model=self.embedding_model,
             input=text[:8000]  # Limit input length
         )
         return response.data[0].embedding
     
     def create_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
-        """Create embeddings for multiple texts in batches"""
+        """Create embeddings for multiple texts in batches using OpenAI"""
         all_embeddings = []
         
         for i in range(0, len(texts), batch_size):
             batch = [t[:8000] for t in texts[i:i + batch_size]]
             response = self.embedding_client.embeddings.create(
-                model=EMBEDDING_MODEL,
+                model=self.embedding_model,
                 input=batch
             )
             all_embeddings.extend([item.embedding for item in response.data])
@@ -1684,6 +1716,40 @@ Next search query (or DONE):"""
                     sections = intent.get("sections", [])
                     task = intent.get("task", "search")
                     
+                    # Override: if AI returned "search" but query is clearly about whole book - use full_document
+                    query_lower = query.lower()
+                    full_doc_overrides = [
+                        "о чем", "о чём", "про что", "what is it about", "what was it about",
+                        "о чем была", "о чём была", "о чем эта", "о чём эта",
+                        "тема книги", "суть книги", "содержание книги",
+                        "краткое содержание", "пересказ", "общий смысл",
+                        "расскажи о книге", "расскажи про книгу"
+                    ]
+                    
+                    # Override for ENDING/CONCLUSION questions - load last chunks
+                    ending_overrides = [
+                        "чем закончилась", "чем закончилось", "как закончилась", "как закончилось",
+                        "концовка", "финал", "окончание", "развязка",
+                        "чем кончилась", "чем кончилось", "конец книги", "конец истории",
+                        "последняя глава", "последние главы", "заключение",
+                        "how did it end", "ending", "conclusion", "final chapter"
+                    ]
+                    
+                    if scope == "search" and any(pattern in query_lower for pattern in ending_overrides):
+                        logger.info(f"[ULTIMATE-RAG] Override: changing scope to 'document_ending' for ending question")
+                        scope = "document_ending"
+                        task = "summarize"
+                        intent["scope"] = scope
+                        intent["task"] = task
+                        intent["reasoning"] = (intent.get("reasoning", "") + " [Overridden to document_ending for ending question]")
+                    elif scope == "search" and any(pattern in query_lower for pattern in full_doc_overrides):
+                        logger.info(f"[ULTIMATE-RAG] Override: changing scope from 'search' to 'full_document' for overview question")
+                        scope = "full_document"
+                        task = "summarize"
+                        intent["scope"] = scope
+                        intent["task"] = task
+                        intent["reasoning"] = (intent.get("reasoning", "") + " [Overridden to full_document for overview question]")
+                    
                     logger.info(f"[ULTIMATE-RAG] Intent analysis result: scope={scope}, sections={sections}, task={task}")
                     
                     # Log intent analysis to collector
@@ -1780,15 +1846,32 @@ Next search query (or DONE):"""
                         debug_info["techniques_used"].append("full_document_load")
                         logger.info(f"[ULTIMATE-RAG] Loading full document based on intent analysis")
                         
-                        # For full document, use much larger limit (ignore passed max_tokens)
-                        # DeepSeek/Gemini can handle 100K+ tokens
-                        full_doc_max_tokens = 100000  # ~400K chars
+                        # Check document size first to decide strategy
+                        total_doc_chunks = len(all_chunks)
                         
-                        context, sources, full_doc_info = self.build_full_document_context(
-                            user_email=user_email,
-                            document_ids=[document_id],
-                            max_tokens=full_doc_max_tokens
-                        )
+                        # If document is large (>100 chunks), use AI smart selection
+                        # instead of loading everything and truncating
+                        if total_doc_chunks > 100:
+                            logger.info(f"[ULTIMATE-RAG] Document is large ({total_doc_chunks} chunks), using AI smart overview selection")
+                            debug_info["techniques_used"].append("ai_smart_overview_selection")
+                            
+                            context, sources, full_doc_info = self.ai_smart_overview_selection(
+                                query=query,
+                                user_email=user_email,
+                                document_ids=[document_id],
+                                max_output_tokens=50000,  # ~200K chars for selected chunks
+                                batch_size=100  # Process 100 chunks at a time
+                            )
+                        else:
+                            # Small document - load everything
+                            logger.info(f"[ULTIMATE-RAG] Document is small ({total_doc_chunks} chunks), loading full")
+                            full_doc_max_tokens = 100000  # ~400K chars
+                            
+                            context, sources, full_doc_info = self.build_full_document_context(
+                                user_email=user_email,
+                                document_ids=[document_id],
+                                max_tokens=full_doc_max_tokens
+                            )
                         
                         # Add task instruction
                         task_instruction = self._get_task_instructions(task, intent)
@@ -1800,7 +1883,7 @@ Next search query (or DONE):"""
                         debug_info["estimated_tokens"] = len(context) // 4
                         # Include full document info
                         debug_info["full_document_info"] = full_doc_info
-                        debug_info["total_chunks_loaded"] = full_doc_info.get("total_chunks", 0)
+                        debug_info["total_chunks_loaded"] = full_doc_info.get("chunks_loaded", full_doc_info.get("total_chunks", 0))
                         logger.info(f"[ULTIMATE-RAG] Full doc loaded: {full_doc_info}")
                         
                         return {
@@ -2333,8 +2416,24 @@ Next search query (or DONE):"""
         try:
             from openai import OpenAI
             
+            # Get API key from multiple sources
             api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
+            invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+            
+            if not api_key or api_key in invalid_keys:
+                # Try secrets.json
+                secrets_path = Path(__file__).parent.parent.parent / "data" / "secrets.json"
+                if secrets_path.exists():
+                    try:
+                        with open(secrets_path, 'r', encoding='utf-8') as f:
+                            secrets = json.load(f)
+                            secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                            if secrets_key and secrets_key not in invalid_keys:
+                                api_key = secrets_key
+                    except Exception:
+                        pass
+            
+            if not api_key or api_key in invalid_keys:
                 # Fallback to simple chapter extraction
                 return self._fallback_intent_analysis(query, document_structure)
             
@@ -2450,7 +2549,8 @@ Next search query (or DONE):"""
         
         # PRIORITY 2: Check for full document intent (only for general questions)
         full_doc_patterns = [
-            r'^о\s*чем\s*(эт[оа]|документ|книга|текст)',  # "о чем это/документ" at start
+            r'о\s*чем\s*(эт[оа]|был[аои]?\s*(эт[оа]|книг|документ)|книг|документ|текст)',  # "о чем это/была книга/документ"
+            r'о\s*чем\s+[а-яёa-z]*\s*(книг|документ|произведени|текст)',  # "о чем была книга", "о чем эта книга"
             r'вс[яеюё]\s*(книг|документ|текст)',
             r'whole\s*(book|document|text)',
             r'entire',
@@ -2460,6 +2560,10 @@ Next search query (or DONE):"""
             r'^обзор$',
             r'общ[аи][яй]\s*(тем|иде|суть)',  # общая тема/идея/суть
             r'кратк[оиа].*(содержан|пересказ)',  # краткое содержание
+            r'(расскажи|объясни|скажи)\s*(о\s*чем|про\s*что)',  # "расскажи о чем", "объясни про что"
+            r'what\s*(is|was)\s*(this|the)\s*(book|document|text)\s*about',  # "what is this book about"
+            r'(тема|суть|смысл)\s*(книг|документ|текст|произведени)',  # "тема книги"
+            r'(книг|документ|произведени)[аеи]?\s*(о\s*чем|про\s*что)',  # "книга о чем"
         ]
         for pattern in full_doc_patterns:
             if re.search(pattern, query_lower):
@@ -2703,12 +2807,30 @@ Next search query (or DONE):"""
         full_doc_debug_info = None  # Store full document debug info
         if scope == "full_document":
             logger.info(f"[SMART-RAG] Loading full document for task: {task} (chunk_mode={chunk_mode})")
-            context, sources, full_doc_debug_info = self.build_full_document_context(
-                user_email=user_email,
-                document_ids=[document_id],
-                max_tokens=max_tokens
-            )
-            logger.info(f"[SMART-RAG] Full doc loaded: {full_doc_debug_info.get('total_chunks', 0)} chunks, {full_doc_debug_info.get('total_chars', 0)} chars")
+            
+            # Check document size - use AI smart selection for large documents
+            total_doc_chunks = len(all_chunks)
+            
+            if total_doc_chunks > 100:
+                # Large document - use AI to select relevant chunks
+                logger.info(f"[SMART-RAG] Document is large ({total_doc_chunks} chunks), using AI smart overview selection")
+                context, sources, full_doc_debug_info = self.ai_smart_overview_selection(
+                    query=query,
+                    user_email=user_email,
+                    document_ids=[document_id],
+                    max_output_tokens=max_tokens,
+                    batch_size=100
+                )
+            else:
+                # Small document - load everything
+                logger.info(f"[SMART-RAG] Document is small ({total_doc_chunks} chunks), loading full")
+                context, sources, full_doc_debug_info = self.build_full_document_context(
+                    user_email=user_email,
+                    document_ids=[document_id],
+                    max_tokens=max_tokens
+                )
+            
+            logger.info(f"[SMART-RAG] Full doc loaded: {full_doc_debug_info.get('chunks_loaded', full_doc_debug_info.get('total_chunks', 0))} chunks, {full_doc_debug_info.get('total_chars', full_doc_debug_info.get('final_chars', 0))} chars")
             
         elif scope == "single_section" and sections:
             logger.info(f"[SMART-RAG] Loading single section: {sections[0]}")
@@ -3048,8 +3170,24 @@ Next search query (or DONE):"""
         try:
             from openai import OpenAI
             
+            # Get API key from multiple sources
             api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
+            invalid_keys = ["your_openai_api_key_here", "your-openai-api-key", "sk-xxx", ""]
+            
+            if not api_key or api_key in invalid_keys:
+                # Try secrets.json
+                secrets_path = Path(__file__).parent.parent.parent / "data" / "secrets.json"
+                if secrets_path.exists():
+                    try:
+                        with open(secrets_path, 'r', encoding='utf-8') as f:
+                            secrets = json.load(f)
+                            secrets_key = secrets.get("apiKeys", {}).get("OPENAI_API_KEY", "")
+                            if secrets_key and secrets_key not in invalid_keys:
+                                api_key = secrets_key
+                    except Exception:
+                        pass
+            
+            if not api_key or api_key in invalid_keys:
                 logger.warning("[RAG] OpenAI API key not found, falling back to regex")
                 result = self._extract_chapter_with_regex(query)
                 return str(result) if result else None
@@ -3615,6 +3753,340 @@ No explanation, just the array of numbers."""
         chunks.sort(key=lambda x: (x.get("document_id", ""), x.get("chunk_index", 0)))
         
         return chunks
+    
+    # ==================== AI SMART OVERVIEW SELECTION ====================
+    
+    def ai_smart_overview_selection(
+        self,
+        query: str,
+        user_email: str,
+        document_ids: Optional[List[str]] = None,
+        max_output_tokens: int = 30000,
+        batch_size: int = 100
+    ) -> Tuple[str, List[Dict], Dict]:
+        """
+        🧠 УМНЫЙ ВЫБОР ЧАНКОВ ДЛЯ OVERVIEW ВОПРОСОВ
+        
+        Вместо загрузки всего документа (800+ чанков) или простой обрезки,
+        AI анализирует метаданные/превью ВСЕХ чанков батчами и указывает
+        какие ДИАПАЗОНЫ релевантны для вопроса.
+        
+        АЛГОРИТМ:
+        1. Получаем ВСЕ чанки документа (только метаданные + первые 80 символов)
+        2. Разбиваем на батчи по batch_size чанков (напр. 100)
+        3. Для каждого батча спрашиваем AI: "Какие чанки/диапазоны релевантны?"
+        4. AI возвращает диапазоны: например "50-80, 150-200, 400-450"
+        5. Загружаем только выбранные чанки
+        6. Собираем контекст
+        
+        Args:
+            query: Вопрос пользователя (напр. "О чём эта книга?")
+            user_email: Email пользователя
+            document_ids: ID документов
+            max_output_tokens: Максимум токенов в финальном контексте
+            batch_size: Размер батча для AI-анализа (по умолчанию 100)
+        
+        Returns:
+            Tuple: (context, sources, debug_info)
+        """
+        logger.info(f"[AI-OVERVIEW] Starting smart overview selection for query: '{query[:50]}...'")
+        logger.info(f"[AI-OVERVIEW] Parameters: batch_size={batch_size}, max_output_tokens={max_output_tokens}")
+        
+        debug_info = {
+            "method": "ai_smart_overview_selection",
+            "total_chunks": 0,
+            "batches_processed": 0,
+            "ai_selected_ranges": [],
+            "chunks_selected": 0,
+            "chunks_loaded": 0,
+            "fallback_used": False
+        }
+        
+        # Step 1: Get ALL chunks (we need full content later, but start with lightweight query)
+        all_chunks = self.get_all_document_chunks(user_email, document_ids)
+        total_chunks = len(all_chunks)
+        debug_info["total_chunks"] = total_chunks
+        
+        if not all_chunks:
+            logger.warning("[AI-OVERVIEW] No chunks found")
+            return "", [], {"error": "No documents found", **debug_info}
+        
+        logger.info(f"[AI-OVERVIEW] Document has {total_chunks} total chunks")
+        
+        # If document is small enough, just return it all
+        if total_chunks <= 50:
+            logger.info(f"[AI-OVERVIEW] Document is small ({total_chunks} chunks), returning full document")
+            return self.build_full_document_context(user_email, document_ids, max_tokens=max_output_tokens)
+        
+        # Step 2: Build compact summaries for ALL chunks (idx, chapter, preview)
+        chunk_metas = []
+        for i, chunk in enumerate(all_chunks):
+            metadata = chunk.get("metadata", {}) or {}
+            # Very short preview - just enough for AI to understand content type
+            preview = chunk["content"][:80].strip().replace("\n", " ")
+            
+            chunk_metas.append({
+                "idx": i,
+                "chapter": metadata.get("chapter_number") or metadata.get("chapter_title", ""),
+                "section": metadata.get("section_header", ""),
+                "pos": round(i / total_chunks * 100),  # Position as percentage
+                "preview": preview
+            })
+        
+        # Step 3: Split into batches and ask AI to select relevant ranges
+        selected_indices = set()
+        batches = [chunk_metas[i:i+batch_size] for i in range(0, len(chunk_metas), batch_size)]
+        
+        logger.info(f"[AI-OVERVIEW] Processing {len(batches)} batches of ~{batch_size} chunk summaries each")
+        debug_info["batches_count"] = len(batches)
+        
+        for batch_num, batch in enumerate(batches):
+            batch_start_idx = batch[0]["idx"]
+            batch_end_idx = batch[-1]["idx"]
+            
+            try:
+                # Ask AI which chunks/ranges in this batch are relevant
+                ranges = self._ai_select_ranges_from_batch(
+                    query=query,
+                    batch=batch,
+                    batch_number=batch_num,
+                    total_batches=len(batches),
+                    total_chunks=total_chunks
+                )
+                
+                # Convert ranges to individual indices
+                for r in ranges:
+                    if isinstance(r, int):
+                        selected_indices.add(r)
+                    elif isinstance(r, (list, tuple)) and len(r) == 2:
+                        start, end = r
+                        for idx in range(start, min(end + 1, total_chunks)):
+                            selected_indices.add(idx)
+                
+                debug_info["batches_processed"] += 1
+                debug_info["ai_selected_ranges"].append({
+                    "batch": batch_num,
+                    "range": f"{batch_start_idx}-{batch_end_idx}",
+                    "selected": ranges
+                })
+                
+                logger.info(f"[AI-OVERVIEW] Batch {batch_num+1}/{len(batches)}: AI selected ranges {ranges}")
+                
+            except Exception as e:
+                logger.warning(f"[AI-OVERVIEW] Batch {batch_num+1} failed: {e}")
+                # Fallback: select a few evenly distributed chunks from this batch
+                step = max(1, len(batch) // 3)
+                for j in range(0, len(batch), step):
+                    selected_indices.add(batch[j]["idx"])
+        
+        # Step 4: If AI selected nothing or too little, use smart fallback
+        if len(selected_indices) < 10:
+            logger.warning(f"[AI-OVERVIEW] AI selected only {len(selected_indices)} chunks, using fallback")
+            debug_info["fallback_used"] = True
+            
+            # Smart fallback for overview: beginning, middle sections, end
+            # Beginning (intro) - first 5%
+            intro_end = max(5, int(total_chunks * 0.05))
+            for i in range(0, intro_end):
+                selected_indices.add(i)
+            
+            # Sample from middle - every Nth chunk
+            step = max(1, total_chunks // 30)
+            for i in range(intro_end, total_chunks - intro_end, step):
+                selected_indices.add(i)
+            
+            # End (conclusion) - last 5%
+            outro_start = int(total_chunks * 0.95)
+            for i in range(outro_start, total_chunks):
+                selected_indices.add(i)
+        
+        selected_indices = sorted(selected_indices)
+        debug_info["chunks_selected"] = len(selected_indices)
+        logger.info(f"[AI-OVERVIEW] Total selected: {len(selected_indices)} chunks from {total_chunks}")
+        
+        # Step 5: Load full content of selected chunks
+        selected_chunks = [all_chunks[i] for i in selected_indices if i < len(all_chunks)]
+        debug_info["chunks_loaded"] = len(selected_chunks)
+        
+        # Step 6: Build context from selected chunks
+        max_chars = max_output_tokens * 4
+        context_parts = []
+        sources = []
+        total_chars = 0
+        
+        # Get document name
+        doc_name = selected_chunks[0].get("document_name", "Document") if selected_chunks else "Document"
+        
+        # Source entry
+        sources.append({
+            "document_id": document_ids[0] if document_ids else "unknown",
+            "document_name": doc_name,
+            "total_chunks": total_chunks,
+            "chunks_selected": len(selected_chunks),
+            "citation": f"📚 {doc_name} (AI отобрал {len(selected_chunks)} из {total_chunks} чанков)"
+        })
+        
+        # Document header
+        header = f"\n{'='*50}\n📚 {doc_name}\n(AI-отобранные фрагменты: {len(selected_chunks)} из {total_chunks})\n{'='*50}\n\n"
+        context_parts.append(header)
+        total_chars += len(header)
+        
+        # Add chunks with gap markers
+        prev_idx = -10
+        for chunk in selected_chunks:
+            chunk_idx = chunk.get("chunk_index", 0)
+            content = chunk["content"]
+            
+            # Check if we have space
+            if total_chars + len(content) > max_chars:
+                context_parts.append("\n... [контекст обрезан по лимиту токенов] ...")
+                debug_info["truncated"] = True
+                break
+            
+            # Add gap marker if there's discontinuity
+            if chunk_idx > prev_idx + 1 and prev_idx >= 0:
+                gap_marker = f"\n... [пропущено: чанки {prev_idx+1}-{chunk_idx-1}] ...\n\n"
+                context_parts.append(gap_marker)
+                total_chars += len(gap_marker)
+            
+            # Add chunk with metadata header
+            metadata = chunk.get("metadata", {}) or {}
+            chapter = metadata.get("chapter_number") or metadata.get("chapter_title", "")
+            
+            if chapter:
+                chunk_header = f"[Чанк {chunk_idx} | Глава {chapter}]\n"
+            else:
+                chunk_header = f"[Чанк {chunk_idx}]\n"
+            
+            context_parts.append(chunk_header + content + "\n\n")
+            total_chars += len(chunk_header) + len(content) + 2
+            prev_idx = chunk_idx
+        
+        # Build final context
+        overview_header = f"""📋 ОБЗОР ДОКУМЕНТА (AI-отобранные фрагменты)
+
+AI проанализировал {total_chunks} чанков документа и выбрал {len(selected_chunks)} наиболее релевантных
+для вашего вопроса: "{query[:100]}..."
+
+---
+
+"""
+        context = overview_header + "".join(context_parts)
+        
+        debug_info["final_chars"] = len(context)
+        debug_info["final_tokens_estimate"] = len(context) // 4
+        
+        logger.info(f"[AI-OVERVIEW] Built context: {len(context)} chars, {len(sources)} sources")
+        
+        return context, sources, debug_info
+    
+    def _ai_select_ranges_from_batch(
+        self,
+        query: str,
+        batch: List[Dict],
+        batch_number: int,
+        total_batches: int,
+        total_chunks: int
+    ) -> List:
+        """
+        Ask AI to select relevant chunk RANGES from a single batch.
+        
+        AI returns ranges like: [[50, 80], [95, 110], 115]
+        - [50, 80] means chunks 50 through 80
+        - 115 means single chunk 115
+        
+        Returns list of ranges/indices.
+        """
+        # Build compact description of chunks in batch
+        lines = []
+        for cs in batch:
+            line = f"[{cs['idx']}] "
+            if cs.get("chapter"):
+                line += f"Гл.{cs['chapter']} "
+            line += f"({cs['pos']}%): {cs['preview'][:60]}"
+            lines.append(line)
+        
+        batch_text = "\n".join(lines)
+        batch_start = batch[0]["idx"]
+        batch_end = batch[-1]["idx"]
+        
+        # Determine question type for better instructions
+        query_lower = query.lower()
+        is_overview = any(p in query_lower for p in [
+            'о чем', 'о чём', 'обзор', 'краткое содержание', 'пересказ',
+            'суть', 'главная мысль', 'основная идея', 'about', 'overview', 'summary'
+        ])
+        
+        if is_overview:
+            type_instruction = """Для вопроса об общем содержании/overview книги выбери:
+- Начало (введение, пролог) - обычно первые 5-10%
+- Ключевые моменты из каждой главы (если видно главы)
+- Кульминационные/поворотные моменты
+- Конец (заключение, эпилог) - обычно последние 5-10%
+Цель: дать представление о ВСЕЙ книге, а не только об одной части."""
+        else:
+            type_instruction = """Выбери чанки, которые скорее всего содержат ответ на вопрос."""
+        
+        prompt = f"""Ты эксперт по анализу документов. Документ содержит {total_chunks} чанков.
+Это батч {batch_number + 1} из {total_batches}, показывает чанки {batch_start}-{batch_end}.
+
+ВОПРОС ПОЛЬЗОВАТЕЛЯ: {query}
+
+{type_instruction}
+
+ЧАНКИ В ЭТОМ БАТЧЕ (индекс, глава, позиция%, превью):
+{batch_text}
+
+ИНСТРУКЦИИ:
+1. Посмотри на каждый чанк: его позицию, главу и превью текста
+2. Выбери чанки/диапазоны которые релевантны для ответа
+3. Возвращай ДИАПАЗОНЫ для экономии: [начало, конец] - например [50, 80] значит чанки с 50 по 80
+4. Можешь вернуть одиночные чанки как числа: 115
+5. Выбери 3-10 диапазонов/чанков из этого батча
+
+Верни ТОЛЬКО JSON массив, например: [[{batch_start}, {batch_start+5}], {batch_start+15}, [{batch_end-10}, {batch_end}]]
+Без объяснений, только массив."""
+
+        try:
+            response = self.embedding_client.chat.completions.create(
+                model="gpt-4o-mini",  # Fast and cheap
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=200
+            )
+            
+            result_text = response.choices[0].message.content.strip()
+            
+            # Extract JSON array
+            if '[' in result_text:
+                result_text = result_text[result_text.index('['):result_text.rindex(']')+1]
+            
+            selected = json.loads(result_text)
+            
+            # Validate and normalize
+            valid_ranges = []
+            for item in selected:
+                if isinstance(item, int):
+                    # Single chunk
+                    if batch_start <= item <= batch_end:
+                        valid_ranges.append(item)
+                elif isinstance(item, list) and len(item) == 2:
+                    # Range [start, end]
+                    start, end = item
+                    if isinstance(start, int) and isinstance(end, int):
+                        # Clamp to batch boundaries
+                        start = max(batch_start, min(start, batch_end))
+                        end = max(batch_start, min(end, batch_end))
+                        if start <= end:
+                            valid_ranges.append([start, end])
+            
+            return valid_ranges
+            
+        except Exception as e:
+            logger.warning(f"[AI-OVERVIEW] Range selection failed for batch {batch_number}: {e}")
+            # Fallback: return a few evenly spaced indices from batch
+            step = max(1, len(batch) // 4)
+            return [batch[i]["idx"] for i in range(0, len(batch), step)]
     
     def smart_two_stage_search(
         self,
@@ -4201,9 +4673,26 @@ _Всего глав: {meta.get('total_chapters', 0)}_"""
 _rag_store_instance: Optional[RAGStore] = None
 
 
-def get_rag_store() -> RAGStore:
-    """Get or create RAG store singleton"""
+def get_rag_store(embedding_provider: str = None, embedding_model: str = None) -> RAGStore:
+    """Get or create RAG store singleton.
+    
+    Args:
+        embedding_provider: "openai" or "local" (default from EMBEDDING_PROVIDER env)
+        embedding_model: Model name (default from EMBEDDING_MODEL env)
+    
+    Note: First call determines the configuration. Subsequent calls with different
+    settings will NOT change the existing store. Restart server to change settings.
+    """
     global _rag_store_instance
     if _rag_store_instance is None:
-        _rag_store_instance = RAGStore()
+        _rag_store_instance = RAGStore(
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model
+        )
     return _rag_store_instance
+
+
+def reset_rag_store():
+    """Reset the RAG store singleton (useful for testing or config changes)"""
+    global _rag_store_instance
+    _rag_store_instance = None
