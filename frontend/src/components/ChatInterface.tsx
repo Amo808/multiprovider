@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, RefreshCw, AlertCircle, Square, FileText, Upload, AlertTriangle, Bug, ChevronDown } from 'lucide-react';
+import { Send, Bot, RefreshCw, AlertCircle, Square, FileText, Upload, AlertTriangle, Bug, ChevronDown, Brain } from 'lucide-react';
 import { ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversationsContext } from '../contexts/ConversationsContext';
 import { useMessageReorder } from '../hooks/useMessageReorder';
@@ -11,6 +11,7 @@ import { estimateCostForMessage } from '../lib/pricing';
 import { DraggableMessageList } from './DraggableMessageList';
 import { VirtualizedMessageList } from './VirtualizedMessageList';
 import DocumentManager from './DocumentManager';
+import { DeepAnalysisPanel } from './DeepAnalysisPanel';
 import { RAGUnifiedButton } from './RAGUnifiedButton';
 import { RAGDebugPanel } from './RAGDebugPanel';
 import { RAGPromptsEditor } from './RAGPromptsEditor';
@@ -73,6 +74,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [lastRAGDebugInfo, setLastRAGDebugInfo] = useState<Record<string, any> | null>(null);
   // RAG Prompts Editor state
   const [showRAGPromptsEditor, setShowRAGPromptsEditor] = useState(false);
+  // Deep Analysis (RLM) state
+  const [showDeepAnalysis, setShowDeepAnalysis] = useState(false);
   // Large paste confirmation modal state
   const [pendingPaste, setPendingPaste] = useState<{
     text: string;
@@ -1423,6 +1426,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   <FileText size={18} className="text-muted-foreground" />
                 </Button>
 
+                {/* Deep Analysis (RLM) Button */}
+                <Button
+                  type="button"
+                  onClick={() => setShowDeepAnalysis(true)}
+                  variant="ghost"
+                  size="sm"
+                  title="Deep Analysis (RLM) — recursive reasoning over documents"
+                  className="h-8 w-8 p-0 rounded-lg hover:bg-secondary"
+                >
+                  <Brain size={18} className="text-muted-foreground" />
+                </Button>
+
                 {/* RAG Unified Button - only show if documents exist */}
                 {documentsCount > 0 && (
                   <RAGUnifiedButton
@@ -1701,6 +1716,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       <RAGPromptsEditor
         isOpen={showRAGPromptsEditor}
         onClose={() => setShowRAGPromptsEditor(false)}
+      />
+
+      {/* Deep Analysis (RLM) Panel */}
+      <DeepAnalysisPanel
+        isOpen={showDeepAnalysis}
+        onClose={() => setShowDeepAnalysis(false)}
+        provider={selectedProvider || 'deepseek'}
+        model={selectedModel?.id || 'deepseek-chat'}
+        documentIds={selectedDocumentIds}
+        documentsCount={documentsCount}
       />
     </div>
   );

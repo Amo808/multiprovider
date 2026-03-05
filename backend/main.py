@@ -238,6 +238,14 @@ async def lifespan(app: FastAPI):
             
         logger.info(f"Initialized with {len(provider_manager.get_enabled_providers())} enabled providers")
         
+        # Initialize RLM (Recursive Language Model) deep analysis service
+        try:
+            from backend.rlm_service import init_rlm_service
+            rlm_service = init_rlm_service(provider_manager)
+            logger.info(f"[RLM] Deep analysis service initialized (available: {rlm_service.is_available})")
+        except Exception as rlm_err:
+            logger.warning(f"[RLM] Failed to initialize RLM service: {rlm_err}")
+        
         yield  # Application runs here
         
     except Exception as e:
@@ -369,6 +377,18 @@ class MultiModelChatRequest(BaseModel):
 class ProcessEventFilter(BaseModel):
     conversation_id: Optional[str] = None
     process_types: Optional[List[str]] = None
+
+# === RLM (Deep Analysis) Request Models ===
+class RLMAnalysisRequest(BaseModel):
+    """Request for RLM deep analysis."""
+    prompt: str
+    context: Optional[str] = None  # Direct text context
+    document_ids: Optional[List[str]] = None  # Or analyze RAG documents
+    provider: str = "deepseek"
+    model: str = "deepseek-chat"
+    sub_model: Optional[str] = None
+    max_iterations: int = 15
+    conversation_id: Optional[str] = None
 
 # Global components
 conversation_store = None
@@ -3636,6 +3656,81 @@ async def get_process_details(process_id: str, _: str = Depends(get_current_user
     if not process:
         raise HTTPException(status_code=404, detail="Process not found")
     return process.to_dict()
+
+
+# === RLM DEEP ANALYSIS ENDPOINTS ===
+
+@api_router.get("/rlm/status")
+async def rlm_status(_: str = Depends(get_current_user)):
+    """Check RLM service availability."""
+    try:
+        from backend.rlm_service import get_rlm_service
+        service = get_rlm_service()
+        if service:
+            return {
+                "available": service.is_available,
+                "message": "RLM deep analysis is ready" if service.is_available else "RLM library not installed (pip install rlm)",
+                "supported_providers": list(service.PROVIDER_BACKEND_MAP.keys()),
+            }
+        return {"available": False, "message": "RLM service not initialized"}
+    except Exception as e:
+        return {"available": False, "message": str(e)}
+
+
+@api_router.post("/rlm/analyze")
+async def rlm_analyze(
+    request: RLMAnalysisRequest,
+    user_email: str = Depends(get_current_user),
+):
+    """Run RLM deep analysis with streaming events via SSE."""
+    from backend.rlm_service import get_rlm_service
+    service = get_rlm_service()
+    
+    if not service or not service.is_available:
+        return StreamingResponse(
+            iter([f"data: {json.dumps({'status': 'error', 'message': 'RLM not available. Install: pip install rlm'})}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    async def event_stream():
+        try:
+            if request.context:
+                # Direct context analysis
+                async for event in service.deep_analysis(
+                    context=request.context,
+                    prompt=request.prompt,
+                    provider_id=request.provider,
+                    model_id=request.model,
+                    sub_model_id=request.sub_model,
+                    max_iterations=request.max_iterations,
+                ):
+                    yield f"data: {json.dumps(event.to_dict())}\n\n"
+            elif request.document_ids or True:
+                # Document-based analysis (uses RAG store)
+                async for event in service.analyze_documents(
+                    user_email=user_email,
+                    prompt=request.prompt,
+                    document_ids=request.document_ids,
+                    provider_id=request.provider,
+                    model_id=request.model,
+                    max_iterations=request.max_iterations,
+                ):
+                    yield f"data: {json.dumps(event.to_dict())}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'Provide context or document_ids'})}\n\n"
+        except Exception as e:
+            logger.error(f"[RLM] Stream error: {e}")
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # === MULTI-MODEL ENDPOINTS ===

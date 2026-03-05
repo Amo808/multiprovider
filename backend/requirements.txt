@@ -33,6 +33,9 @@ openai>=1.12.0
 # Mem0 for semantic memory (optional)
 mem0ai>=1.0.0
 
+# RLM - Recursive Language Models for deep analysis
+rlm>=0.1.0
+
 # Document processing for RAG
 pypdf>=3.17.0
 python-docx>=1.1.0
