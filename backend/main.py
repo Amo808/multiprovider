@@ -2398,39 +2398,6 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                             _sum_evt = {'content': '', 'meta': {'thinking': summary_section, 'reasoning_content': summary_section, 'reasoning': True}, 'done': False}
                             yield f"data: {json.dumps(_sum_evt, ensure_ascii=False)}\n\n"
                             
-                            # Save assistant message using save_message (handles Message objects correctly)
-                            rlm_meta = {
-                                "provider": provider_id,
-                                "model": model_id,
-                                "conversation_id": request.conversation_id,
-                                "user_email": user_email,
-                                "rlm": True,
-                                "rlm_time": f"{elapsed:.1f}s",
-                                "rlm_iterations": len(final_iterations),
-                                "rlm_context_chars": len(rlm_full_context),
-                                "rag_sources": rag_sources[:10] if rag_sources else [],
-                                "reasoning_content": accumulated_thinking,
-                                "rlm_api_request": rlm_api_request,
-                            }
-                            try:
-                                conversation_store.add_message(
-                                    conversation_id=conversation_id,
-                                    role="assistant",
-                                    content=result.response,
-                                    user_email=user_email,
-                                    message_id=rlm_msg_id,
-                                    model=model_id,
-                                    provider=provider_id,
-                                    reasoning_content=accumulated_thinking,
-                                    metadata=rlm_meta,
-                                )
-                            except Exception as save_err:
-                                logger.warning(f"[RLM] Failed to save message: {save_err}")
-                            
-                            # Send the final answer as content
-                            _content_evt = {'content': result.response, 'id': rlm_msg_id, 'done': False, 'provider': provider_id, 'model': model_id}
-                            yield f"data: {json.dumps(_content_evt, ensure_ascii=False)}\n\n"
-                            
                             # Build RLM API request info for "View API Request" JSON
                             # Shows exactly what context RLM used and how
                             rlm_usage = result.usage_summary.to_dict() if result.usage_summary else {}
@@ -2479,6 +2446,39 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
                                     for entry in final_iterations
                                 ],
                             }
+                            
+                            # Save assistant message
+                            rlm_meta = {
+                                "provider": provider_id,
+                                "model": model_id,
+                                "conversation_id": request.conversation_id,
+                                "user_email": user_email,
+                                "rlm": True,
+                                "rlm_time": f"{elapsed:.1f}s",
+                                "rlm_iterations": len(final_iterations),
+                                "rlm_context_chars": len(rlm_full_context),
+                                "rag_sources": rag_sources[:10] if rag_sources else [],
+                                "reasoning_content": accumulated_thinking,
+                                "rlm_api_request": rlm_api_request,
+                            }
+                            try:
+                                conversation_store.add_message(
+                                    conversation_id=conversation_id,
+                                    role="assistant",
+                                    content=result.response,
+                                    user_email=user_email,
+                                    message_id=rlm_msg_id,
+                                    model=model_id,
+                                    provider=provider_id,
+                                    reasoning_content=accumulated_thinking,
+                                    metadata=rlm_meta,
+                                )
+                            except Exception as save_err:
+                                logger.warning(f"[RLM] Failed to save message: {save_err}")
+                            
+                            # Send the final answer as content
+                            _content_evt = {'content': result.response, 'id': rlm_msg_id, 'done': False, 'provider': provider_id, 'model': model_id}
+                            yield f"data: {json.dumps(_content_evt, ensure_ascii=False)}\n\n"
                             
                             # Send done 
                             done_meta = {
