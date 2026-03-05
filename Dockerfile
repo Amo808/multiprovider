@@ -9,13 +9,18 @@ ARG VITE_DEV_MODE="1"
 ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 ENV VITE_DEV_MODE=$VITE_DEV_MODE
 
-# Install system dependencies including Node.js 22 LTS
+# Install system dependencies and Node.js 22 LTS via fnm
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22 using the official binaries
+ENV NODE_VERSION=22.16.0
+RUN curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz \
+    | tar -xJ -C /usr/local --strip-components=1 \
+    && node --version && npm --version
 
 # Set working directory
 WORKDIR /app

@@ -4297,6 +4297,8 @@ if __name__ == "__main__":
         host=host, 
         port=port, 
         reload=debug,  # Только если DEBUG=True
+        reload_dirs=["./"] if debug else None,  # Отслеживать только текущую папку
+        reload_excludes=["logs/*", "*.log", "data/*", "__pycache__/*", "*.pyc"] if debug else None,  # Исключить логи и временные файлы
         log_level="info",
         timeout_keep_alive=600,  # 10 minutes keep-alive for long requests
         timeout_graceful_shutdown=60
