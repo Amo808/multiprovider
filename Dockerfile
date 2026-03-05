@@ -18,8 +18,8 @@ RUN apt-get update && apt-get install -y \
 
 # Install Node.js 22 using the official binaries
 ENV NODE_VERSION=22.16.0
-RUN curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz \
-    | tar -xJ -C /usr/local --strip-components=1 \
+RUN curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz \
+    | tar -xz -C /usr/local --strip-components=1 \
     && node --version && npm --version
 
 # Set working directory
