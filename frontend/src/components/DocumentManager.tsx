@@ -11,6 +11,11 @@ interface DocumentManagerProps {
   onClose: () => void;
   onDocumentSelect?: (documentId: string) => void;
   conversationId?: string;  // NEW: Documents belong to specific conversation
+  // Selection state — controlled by parent (useRAG hook)
+  selectedDocumentIds?: string[];
+  onSelectDocument?: (documentId: string) => void;
+  onDeselectDocument?: (documentId: string) => void;
+  onDocumentsChanged?: () => void;  // Called after upload/delete so parent can refresh
 }
 
 type TabType = 'upload' | 'documents' | 'search';
@@ -19,7 +24,11 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
   isOpen,
   onClose,
   onDocumentSelect,
-  conversationId  // NEW: Receive conversationId
+  conversationId,  // NEW: Receive conversationId
+  selectedDocumentIds = [],
+  onSelectDocument,
+  onDeselectDocument,
+  onDocumentsChanged
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('documents');
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -92,6 +101,7 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
 
       // Refresh document list
       await loadDocuments();
+      onDocumentsChanged?.();
       setActiveTab('documents');
     } catch (err: any) {
       setError(err.message || 'Upload failed');
@@ -108,6 +118,7 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
     try {
       await ragService.deleteDocument(documentId);
       setDocuments(docs => docs.filter(d => d.id !== documentId));
+      onDocumentsChanged?.();
     } catch (err: any) {
       setError(err.message || 'Delete failed');
     }
@@ -278,12 +289,64 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
                   </button>
                 </div>
               ) : (
-                documents.map((doc) => (
+                <>
+                  {/* Select All / Deselect All bar */}
+                  {(onSelectDocument || onDeselectDocument) && (
+                    <div className="flex items-center justify-between mb-3 px-1">
+                      <span className="text-sm text-gray-400">
+                        {selectedDocumentIds.filter(id => documents.some(d => d.id === id)).length} of {documents.filter(d => d.status === 'ready').length} selected
+                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => documents.filter(d => d.status === 'ready').forEach(d => {
+                            if (!selectedDocumentIds.includes(d.id)) onSelectDocument?.(d.id);
+                          })}
+                          className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                        >
+                          Select all
+                        </button>
+                        <span className="text-gray-600">|</span>
+                        <button
+                          onClick={() => documents.forEach(d => onDeselectDocument?.(d.id))}
+                          className="text-xs text-gray-400 hover:text-gray-300 transition-colors"
+                        >
+                          Deselect all
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {documents.map((doc) => (
                   <div
                     key={doc.id}
-                    className="flex items-center justify-between p-4 bg-white/5 rounded-xl hover:bg-white/10 transition-colors"
+                    className={`flex items-center justify-between p-4 rounded-xl transition-colors cursor-pointer ${
+                      selectedDocumentIds.includes(doc.id)
+                        ? 'bg-purple-500/15 border border-purple-500/40 hover:bg-purple-500/20'
+                        : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                    }`}
+                    onClick={() => {
+                      if (doc.status !== 'ready') return;
+                      if (selectedDocumentIds.includes(doc.id)) {
+                        onDeselectDocument?.(doc.id);
+                      } else {
+                        onSelectDocument?.(doc.id);
+                      }
+                    }}
                   >
                     <div className="flex items-center space-x-4">
+                      {/* Checkbox */}
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors flex-shrink-0 ${
+                        doc.status !== 'ready'
+                          ? 'border-gray-600 bg-gray-800 cursor-not-allowed'
+                          : selectedDocumentIds.includes(doc.id)
+                            ? 'border-purple-500 bg-purple-500'
+                            : 'border-gray-500 hover:border-purple-400'
+                      }`}>
+                        {selectedDocumentIds.includes(doc.id) && (
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
                       <div className="text-2xl">
                         {doc.content_type?.includes('pdf') ? '📕' :
                           doc.content_type?.includes('word') ? '📘' :
@@ -297,13 +360,19 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
                           <span>{doc.total_chunks || 0} chunks</span>
                           <span>•</span>
                           {getStatusBadge(doc.status)}
+                          {selectedDocumentIds.includes(doc.id) && (
+                            <>
+                              <span>•</span>
+                              <span className="text-purple-400 font-medium">Selected for chat</span>
+                            </>
+                          )}
                         </div>
                         {doc.error_message && (
                           <div className="text-xs text-red-400 mt-1">{doc.error_message}</div>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
                       {doc.status === 'error' && (
                         <button
                           onClick={() => handleReprocess(doc.id)}
@@ -311,15 +380,6 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
                           title="Reprocess"
                         >
                           🔄
-                        </button>
-                      )}
-                      {onDocumentSelect && doc.status === 'ready' && (
-                        <button
-                          onClick={() => onDocumentSelect(doc.id)}
-                          className="p-2 hover:bg-white/10 rounded-lg text-green-400 transition-colors"
-                          title="Use in chat"
-                        >
-                          ✓
                         </button>
                       )}
                       <button
@@ -331,7 +391,8 @@ const DocumentManager: React.FC<DocumentManagerProps> = ({
                       </button>
                     </div>
                   </div>
-                ))
+                ))}
+                </>
               )}
             </div>
           )}

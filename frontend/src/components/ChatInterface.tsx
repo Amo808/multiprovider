@@ -11,7 +11,6 @@ import { estimateCostForMessage } from '../lib/pricing';
 import { DraggableMessageList } from './DraggableMessageList';
 import { VirtualizedMessageList } from './VirtualizedMessageList';
 import DocumentManager from './DocumentManager';
-import { DeepAnalysisPanel } from './DeepAnalysisPanel';
 import { RAGUnifiedButton } from './RAGUnifiedButton';
 import { RAGDebugPanel } from './RAGDebugPanel';
 import { RAGPromptsEditor } from './RAGPromptsEditor';
@@ -74,8 +73,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [lastRAGDebugInfo, setLastRAGDebugInfo] = useState<Record<string, any> | null>(null);
   // RAG Prompts Editor state
   const [showRAGPromptsEditor, setShowRAGPromptsEditor] = useState(false);
-  // Deep Analysis (RLM) state
-  const [showDeepAnalysis, setShowDeepAnalysis] = useState(false);
+  // RLM (Deep Analysis) toggle — uses recursive reasoning on RAG context
+  const [rlmEnabled, setRlmEnabled] = useState(false);
   // Large paste confirmation modal state
   const [pendingPaste, setPendingPaste] = useState<{
     text: string;
@@ -894,8 +893,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const effectiveRagEnabled = ragEnabled && documentsCount > 0;
     const effectiveDocumentIds = selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined;
 
-    // If RAG is disabled by user, don't send any documents
-    const ragDocumentIds = effectiveRagEnabled ? effectiveDocumentIds : undefined;
+    // If RAG is disabled by user, don't send any documents — UNLESS RLM is on
+    // RLM needs document_ids to load full content even without RAG search
+    const ragDocumentIds = (effectiveRagEnabled || rlmEnabled) ? effectiveDocumentIds : undefined;
 
     const request: SendMessageRequest = {
       message: messageText,
@@ -935,7 +935,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           adaptive_chunks: ragSettings.orchestrator.adaptive_chunks,
           enable_web_search: ragSettings.orchestrator.enable_web_search,
           enable_code_execution: ragSettings.orchestrator.enable_code_execution,
-        } : undefined
+        } : undefined,
+
+        // === RLM (Deep Analysis) ===
+        // RLM works independently — loads full documents and analyzes recursively
+        // When RLM is on, it bypasses RAG search and uses complete document content
+        use_rlm: rlmEnabled && documentsCount > 0,
+        rlm_max_iterations: 15
       }
     };
 
@@ -1426,17 +1432,27 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   <FileText size={18} className="text-muted-foreground" />
                 </Button>
 
-                {/* Deep Analysis (RLM) Button */}
-                <Button
-                  type="button"
-                  onClick={() => setShowDeepAnalysis(true)}
-                  variant="ghost"
-                  size="sm"
-                  title="Deep Analysis (RLM) — recursive reasoning over documents"
-                  className="h-8 w-8 p-0 rounded-lg hover:bg-secondary"
-                >
-                  <Brain size={18} className="text-muted-foreground" />
-                </Button>
+                {/* RLM Deep Analysis Toggle - show when documents exist (works with or without RAG) */}
+                {documentsCount > 0 && (
+                  <Button
+                    type="button"
+                    onClick={() => setRlmEnabled(!rlmEnabled)}
+                    variant={rlmEnabled ? "default" : "ghost"}
+                    size="sm"
+                    title={rlmEnabled
+                      ? "RLM Deep Analysis ON — recursive reasoning over full documents (click to disable)"
+                      : "Enable RLM Deep Analysis — loads full documents and analyzes recursively"
+                    }
+                    className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs ${
+                      rlmEnabled
+                        ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                        : 'hover:bg-secondary'
+                    }`}
+                  >
+                    <Brain size={16} className={rlmEnabled ? 'text-white' : 'text-muted-foreground'} />
+                    <span className={rlmEnabled ? 'text-white font-medium' : 'text-muted-foreground'}>RLM</span>
+                  </Button>
+                )}
 
                 {/* RAG Unified Button - only show if documents exist */}
                 {documentsCount > 0 && (
@@ -1615,7 +1631,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       <DocumentManager
         isOpen={showDocumentManager}
         onClose={() => setShowDocumentManager(false)}
-        conversationId={conversationId}  // Pass conversationId for per-chat documents
+        conversationId={conversationId}
+        selectedDocumentIds={selectedDocumentIds}
+        onSelectDocument={selectDocument}
+        onDeselectDocument={deselectDocument}
+        onDocumentsChanged={loadDocuments}
       />
 
       {/* Large Paste Confirmation Modal */}
@@ -1716,16 +1736,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       <RAGPromptsEditor
         isOpen={showRAGPromptsEditor}
         onClose={() => setShowRAGPromptsEditor(false)}
-      />
-
-      {/* Deep Analysis (RLM) Panel */}
-      <DeepAnalysisPanel
-        isOpen={showDeepAnalysis}
-        onClose={() => setShowDeepAnalysis(false)}
-        provider={selectedProvider || 'deepseek'}
-        model={selectedModel?.id || 'deepseek-chat'}
-        documentIds={selectedDocumentIds}
-        documentsCount={documentsCount}
       />
     </div>
   );

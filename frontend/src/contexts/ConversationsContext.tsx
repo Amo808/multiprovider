@@ -360,18 +360,23 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
         }
 
         // Handle RAG context info (sent at start of generation)
-        if (chunk.type === 'rag_context' && chunk.rag_sources) {
-          console.log(`[ConversationsContext] RAG context received: ${chunk.chunks_count} chunks, ${chunk.rag_context_length} chars`);
+        if (chunk.type === 'rag_context') {
+          console.log(`[ConversationsContext] RAG context received: ${chunk.chunks_count} chunks, ${chunk.rag_context_length} chars, rlm=${chunk.rlm_mode}`);
           console.log(`[ConversationsContext] RAG debug:`, chunk.debug);
           console.log(`[ConversationsContext] RAG debug keys:`, chunk.debug ? Object.keys(chunk.debug) : 'no debug');
           console.log(`[ConversationsContext] RAG debug.collector keys:`, chunk.debug?.collector ? Object.keys(chunk.debug.collector) : 'no collector');
 
-          // Update the assistant message with RAG sources
+          // For RLM mode, show a different stage message
+          const stageMsg = chunk.rlm_mode
+            ? `🧠 RLM Deep Analysis: ${chunk.rlm_docs || 0} document(s), ${((chunk.rlm_context_chars || 0) / 1000).toFixed(0)}k chars...`
+            : `📚 Found ${chunk.chunks_count} relevant document chunks...`;
+
+          // Update the assistant message with RAG sources and RLM flag
           setConversations(prev => ({
             ...prev,
             [conversationId]: {
               ...prev[conversationId],
-              deepResearchStage: `📚 Found ${chunk.chunks_count} relevant document chunks...`,
+              deepResearchStage: stageMsg,
               messages: prev[conversationId].messages.map(msg =>
                 msg.id === assistantMessage.id
                   ? {
@@ -384,7 +389,9 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
                       rag_context_full: chunk.rag_context_full,
                       rag_debug: chunk.debug,
                       system_prompt_preview: chunk.system_prompt_preview,
-                      system_prompt_full: chunk.system_prompt_full  // Full system prompt with RAG context for debug
+                      system_prompt_full: chunk.system_prompt_full,
+                      // RLM flag — used by MessageBubble to auto-open thinking section
+                      ...(chunk.rlm_mode ? { rlm: true } : {})
                     }
                   }
                   : msg

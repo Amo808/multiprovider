@@ -7,19 +7,84 @@ of large documents and complex multi-step reasoning tasks.
 RLM enables LLMs to handle near-infinite length contexts by programmatically
 examining, decomposing, and recursively calling themselves through a REPL environment.
 
-Library: pip install rlm  (https://github.com/alexzhang13/rlm)
+Library: pip install rlms  (https://github.com/alexzhang13/rlm)
 Reference: https://arxiv.org/abs/2512.24601
 """
 
 import asyncio
 import logging
+import re
+import sys
 import time
 import os
+import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def clean_text_for_rlm(text: str) -> str:
+    """Clean document text for safe processing by RLM.
+    
+    Replaces any character that cannot be encoded with the current system
+    codec (e.g. cp1251 on Russian Windows) with its closest ASCII equivalent.
+    This prevents 'charmap' codec errors when RLM verbose mode prints output.
+    """
+    # NFKD normalization converts many fancy Unicode chars to ASCII equivalents
+    # e.g. \u2212 (−) → nothing, but we handle math symbols explicitly below
+    text = unicodedata.normalize('NFKC', text)
+    
+    # Common substitutions for symbols that NFKC doesn't fix
+    _replacements = {
+        '\u2212': '-',   # minus sign
+        '\u2013': '-',   # en dash
+        '\u2014': '-',   # em dash
+        '\u2015': '-',   # horizontal bar
+        '\u2018': "'",   # left single quote
+        '\u2019': "'",   # right single quote
+        '\u201a': "'",   # single low-9 quote
+        '\u201c': '"',   # left double quote
+        '\u201d': '"',   # right double quote
+        '\u201e': '"',   # double low-9 quote
+        '\u2026': '...', # ellipsis
+        '\u2022': '*',   # bullet
+        '\u2023': '>',   # triangular bullet
+        '\u2039': '<',   # single left angle quote
+        '\u203a': '>',   # single right angle quote
+        '\u00ab': '<<',  # left guillemet
+        '\u00bb': '>>',  # right guillemet
+        '\u00d7': 'x',   # multiplication sign
+        '\u00f7': '/',   # division sign
+        '\u2264': '<=',  # less-than or equal
+        '\u2265': '>=',  # greater-than or equal
+        '\u2260': '!=',  # not equal
+        '\u2248': '~=',  # approximately equal
+        '\u00b1': '+/-', # plus-minus
+        '\u2190': '<-',  # left arrow
+        '\u2192': '->',  # right arrow
+        '\u00a0': ' ',   # non-breaking space
+        '\u2002': ' ',   # en space
+        '\u2003': ' ',   # em space
+        '\u2009': ' ',   # thin space
+        '\u202f': ' ',   # narrow no-break space
+    }
+    for char, replacement in _replacements.items():
+        text = text.replace(char, replacement)
+    
+    # Remove zero-width / invisible characters
+    text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f\ufeff\u00ad\u2060\u2061-\u2064]', '', text)
+    # Remove control characters (keep \n \r \t)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+    
+    # Final safety net: detect system encoding and replace anything it can't handle
+    encoding = sys.stdout.encoding or 'utf-8'
+    if encoding.lower() not in ('utf-8', 'utf8'):
+        # On Windows with cp1251/cp866 etc. — encode→decode to drop bad chars
+        text = text.encode(encoding, errors='replace').decode(encoding)
+    
+    return text
 
 
 class RLMStatus(str, Enum):
@@ -95,18 +160,12 @@ class RLMService:
                 logger.info("[RLM] rlm library is available")
             except ImportError:
                 self._available = False
-                logger.warning("[RLM] rlm library not installed. Install with: pip install rlm")
+                logger.warning("[RLM] rlm library not installed. Install with: pip install rlms")
         return self._available
 
     def _get_api_key_for_provider(self, provider_id: str) -> Optional[str]:
-        """Get API key from provider manager or environment variables."""
-        adapter = self.provider_manager.registry.get(provider_id)
-        if adapter and hasattr(adapter, 'config') and adapter.config.api_key:
-            key = adapter.config.api_key
-            if key and not key.startswith('your_') and len(key) > 10:
-                return key
-
-        # Fallback to env vars
+        """Get API key from environment variables first, then provider manager."""
+        # 1. Check env vars first (most reliable, loaded from .env at startup)
         env_map = {
             "openai": "OPENAI_API_KEY",
             "anthropic": "ANTHROPIC_API_KEY",
@@ -114,7 +173,21 @@ class RLMService:
             "gemini": "GOOGLE_API_KEY",
         }
         env_var = env_map.get(provider_id, "")
-        return os.getenv(env_var)
+        env_value = os.getenv(env_var)
+        if env_value and not env_value.startswith('your_') and len(env_value) > 10:
+            logger.info(f"[RLM] Using env var {env_var} for {provider_id} (len={len(env_value)})")
+            return env_value
+
+        # 2. Fallback to adapter registry
+        adapter = self.provider_manager.registry.get(provider_id)
+        if adapter and hasattr(adapter, 'config') and adapter.config.api_key:
+            key = adapter.config.api_key
+            if key and not key.startswith('your_') and len(key) > 10:
+                logger.info(f"[RLM] Using adapter key for {provider_id} (len={len(key)})")
+                return key
+
+        logger.warning(f"[RLM] No API key found for provider '{provider_id}'")
+        return None
 
     def _build_rlm_kwargs(
         self,
@@ -201,7 +274,7 @@ class RLMService:
         if not self.is_available:
             yield RLMEvent(
                 status=RLMStatus.ERROR,
-                message="RLM library not installed. Install with: pip install rlm",
+                message="RLM library not installed. Install with: pip install rlms",
             )
             return
 
@@ -248,11 +321,13 @@ class RLMService:
             # API: completion(prompt=<context>, root_prompt=<question>)
             #   prompt → becomes the `context` variable in the REPL
             #   root_prompt → short hint visible to the root LM
+            # Clean context to avoid charmap codec errors on Windows
+            clean_context = clean_text_for_rlm(context)
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: rlm_engine.completion(
-                    prompt=context,
+                    prompt=clean_context,
                     root_prompt=prompt,
                 ),
             )
@@ -299,7 +374,7 @@ class RLMService:
         except ImportError as e:
             yield RLMEvent(
                 status=RLMStatus.ERROR,
-                message=f"RLM dependency error: {e}. Try: pip install rlm",
+                message=f"RLM dependency error: {e}. Try: pip install rlms",
                 elapsed_seconds=time.time() - start_time,
             )
         except Exception as e:
@@ -358,12 +433,13 @@ class RLMService:
             total_chars = 0
             for doc in user_docs:
                 doc_id = doc["id"]
-                doc_name = doc.get("filename", doc_id)
+                doc_name = doc.get("name", doc.get("filename", doc_id))
 
                 # Get all chunks for this document
-                chunks = rag_store.get_document_chunks(doc_id, user_email)
+                chunks = rag_store.get_all_document_chunks(user_email, document_ids=[doc_id])
                 if chunks:
                     doc_text = "\n".join(c.get("content", "") for c in chunks)
+                    doc_text = clean_text_for_rlm(doc_text)
                     context_parts.append(f"=== Document: {doc_name} ===\n{doc_text}")
                     total_chars += len(doc_text)
 
@@ -382,7 +458,7 @@ class RLMService:
                 metadata={
                     "documents": len(user_docs),
                     "total_chars": total_chars,
-                    "document_names": [d.get("filename", "?") for d in user_docs],
+                    "document_names": [d.get("name", d.get("filename", "?")) for d in user_docs],
                 },
             )
 

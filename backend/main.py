@@ -240,7 +240,7 @@ async def lifespan(app: FastAPI):
         
         # Initialize RLM (Recursive Language Model) deep analysis service
         try:
-            from backend.rlm_service import init_rlm_service
+            from rlm_service import init_rlm_service
             rlm_service = init_rlm_service(provider_manager)
             logger.info(f"[RLM] Deep analysis service initialized (available: {rlm_service.is_available})")
         except Exception as rlm_err:
@@ -323,6 +323,10 @@ class RAGConfig(BaseModel):
     
     # Debug option - shows FULL prompt sent to model
     debug_mode: bool = False  # When True, returns full system prompt in response
+    
+    # === RLM (Deep Analysis) ===
+    use_rlm: bool = False  # When True, RAG context is processed through RLM recursive reasoning
+    rlm_max_iterations: int = 15  # Max RLM iterations
     
     # === ORCHESTRATOR SETTINGS ===
     orchestrator: Optional[OrchestratorConfig] = None
@@ -2153,6 +2157,361 @@ async def send_message(request: ChatRequest, http_request: Request, user_email: 
         #     else:
         #         system_prompt_content = f"You are a helpful AI assistant.\n\n{memory_context}"
         
+        # === RLM DEEP ANALYSIS MODE ===
+        # When use_rlm=True, load FULL document content (not just RAG search results).
+        # RLM is designed to handle huge contexts via recursive decomposition —
+        # so we bypass RAG's chunk search and give it the entire document(s).
+        logger.info(f"[RLM-CHECK] use_rlm={rag_config.use_rlm}, document_ids={rag_config.document_ids}")
+        if rag_config.use_rlm:
+            logger.info(f"[RLM] use_rlm is True, attempting RLM flow...")
+            from rlm_service import get_rlm_service, RLMStatus, clean_text_for_rlm
+            _rlm_svc = get_rlm_service()
+            logger.info(f"[RLM] Service: {_rlm_svc}, available: {_rlm_svc.is_available if _rlm_svc else 'N/A'}")
+            if _rlm_svc and _rlm_svc.is_available:
+                # Load FULL document content instead of using RAG search results
+                rlm_full_context = ""
+                rlm_doc_names = []
+                try:
+                    from supabase_client.rag import get_rag_store as _rlm_get_rag
+                    _rlm_rag = _rlm_get_rag()
+                    
+                    # Determine which documents to load
+                    doc_ids = rag_config.document_ids
+                    if not doc_ids:
+                        # No specific docs selected — load all ready documents
+                        all_docs = _rlm_rag.list_documents(user_email, status="ready", limit=100)
+                        doc_ids = [d["id"] for d in all_docs]
+                        rlm_doc_names = [d.get("name", "?") for d in all_docs]
+                    else:
+                        all_docs = _rlm_rag.list_documents(user_email, status="ready", limit=100)
+                        doc_map = {d["id"]: d.get("name", "?") for d in all_docs}
+                        rlm_doc_names = [doc_map.get(did, "?") for did in doc_ids]
+                    
+                    if doc_ids:
+                        # Load ALL chunks for selected documents (full content, ordered)
+                        all_chunks = _rlm_rag.get_all_document_chunks(user_email, document_ids=doc_ids)
+                        
+                        # Group by document and build full text
+                        from collections import defaultdict
+                        doc_chunks = defaultdict(list)
+                        for chunk in all_chunks:
+                            doc_chunks[chunk.get("document_id", "unknown")].append(chunk)
+                        
+                        context_parts = []
+                        total_chars = 0
+                        for i, did in enumerate(doc_ids):
+                            chunks = doc_chunks.get(did, [])
+                            if chunks:
+                                doc_name = rlm_doc_names[i] if i < len(rlm_doc_names) else "Unknown"
+                                doc_text = "\n".join(c.get("content", "") for c in chunks)
+                                doc_text = clean_text_for_rlm(doc_text)
+                                context_parts.append(f"=== Document: {doc_name} ===\n{doc_text}")
+                                total_chars += len(doc_text)
+                        
+                        rlm_full_context = "\n\n".join(context_parts)
+                        logger.info(f"[RLM] Loaded {len(doc_ids)} document(s), {total_chars:,} chars total for RLM")
+                    
+                except Exception as doc_err:
+                    logger.error(f"[RLM] Error loading full documents: {doc_err}", exc_info=True)
+                    # Fallback: use whatever RAG context we have
+                    rlm_full_context = rag_context
+                
+                if not rlm_full_context:
+                    rlm_full_context = rag_context  # Fallback to RAG search context
+                
+                if rlm_full_context:
+                    logger.info(f"[RLM] RLM mode enabled, routing through deep analysis. Full context: {len(rlm_full_context):,} chars")
+                
+                    # Create assistant message ID for RLM response
+                    rlm_msg_id = str(uuid.uuid4())
+            
+                    async def generate_rlm_response():
+                        """Stream RLM deep analysis with real-time iteration visibility.
+                        
+                        Runs RLM in a thread executor while polling the RLMLogger for new
+                        iterations, streaming each iteration's LLM response and code execution
+                        to the frontend as SSE events (via reasoning_content / thinking).
+                        """
+                        import time as _time
+                        import concurrent.futures
+                        start_ts = _time.time()
+                    
+                        # Send RLM info event to frontend
+                        rlm_info = {
+                            'type': 'rag_context',
+                            'rag_sources': rag_sources[:20] if rag_sources else [],
+                            'rag_mode': 'rlm',
+                            'total_sources': len(rag_sources) if rag_sources else 0,
+                            'rlm_mode': True,
+                            'rlm_docs': len(doc_ids) if doc_ids else 0,
+                            'rlm_context_chars': len(rlm_full_context),
+                            'done': False
+                        }
+                        yield f"data: {json.dumps(rlm_info, ensure_ascii=False)}\n\n"
+                    
+                        try:
+                            from rlm import RLM as RLMEngine
+                            from rlm.logger import RLMLogger
+                            
+                            # Build RLM kwargs
+                            rlm_kwargs = _rlm_svc._build_rlm_kwargs(
+                                provider_id=provider_id,
+                                model_id=model_id,
+                                max_iterations=rag_config.rlm_max_iterations,
+                                max_depth=2,
+                                verbose=True,
+                            )
+                            
+                            # Create logger that captures iterations in memory
+                            rlm_logger = RLMLogger()
+                            rlm_engine = RLMEngine(**rlm_kwargs, logger=rlm_logger)
+                            
+                            # Send initialization event
+                            init_thinking = f"🧠 RLM Deep Analysis starting...\n📄 Context: {len(rlm_full_context):,} chars from {len(doc_ids)} document(s)\n⚙️ Model: {provider_id}/{model_id}, Max iterations: {rag_config.rlm_max_iterations}\n"
+                            _init_evt = {'content': '', 'meta': {'thinking': init_thinking, 'reasoning_content': init_thinking, 'reasoning': True}, 'done': False}
+                            yield f"data: {json.dumps(_init_evt, ensure_ascii=False)}\n\n"
+                            
+                            # Clean context for RLM
+                            clean_context = clean_text_for_rlm(rlm_full_context)
+                            
+                            # Run RLM.completion() in a thread — it's synchronous
+                            loop = asyncio.get_event_loop()
+                            future = loop.run_in_executor(
+                                None,
+                                lambda: rlm_engine.completion(
+                                    prompt=clean_context,
+                                    root_prompt=request.message,
+                                ),
+                            )
+                            
+                            # Poll the logger for new iterations while RLM runs
+                            seen_iterations = 0
+                            accumulated_thinking = init_thinking
+                            
+                            while not future.done():
+                                await asyncio.sleep(0.8)  # Poll every 800ms
+                                
+                                # Check for new iterations in the logger
+                                current_iterations = list(rlm_logger._iterations)
+                                if len(current_iterations) > seen_iterations:
+                                    for entry in current_iterations[seen_iterations:]:
+                                        iter_num = entry.get("iteration", "?")
+                                        response_text = entry.get("response", "")
+                                        code_blocks = entry.get("code_blocks", [])
+                                        iter_time = entry.get("iteration_time")
+                                        final_answer = entry.get("final_answer")
+                                        
+                                        # Format iteration for display
+                                        iter_section = f"\n{'─' * 40}  Iteration {iter_num}  {'─' * 40}\n"
+                                        
+                                        # LLM Response (truncate very long ones)
+                                        display_response = response_text
+                                        if len(display_response) > 3000:
+                                            display_response = display_response[:3000] + "\n... (truncated)"
+                                        time_str = f"  ({iter_time:.1f}s)" if iter_time else ""
+                                        iter_section += f"\n◇ LLM Response{time_str}:\n{display_response}\n"
+                                        
+                                        # Code executions 
+                                        for cb in code_blocks:
+                                            code = cb.get("code", "")
+                                            result = cb.get("result", {})
+                                            stdout = result.get("stdout", "")
+                                            stderr = result.get("stderr", "")
+                                            exec_time = result.get("execution_time")
+                                            sub_calls = result.get("rlm_calls", [])
+                                            
+                                            time_str = f"  ({exec_time:.3f}s)" if exec_time else ""
+                                            iter_section += f"\n▸ Code Execution{time_str}:\n```\n{code}\n```\n"
+                                            if stdout:
+                                                display_stdout = stdout if len(stdout) <= 2000 else stdout[:2000] + "\n... (truncated)"
+                                                iter_section += f"Output:\n{display_stdout}\n"
+                                            if stderr:
+                                                iter_section += f"⚠ Stderr:\n{stderr[:500]}\n"
+                                            if sub_calls:
+                                                iter_section += f"↳ {len(sub_calls)} sub-call(s)\n"
+                                        
+                                        if final_answer:
+                                            iter_section += f"\n★ Final Answer found\n"
+                                        
+                                        accumulated_thinking += iter_section
+                                        
+                                        # Send iteration as thinking/reasoning content
+                                        _iter_evt = {'content': '', 'meta': {'thinking': iter_section, 'reasoning_content': iter_section, 'reasoning': True}, 'done': False}
+                                        yield f"data: {json.dumps(_iter_evt, ensure_ascii=False)}\n\n"
+                                        
+                                        logger.info(f"[RLM] Streamed iteration {iter_num} to frontend ({len(iter_section)} chars)")
+                                    
+                                    seen_iterations = len(current_iterations)
+                                
+                                # Send heartbeat to keep connection alive
+                                elapsed = _time.time() - start_ts
+                                _hb_evt = {'heartbeat': True, 'meta': {'rlm_elapsed': f'{elapsed:.0f}s', 'rlm_iterations': seen_iterations}}
+                                yield f"data: {json.dumps(_hb_evt, ensure_ascii=False)}\n\n"
+                            
+                            # Get the result
+                            result = future.result()
+                            elapsed = _time.time() - start_ts
+                            
+                            # Process any remaining iterations that arrived after last poll
+                            final_iterations = list(rlm_logger._iterations)
+                            if len(final_iterations) > seen_iterations:
+                                for entry in final_iterations[seen_iterations:]:
+                                    iter_num = entry.get("iteration", "?")
+                                    response_text = entry.get("response", "")
+                                    code_blocks = entry.get("code_blocks", [])
+                                    iter_time = entry.get("iteration_time")
+                                    final_answer = entry.get("final_answer")
+                                    
+                                    iter_section = f"\n{'─' * 40}  Iteration {iter_num}  {'─' * 40}\n"
+                                    display_response = response_text[:3000] + ("\n... (truncated)" if len(response_text) > 3000 else "")
+                                    time_str = f"  ({iter_time:.1f}s)" if iter_time else ""
+                                    iter_section += f"\n◇ LLM Response{time_str}:\n{display_response}\n"
+                                    
+                                    for cb in code_blocks:
+                                        code = cb.get("code", "")
+                                        cb_result = cb.get("result", {})
+                                        stdout = cb_result.get("stdout", "")
+                                        stderr = cb_result.get("stderr", "")
+                                        exec_time = cb_result.get("execution_time")
+                                        sub_calls = cb_result.get("rlm_calls", [])
+                                        
+                                        time_str = f"  ({exec_time:.3f}s)" if exec_time else ""
+                                        iter_section += f"\n▸ Code Execution{time_str}:\n```\n{code}\n```\n"
+                                        if stdout:
+                                            display_stdout = stdout[:2000] + ("\n... (truncated)" if len(stdout) > 2000 else "")
+                                            iter_section += f"Output:\n{display_stdout}\n"
+                                        if stderr:
+                                            iter_section += f"⚠ Stderr:\n{stderr[:500]}\n"
+                                        if sub_calls:
+                                            iter_section += f"↳ {len(sub_calls)} sub-call(s)\n"
+                                    
+                                    if final_answer:
+                                        iter_section += f"\n★ Final Answer found\n"
+                                    
+                                    accumulated_thinking += iter_section
+                                    _iter_evt2 = {'content': '', 'meta': {'thinking': iter_section, 'reasoning_content': iter_section, 'reasoning': True}, 'done': False}
+                                    yield f"data: {json.dumps(_iter_evt2, ensure_ascii=False)}\n\n"
+                            
+                            # Add summary to thinking
+                            summary_section = f"\n{'═' * 80}\n✅ RLM completed in {elapsed:.1f}s | {len(final_iterations)} iterations | {len(rlm_full_context):,} chars analyzed\n{'═' * 80}\n"
+                            accumulated_thinking += summary_section
+                            _sum_evt = {'content': '', 'meta': {'thinking': summary_section, 'reasoning_content': summary_section, 'reasoning': True}, 'done': False}
+                            yield f"data: {json.dumps(_sum_evt, ensure_ascii=False)}\n\n"
+                            
+                            # Save assistant message using save_message (handles Message objects correctly)
+                            rlm_meta = {
+                                "provider": provider_id,
+                                "model": model_id,
+                                "conversation_id": request.conversation_id,
+                                "user_email": user_email,
+                                "rlm": True,
+                                "rlm_time": f"{elapsed:.1f}s",
+                                "rlm_iterations": len(final_iterations),
+                                "rlm_context_chars": len(rlm_full_context),
+                                "rag_sources": rag_sources[:10] if rag_sources else [],
+                                "reasoning_content": accumulated_thinking,
+                                "rlm_api_request": rlm_api_request,
+                            }
+                            try:
+                                conversation_store.add_message(
+                                    conversation_id=conversation_id,
+                                    role="assistant",
+                                    content=result.response,
+                                    user_email=user_email,
+                                    message_id=rlm_msg_id,
+                                    model=model_id,
+                                    provider=provider_id,
+                                    reasoning_content=accumulated_thinking,
+                                    metadata=rlm_meta,
+                                )
+                            except Exception as save_err:
+                                logger.warning(f"[RLM] Failed to save message: {save_err}")
+                            
+                            # Send the final answer as content
+                            _content_evt = {'content': result.response, 'id': rlm_msg_id, 'done': False, 'provider': provider_id, 'model': model_id}
+                            yield f"data: {json.dumps(_content_evt, ensure_ascii=False)}\n\n"
+                            
+                            # Build RLM API request info for "View API Request" JSON
+                            # Shows exactly what context RLM used and how
+                            rlm_usage = result.usage_summary.to_dict() if result.usage_summary else {}
+                            rlm_api_request = {
+                                "rlm_engine": {
+                                    "backend": "openai",
+                                    "model": model_id,
+                                    "provider": provider_id,
+                                    "max_iterations": rag_config.rlm_max_iterations,
+                                    "max_depth": 2,
+                                    "base_url": "https://api.deepseek.com" if provider_id == "deepseek" else None,
+                                },
+                                "rlm_prompt": {
+                                    "context_source": f"{len(doc_ids)} document(s): {', '.join(rlm_doc_names[:5])}",
+                                    "context_chars": len(rlm_full_context),
+                                    "context_preview": rlm_full_context[:2000] + ("..." if len(rlm_full_context) > 2000 else ""),
+                                    "user_question": request.message,
+                                    "note": "RLM receives the full document as 'prompt' (context) and the user question as 'root_prompt'. It then iteratively reasons, writes code, and executes it in a REPL to analyze the context."
+                                },
+                                "rlm_result": {
+                                    "final_answer_chars": len(result.response) if result.response else 0,
+                                    "final_answer_preview": (result.response[:1000] + "...") if result.response and len(result.response) > 1000 else result.response,
+                                    "iterations_count": len(final_iterations),
+                                    "execution_time": f"{result.execution_time:.1f}s" if result.execution_time else f"{elapsed:.1f}s",
+                                },
+                                "rlm_usage": rlm_usage,
+                                "rlm_iterations_detail": [
+                                    {
+                                        "iteration": entry.get("iteration", "?"),
+                                        "response_chars": len(entry.get("response", "")),
+                                        "response_preview": entry.get("response", "")[:500] + ("..." if len(entry.get("response", "")) > 500 else ""),
+                                        "code_blocks": [
+                                            {
+                                                "code": cb.get("code", "")[:500],
+                                                "stdout_chars": len(cb.get("result", {}).get("stdout", "")),
+                                                "stdout_preview": cb.get("result", {}).get("stdout", "")[:500],
+                                                "stderr": cb.get("result", {}).get("stderr", "")[:200] if cb.get("result", {}).get("stderr") else None,
+                                                "execution_time": cb.get("result", {}).get("execution_time"),
+                                                "sub_calls": len(cb.get("result", {}).get("rlm_calls", [])),
+                                            }
+                                            for cb in entry.get("code_blocks", [])
+                                        ],
+                                        "has_final_answer": bool(entry.get("final_answer")),
+                                        "iteration_time": entry.get("iteration_time"),
+                                    }
+                                    for entry in final_iterations
+                                ],
+                            }
+                            
+                            # Send done 
+                            done_meta = {
+                                "rlm": True,
+                                "rlm_time": f"{elapsed:.1f}s",
+                                "rlm_iterations": len(final_iterations),
+                                "rag_sources": rag_sources[:10] if rag_sources else [],
+                                "rag_mode": rag_config.mode,
+                                "rlm_context_chars": len(rlm_full_context),
+                                "reasoning_content": accumulated_thinking,
+                                "thinking": accumulated_thinking,
+                                "rlm_api_request": rlm_api_request,
+                            }
+                            _done_evt = {'done': True, 'id': rlm_msg_id, 'provider': provider_id, 'model': model_id, 'meta': done_meta}
+                            yield f"data: {json.dumps(_done_evt, ensure_ascii=False)}\n\n"
+                            
+                            # Cleanup
+                            if hasattr(rlm_engine, 'close'):
+                                rlm_engine.close()
+                    
+                        except Exception as e:
+                            logger.error(f"[RLM] Streaming error: {e}", exc_info=True)
+                            _err_evt = {'error': f'RLM error: {str(e)}', 'done': True}
+                            yield f"data: {json.dumps(_err_evt, ensure_ascii=False)}\n\n"
+                
+                    logger.info(f"[RLM] Returning RLM StreamingResponse")
+                    return StreamingResponse(
+                        generate_rlm_response(),
+                        media_type="text/plain",
+                        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+                    )
+        # === END RLM MODE ===
+        
         # Inject RAG context into system prompt if available
         if rag_context:
             if system_prompt_content:
@@ -3669,7 +4028,7 @@ async def rlm_status(_: str = Depends(get_current_user)):
         if service:
             return {
                 "available": service.is_available,
-                "message": "RLM deep analysis is ready" if service.is_available else "RLM library not installed (pip install rlm)",
+                "message": "RLM deep analysis is ready" if service.is_available else "RLM library not installed (pip install rlms)",
                 "supported_providers": list(service.PROVIDER_BACKEND_MAP.keys()),
             }
         return {"available": False, "message": "RLM service not initialized"}
@@ -3688,7 +4047,7 @@ async def rlm_analyze(
     
     if not service or not service.is_available:
         return StreamingResponse(
-            iter([f"data: {json.dumps({'status': 'error', 'message': 'RLM not available. Install: pip install rlm'})}\n\n"]),
+            iter([f"data: {json.dumps({'status': 'error', 'message': 'RLM not available. Install: pip install rlms'})}\n\n"]),
             media_type="text/event-stream",
         )
 

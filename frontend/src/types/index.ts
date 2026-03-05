@@ -50,6 +50,10 @@ export interface ExtendedMessageMeta {
   rag_debug?: RAGDebugInfo; // Debug info about search queries and methods
   system_prompt_preview?: string; // Preview of the full system prompt
   system_prompt_full?: string; // Full system prompt with RAG context for debug
+  // RLM deep analysis
+  rlm?: boolean; // Whether this message used RLM deep analysis
+  rlm_time?: string; // RLM execution time
+  rlm_iterations?: number; // Number of RLM iterations
 }
 
 export interface Message {
@@ -81,6 +85,10 @@ export interface ChatResponse {
   system_prompt_preview?: string; // Preview of the system prompt
   system_prompt_full?: string; // Full system prompt with RAG context for debug
   system_prompt_length?: number;
+  // RLM fields from rag_context event
+  rlm_mode?: boolean;
+  rlm_docs?: number;
+  rlm_context_chars?: number;
   meta?: {
     tokens_in?: number;
     tokens_out?: number;
@@ -262,6 +270,10 @@ export interface RAGConfig {
 
   // Debug option - shows FULL prompt sent to model
   debug_mode?: boolean;        // When true, returns full system prompt + history in response
+
+  // === RLM (Deep Analysis) ===
+  use_rlm?: boolean;           // When true, RAG context is processed through RLM recursive reasoning
+  rlm_max_iterations?: number; // Max RLM iterations (default 15)
 }
 
 export interface RAGSource {

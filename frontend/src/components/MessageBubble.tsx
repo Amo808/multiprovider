@@ -23,13 +23,220 @@ interface MessageBubbleProps {
 }
 
 // Memoized thinking section
+// Sub-component: renders parsed RLM content with rich formatting
+const RlmContent = memo<{ text: string; isStreaming?: boolean }>(({ text, isStreaming }) => {
+  // Parse RLM structured text into visual blocks
+  const parts: React.ReactNode[] = [];
+  const lines = text.split('\n');
+  let i = 0;
+  let key = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // --- Iteration header ---
+    if (/^[─]{5,}.*Iteration\s+\d+.*[─]{5,}$/.test(line)) {
+      const iterMatch = line.match(/Iteration\s+(\d+)/);
+      const iterNum = iterMatch ? iterMatch[1] : '?';
+      parts.push(
+        <div key={key++} className="flex items-center gap-2 mt-4 mb-2">
+          <div className="h-px flex-1 bg-blue-500/30" />
+          <span className="text-xs font-bold text-blue-400 tracking-wide px-2 py-0.5 rounded bg-blue-500/10 whitespace-nowrap">
+            Iteration {iterNum}
+          </span>
+          <div className="h-px flex-1 bg-blue-500/30" />
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // --- Summary / completion line (═══) ---
+    if (/^[═]{5,}/.test(line)) {
+      i++;
+      continue;
+    }
+    if (/^✅ RLM completed/.test(line)) {
+      parts.push(
+        <div key={key++} className="mt-3 px-3 py-2 rounded-md bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-medium">
+          {line}
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // --- LLM Response header ---
+    if (line.startsWith('◇ LLM Response')) {
+      const timeMatch = line.match(/\(([^)]+)\)/);
+      parts.push(
+        <div key={key++} className="flex items-center gap-1.5 mt-2 mb-1 text-xs text-sky-400 font-semibold">
+          <span className="text-sky-300">◇</span> LLM Response
+          {timeMatch && <span className="text-sky-400/60 font-normal ml-1">({timeMatch[1]})</span>}
+        </div>
+      );
+      i++;
+      // Collect LLM response text until next marker
+      const responseLines: string[] = [];
+      while (i < lines.length && !lines[i].startsWith('▸ ') && !lines[i].startsWith('◇ ') && !/^[─]{5,}/.test(lines[i]) && !lines[i].startsWith('★ ') && !/^[═]{5,}/.test(lines[i]) && !lines[i].startsWith('✅')) {
+        // Check for inline code block start
+        if (lines[i].startsWith('```')) {
+          // This is a code block within the LLM response text — collect and render inline
+          const lang = lines[i].replace('```', '').trim();
+          i++;
+          const codeLines: string[] = [];
+          while (i < lines.length && !lines[i].startsWith('```')) {
+            codeLines.push(lines[i]);
+            i++;
+          }
+          if (i < lines.length) i++; // skip closing ```
+          // Push any accumulated text before code
+          if (responseLines.length) {
+            parts.push(
+              <div key={key++} className="text-xs text-slate-300/90 leading-relaxed whitespace-pre-wrap pl-4">
+                {responseLines.join('\n')}
+              </div>
+            );
+            responseLines.length = 0;
+          }
+          parts.push(
+            <div key={key++} className="my-1 ml-4 rounded-md bg-slate-800/80 border border-slate-700/50 overflow-hidden">
+              {lang && <div className="px-3 py-0.5 text-[10px] text-slate-500 bg-slate-800 border-b border-slate-700/50 font-mono">{lang}</div>}
+              <pre className="px-3 py-2 text-[11px] text-emerald-300/90 font-mono overflow-x-auto whitespace-pre leading-relaxed">{codeLines.join('\n')}</pre>
+            </div>
+          );
+          continue;
+        }
+        responseLines.push(lines[i]);
+        i++;
+      }
+      if (responseLines.length) {
+        const txt = responseLines.join('\n').trim();
+        if (txt) {
+          parts.push(
+            <div key={key++} className="text-xs text-slate-300/90 leading-relaxed whitespace-pre-wrap pl-4">
+              {txt}
+            </div>
+          );
+        }
+      }
+      continue;
+    }
+
+    // --- Code Execution header ---
+    if (line.startsWith('▸ Code Execution')) {
+      const timeMatch = line.match(/\(([^)]+)\)/);
+      parts.push(
+        <div key={key++} className="flex items-center gap-1.5 mt-2 mb-1 text-xs text-amber-400 font-semibold">
+          <span className="text-amber-300">▸</span> Code Execution
+          {timeMatch && <span className="text-amber-400/60 font-normal ml-1">({timeMatch[1]})</span>}
+        </div>
+      );
+      i++;
+      // Check for code block
+      if (i < lines.length && lines[i].startsWith('```')) {
+        const lang = lines[i].replace('```', '').trim();
+        i++;
+        const codeLines: string[] = [];
+        while (i < lines.length && !lines[i].startsWith('```')) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        if (i < lines.length) i++; // skip closing ```
+        parts.push(
+          <div key={key++} className="ml-4 rounded-md bg-slate-900/80 border border-slate-700/60 overflow-hidden">
+            {lang && <div className="px-3 py-0.5 text-[10px] text-slate-500 bg-slate-900 border-b border-slate-700/50 font-mono">{lang}</div>}
+            <pre className="px-3 py-2 text-[11px] text-sky-300/80 font-mono overflow-x-auto whitespace-pre leading-relaxed">{codeLines.join('\n')}</pre>
+          </div>
+        );
+      }
+      // Check for Output:
+      if (i < lines.length && lines[i].startsWith('Output:')) {
+        i++; // skip "Output:" line
+        const outLines: string[] = [];
+        while (i < lines.length && !lines[i].startsWith('▸ ') && !lines[i].startsWith('◇ ') && !/^[─]{5,}/.test(lines[i]) && !lines[i].startsWith('★ ') && !lines[i].startsWith('⚠') && !lines[i].startsWith('↳') && !/^[═]{5,}/.test(lines[i]) && !lines[i].startsWith('✅')) {
+          outLines.push(lines[i]);
+          i++;
+        }
+        const outText = outLines.join('\n').trim();
+        if (outText) {
+          parts.push(
+            <div key={key++} className="ml-4 mt-1">
+              <div className="text-[10px] text-slate-500 mb-0.5 font-semibold">OUTPUT</div>
+              <div className="rounded-md bg-slate-950/60 border border-slate-800/60 px-3 py-2 text-[11px] text-green-300/80 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto">
+                {outText}
+              </div>
+            </div>
+          );
+        }
+      }
+      // Check for stderr
+      if (i < lines.length && lines[i].startsWith('⚠')) {
+        parts.push(
+          <div key={key++} className="ml-4 mt-1 text-[11px] text-red-400/80 font-mono">
+            {lines[i]}
+          </div>
+        );
+        i++;
+      }
+      // Check for sub-calls
+      if (i < lines.length && lines[i].startsWith('↳')) {
+        parts.push(
+          <div key={key++} className="ml-4 mt-1 text-[11px] text-purple-400/70">
+            {lines[i]}
+          </div>
+        );
+        i++;
+      }
+      continue;
+    }
+
+    // --- Final answer marker ---
+    if (line.startsWith('★ Final Answer')) {
+      parts.push(
+        <div key={key++} className="mt-2 flex items-center gap-1.5 text-xs text-yellow-400 font-semibold">
+          <span>★</span> Final Answer found
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // --- Init lines (🧠, 📄, ⚙️) ---
+    if (line.startsWith('🧠') || line.startsWith('📄') || line.startsWith('⚙️')) {
+      parts.push(
+        <div key={key++} className="text-xs text-slate-400 py-0.5">
+          {line}
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // --- Default: plain text ---
+    if (line.trim()) {
+      parts.push(
+        <div key={key++} className="text-xs text-slate-400/80 whitespace-pre-wrap">
+          {line}
+        </div>
+      );
+    }
+    i++;
+  }
+
+  return <>{parts}{isStreaming && <span className="inline-block w-1.5 h-4 bg-blue-500 animate-pulse ml-0.5" />}</>;
+});
+RlmContent.displayName = 'RlmContent';
+
 const ThinkingSection = memo<{
   content: string;
   isStreaming?: boolean;
   tokens?: number;
-}>(({ content, isStreaming, tokens }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [showFull, setShowFull] = useState(false);
+  isRlm?: boolean;
+}>(({ content, isStreaming, tokens, isRlm }) => {
+  // Auto-open for RLM so user can watch the reasoning process live
+  const [isOpen, setIsOpen] = useState(!!isRlm);
+  const [showFull, setShowFull] = useState(!!isRlm);
   const isLong = content.length > 1000;
   const displayContent = showFull || !isLong ? content : content.substring(0, 1000) + '...';
 
@@ -46,18 +253,43 @@ const ThinkingSection = memo<{
     setShowFull(!showFull);
   };
 
+  // Auto-open when RLM content starts streaming
+  useEffect(() => {
+    if (isRlm && !isOpen) {
+      setIsOpen(true);
+      setShowFull(true);
+    }
+  }, [isRlm]);
+
+  // Auto-scroll to bottom for RLM during streaming
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (isRlm && isStreaming && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [content, isRlm, isStreaming]);
+
+  const label = isRlm
+    ? (isStreaming ? "🧠 RLM Analyzing..." : "🧠 RLM Deep Analysis")
+    : (isStreaming ? "Thinking..." : "Thought process");
+
+  const borderColor = isRlm ? "border-blue-500/40" : "border-purple-500/30";
+  const textColor = isRlm
+    ? (isStreaming ? "text-blue-500" : "text-muted-foreground hover:text-foreground")
+    : (isStreaming ? "text-purple-500" : "text-muted-foreground hover:text-foreground");
+
   return (
     <div className="mb-3">
       <button
         onClick={handleToggle}
         className={cn(
           "flex items-center gap-2 text-sm transition-colors cursor-pointer select-none",
-          isStreaming ? "text-purple-500" : "text-muted-foreground hover:text-foreground"
+          textColor
         )}
         type="button"
       >
         <Brain className={cn("w-4 h-4", isStreaming && "animate-pulse")} />
-        <span>{isStreaming ? "Thinking..." : "Thought process"}</span>
+        <span>{label}</span>
         {tokens && tokens > 0 && (
           <span className="text-xs text-muted-foreground">({tokens.toLocaleString()} tokens)</span>
         )}
@@ -65,13 +297,22 @@ const ThinkingSection = memo<{
       </button>
 
       {isOpen && (
-        <div className="mt-2 pl-6 border-l-2 border-purple-500/30">
-          <div className="text-sm text-muted-foreground whitespace-pre-wrap font-mono text-xs leading-relaxed max-h-[500px] overflow-y-auto">
-            {displayContent}
-            {isStreaming && <span className="inline-block w-1.5 h-4 bg-purple-500 animate-pulse ml-0.5" />}
-          </div>
+        <div className={cn("mt-2 pl-4 border-l-2", borderColor)}>
+          {isRlm ? (
+            <div ref={scrollRef} className="overflow-y-auto max-h-[600px] pr-2">
+              <RlmContent text={displayContent} isStreaming={isStreaming} />
+            </div>
+          ) : (
+            <div className={cn(
+              "whitespace-pre-wrap font-mono leading-relaxed overflow-y-auto",
+              "text-sm text-muted-foreground text-xs max-h-[500px]"
+            )}>
+              {displayContent}
+              {isStreaming && <span className="inline-block w-1.5 h-4 bg-purple-500 animate-pulse ml-0.5" />}
+            </div>
+          )}
           {/* Show expand/collapse button even during streaming */}
-          {isLong && (
+          {isLong && !isRlm && (
             <button
               onClick={handleShowFullToggle}
               className="mt-2 text-xs text-primary hover:underline flex items-center gap-1 cursor-pointer"
@@ -87,6 +328,133 @@ const ThinkingSection = memo<{
   );
 });
 ThinkingSection.displayName = 'ThinkingSection';
+
+// RLM API Request Section — shows what context RLM used, iterations detail, usage
+const RlmApiSection = memo<{ data: any }>(({ data }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'iterations' | 'raw'>('overview');
+
+  if (!data) return null;
+
+  const engine = data.rlm_engine || {};
+  const prompt = data.rlm_prompt || {};
+  const result = data.rlm_result || {};
+  const usage = data.rlm_usage || {};
+  const iterations = data.rlm_iterations_detail || [];
+
+  const totalInputTokens = usage.model_usage_summaries
+    ? Object.values(usage.model_usage_summaries as Record<string, any>).reduce((sum: number, m: any) => sum + (m.total_input_tokens || 0), 0)
+    : 0;
+  const totalOutputTokens = usage.model_usage_summaries
+    ? Object.values(usage.model_usage_summaries as Record<string, any>).reduce((sum: number, m: any) => sum + (m.total_output_tokens || 0), 0)
+    : 0;
+
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer select-none"
+        type="button"
+      >
+        <Eye className="w-4 h-4" />
+        <span>🔬 RLM API Request</span>
+        <ChevronDown className={cn("w-4 h-4 transition-transform", isOpen && "rotate-180")} />
+      </button>
+
+      {isOpen && (
+        <div className="mt-2 pl-4 border-l-2 border-cyan-500/30">
+          {/* Tabs */}
+          <div className="flex gap-1 mb-3">
+            {(['overview', 'iterations', 'raw'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  "px-2.5 py-1 text-[11px] rounded-md transition-colors",
+                  activeTab === tab ? "bg-cyan-500/20 text-cyan-400" : "text-slate-400 hover:text-slate-300"
+                )}
+                type="button"
+              >
+                {tab === 'overview' ? '📋 Overview' : tab === 'iterations' ? '🔄 Iterations' : '🔧 Raw JSON'}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === 'overview' && (
+            <div className="space-y-2 text-xs">
+              {/* Engine */}
+              <div className="rounded-md bg-slate-800/50 border border-slate-700/50 p-2.5">
+                <div className="text-[10px] text-slate-500 font-semibold mb-1.5 uppercase tracking-wider">Engine</div>
+                <div className="grid grid-cols-2 gap-1 text-slate-300">
+                  <span className="text-slate-500">Model:</span><span>{engine.provider}/{engine.model}</span>
+                  <span className="text-slate-500">Iterations:</span><span>{result.iterations_count} / {engine.max_iterations}</span>
+                  <span className="text-slate-500">Time:</span><span>{result.execution_time}</span>
+                  {totalInputTokens > 0 && <><span className="text-slate-500">Input tokens:</span><span>{totalInputTokens.toLocaleString()}</span></>}
+                  {totalOutputTokens > 0 && <><span className="text-slate-500">Output tokens:</span><span>{totalOutputTokens.toLocaleString()}</span></>}
+                  {usage.total_cost != null && <><span className="text-slate-500">Cost:</span><span>${usage.total_cost.toFixed(4)}</span></>}
+                </div>
+              </div>
+              {/* Prompt/Context */}
+              <div className="rounded-md bg-slate-800/50 border border-slate-700/50 p-2.5">
+                <div className="text-[10px] text-slate-500 font-semibold mb-1.5 uppercase tracking-wider">Context sent to RLM</div>
+                <div className="grid grid-cols-2 gap-1 text-slate-300 mb-2">
+                  <span className="text-slate-500">Source:</span><span>{prompt.context_source}</span>
+                  <span className="text-slate-500">Context size:</span><span>{prompt.context_chars?.toLocaleString()} chars</span>
+                  <span className="text-slate-500">User question:</span><span className="text-cyan-300">{prompt.user_question}</span>
+                </div>
+                <details className="group">
+                  <summary className="text-[10px] text-slate-500 cursor-pointer hover:text-slate-400">Show context preview</summary>
+                  <pre className="mt-1 text-[10px] text-slate-400 font-mono whitespace-pre-wrap max-h-[200px] overflow-y-auto bg-slate-900/50 rounded p-2">{prompt.context_preview}</pre>
+                </details>
+              </div>
+              {/* Final Answer */}
+              <div className="rounded-md bg-slate-800/50 border border-slate-700/50 p-2.5">
+                <div className="text-[10px] text-slate-500 font-semibold mb-1.5 uppercase tracking-wider">Final Answer</div>
+                <div className="text-slate-300 mb-1">{result.final_answer_chars?.toLocaleString()} chars</div>
+                <div className="text-[10px] text-slate-500 italic">{prompt.note}</div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'iterations' && (
+            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              {iterations.map((iter: any, idx: number) => (
+                <details key={idx} className="group rounded-md bg-slate-800/50 border border-slate-700/50">
+                  <summary className="px-2.5 py-1.5 text-xs cursor-pointer hover:bg-slate-700/30 flex items-center gap-2">
+                    <span className="text-cyan-400 font-semibold">Iter {iter.iteration}</span>
+                    <span className="text-slate-500">{iter.response_chars} chars</span>
+                    {iter.code_blocks?.length > 0 && <span className="text-amber-400/70">{iter.code_blocks.length} code block(s)</span>}
+                    {iter.has_final_answer && <span className="text-yellow-400">★ Final</span>}
+                    {iter.iteration_time && <span className="text-slate-500 ml-auto">{iter.iteration_time.toFixed(1)}s</span>}
+                  </summary>
+                  <div className="px-2.5 pb-2 text-[11px] space-y-1.5">
+                    <div className="text-slate-400 whitespace-pre-wrap font-mono max-h-[150px] overflow-y-auto bg-slate-900/40 rounded p-1.5">{iter.response_preview}</div>
+                    {iter.code_blocks?.map((cb: any, cbIdx: number) => (
+                      <div key={cbIdx}>
+                        <pre className="text-sky-300/80 font-mono bg-slate-900/60 rounded p-1.5 max-h-[100px] overflow-y-auto">{cb.code}</pre>
+                        {cb.stdout_preview && (
+                          <pre className="text-green-300/70 font-mono bg-slate-950/40 rounded p-1.5 mt-0.5 max-h-[100px] overflow-y-auto">{cb.stdout_preview}</pre>
+                        )}
+                        {cb.stderr && <pre className="text-red-400/70 font-mono">{cb.stderr}</pre>}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'raw' && (
+            <pre className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap max-h-[400px] overflow-y-auto bg-slate-900/50 rounded-md p-3 border border-slate-700/50">
+              {JSON.stringify(data, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+RlmApiSection.displayName = 'RlmApiSection';
 
 // RAG Context Section - shows document sources used for the response
 const RAGContextSection = memo<{
@@ -895,7 +1263,13 @@ export const MessageBubble = memo<MessageBubbleProps>(({
               content={reasoningContent || 'Thinking...'}
               isStreaming={isThinking}
               tokens={message.meta?.thought_tokens}
+              isRlm={!!message.meta?.rlm}
             />
+          )}
+
+          {/* RLM API Request section — shows context, iterations, usage */}
+          {message.meta?.rlm_api_request && (
+            <RlmApiSection data={message.meta.rlm_api_request} />
           )}
 
           {/* RAG Context section - shows document sources */}
