@@ -16,11 +16,16 @@ services:
       # Mem0 Open Source configuration
       - MEM0_ENABLED=${MEM0_ENABLED:-0}
       - QDRANT_URL=http://qdrant:6333
+      # OpenClaw Gateway connection
+      - OPENCLAW_GATEWAY_URL=ws://openclaw-gateway:18789
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      - OPENCLAW_HOOKS_TOKEN=${OPENCLAW_HOOKS_TOKEN:-}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     depends_on:
       - qdrant
+      - openclaw-gateway
     restart: unless-stopped
 
   frontend:
@@ -45,7 +50,35 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
+  # OpenClaw Gateway — AI agent control plane
+  # Connects to Telegram, WhatsApp, Discord, Slack, Signal, etc.
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:latest
+    ports:
+      - "18789:18789"
+    environment:
+      - OPENCLAW_GATEWAY_BIND=lan
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      # Channel tokens (set in .env)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
+      # AI provider keys (shared with backend)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - openclaw_config:/home/node/.openclaw
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
 volumes:
   data:
   logs:
   qdrant_data:
+  openclaw_config:

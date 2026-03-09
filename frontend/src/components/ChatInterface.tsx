@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, RefreshCw, AlertCircle, Square, FileText, Upload, AlertTriangle, Bug, ChevronDown, Brain } from 'lucide-react';
+import { Send, Bot, RefreshCw, AlertCircle, Square, FileText, Upload, AlertTriangle, Bug, ChevronDown, Brain, Plug } from 'lucide-react';
 import { ModelInfo, ModelProvider, SendMessageRequest, GenerationConfig } from '../types';
 import { useConversationsContext } from '../contexts/ConversationsContext';
 import { useMessageReorder } from '../hooks/useMessageReorder';
@@ -16,6 +16,7 @@ import { RAGDebugPanel } from './RAGDebugPanel';
 import { RAGPromptsEditor } from './RAGPromptsEditor';
 import { ragService } from '../services/rag';
 import { DebugPanel, RequestDebugInfo } from './DebugPanel';
+import OpenClawPanel from './OpenClawPanel';
 import * as pdfjsLib from 'pdfjs-dist';
 import Tesseract from 'tesseract.js';
 
@@ -75,6 +76,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showRAGPromptsEditor, setShowRAGPromptsEditor] = useState(false);
   // RLM (Deep Analysis) toggle — uses recursive reasoning on RAG context
   const [rlmEnabled, setRlmEnabled] = useState(false);
+  // OpenClaw Gateway control panel
+  const [showOpenClawPanel, setShowOpenClawPanel] = useState(false);
   // Large paste confirmation modal state
   const [pendingPaste, setPendingPaste] = useState<{
     text: string;
@@ -1454,6 +1457,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   </Button>
                 )}
 
+                {/* OpenClaw Gateway Control */}
+                <Button
+                  type="button"
+                  onClick={() => setShowOpenClawPanel(true)}
+                  variant="ghost"
+                  size="sm"
+                  title="OpenClaw Control — manage your AI agent gateway"
+                  className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs hover:bg-orange-500/10"
+                >
+                  <span className="text-base">🦞</span>
+                  <span className="text-muted-foreground hidden sm:inline">Claw</span>
+                </Button>
+
                 {/* RAG Unified Button - only show if documents exist */}
                 {documentsCount > 0 && (
                   <RAGUnifiedButton
@@ -1736,6 +1752,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       <RAGPromptsEditor
         isOpen={showRAGPromptsEditor}
         onClose={() => setShowRAGPromptsEditor(false)}
+      />
+
+      {/* OpenClaw Gateway Control Panel */}
+      <OpenClawPanel
+        isOpen={showOpenClawPanel}
+        onClose={() => setShowOpenClawPanel(false)}
       />
     </div>
   );

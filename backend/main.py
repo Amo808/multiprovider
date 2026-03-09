@@ -246,6 +246,14 @@ async def lifespan(app: FastAPI):
         except Exception as rlm_err:
             logger.warning(f"[RLM] Failed to initialize RLM service: {rlm_err}")
         
+        # Initialize OpenClaw Gateway client (if configured)
+        try:
+            from openclaw_client import init_openclaw_client
+            openclaw = await init_openclaw_client()
+            logger.info(f"[OpenClaw] Client initialized (available: {openclaw.is_available}, ws: {openclaw._ws_connected})")
+        except Exception as oc_err:
+            logger.warning(f"[OpenClaw] Failed to initialize: {oc_err}")
+        
         yield  # Application runs here
         
     except Exception as e:
@@ -4733,6 +4741,14 @@ app.include_router(rag_router, prefix="/api")
 if CONVERSATION_RAG_AVAILABLE and conversation_rag_router:
     app.include_router(conversation_rag_router)
     logger.info("[CONV-RAG] Conversation RAG router registered")
+
+# Register OpenClaw Gateway router
+try:
+    from openclaw_routes import openclaw_router
+    app.include_router(openclaw_router)
+    logger.info("[OpenClaw] Router registered at /api/openclaw/*")
+except ImportError as oc_import_err:
+    logger.warning(f"[OpenClaw] Routes not available: {oc_import_err}")
 
 # Serve static files (frontend) at root - AFTER API router registration
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
