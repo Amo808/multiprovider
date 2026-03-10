@@ -92,7 +92,36 @@ async def openclaw_status():
     
     mgr = get_gateway_manager()
     gw_status = mgr.get_status()
-    
+
+    # Diagnostic: check which API keys are visible to the backend process
+    api_keys_diag = {}
+    for key_name in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "GOOGLE_API_KEY"]:
+        val = os.environ.get(key_name, "")
+        if val:
+            api_keys_diag[key_name] = f"{val[:8]}...{val[-4:]} (len={len(val)})"
+        else:
+            api_keys_diag[key_name] = "NOT SET"
+
+    # Check if openclaw.json exists and has env block
+    state_dir = os.environ.get("OPENCLAW_STATE_DIR", os.path.expanduser("~/.openclaw"))
+    openclaw_json_path = os.path.join(state_dir, "openclaw.json")
+    openclaw_json_info = "not found"
+    try:
+        if os.path.isfile(openclaw_json_path):
+            import json as _json
+            with open(openclaw_json_path) as f:
+                cfg = _json.load(f)
+            env_block = cfg.get("env", {})
+            env_keys = {}
+            for k, v in env_block.items():
+                if v:
+                    env_keys[k] = f"{v[:8]}...{v[-4:]} (len={len(v)})"
+                else:
+                    env_keys[k] = "EMPTY"
+            openclaw_json_info = {"path": openclaw_json_path, "env_block": env_keys}
+    except Exception as e:
+        openclaw_json_info = f"error: {e}"
+
     return {
         "configured": client.is_available,
         "gateway_url": client.config.gateway_http_url,
@@ -101,6 +130,8 @@ async def openclaw_status():
         "hooks_configured": bool(client.config.hooks_token),
         "health": health,
         "gateway_process": gw_status,
+        "api_keys_diagnostic": api_keys_diag,
+        "openclaw_json": openclaw_json_info,
     }
 
 

@@ -144,6 +144,7 @@ class OpenClawGatewayManager:
         try:
             # Set env — pass through AI API keys from backend env
             env = os.environ.copy()
+            passed_keys = []
             for key in [
                 "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
                 "DEEPSEEK_API_KEY", "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN",
@@ -153,6 +154,8 @@ class OpenClawGatewayManager:
                 val = os.getenv(key)
                 if val:
                     env[key] = val
+                    passed_keys.append(f"{key}={val[:8]}...({len(val)})")
+            logger.info(f"[GatewayMgr] Env vars passed to gateway: {passed_keys}")
 
             # Start subprocess
             self.gateway.process = subprocess.Popen(
