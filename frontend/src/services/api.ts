@@ -237,6 +237,79 @@ export class ApiClient {
     }
   }
 
+  /**
+   * Send message through OpenClaw agent — same SSE format as sendMessage.
+   * Used when OpenClaw mode is toggled ON in the chat.
+   */
+  async sendOpenClawMessage(
+    request: SendMessageRequest,
+    onChunk?: (chunk: ChatResponse) => void,
+    requestId?: string
+  ): Promise<void> {
+    const reqId = requestId || `openclaw-${Date.now()}`;
+    console.log('API Client: Sending OpenClaw message:', request.message.substring(0, 100));
+
+    const abortController = new AbortController();
+    this.activeRequests.set(reqId, abortController);
+
+    try {
+      const response = await fetch(`${this.baseUrl}/openclaw/chat`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          message: request.message,
+          session_key: `multech:${request.conversation_id || 'webchat'}`,
+          conversation_id: request.conversation_id,
+        }),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(errorData.detail || errorData.error || `HTTP ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        if (abortController.signal.aborted) throw new Error('Request aborted');
+
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
+
+        for (const event of events) {
+          const lines = event.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data: ChatResponse = JSON.parse(line.slice(6));
+                if (onChunk) onChunk(data);
+                if (data.done) return;
+              } catch {
+                // ignore parse errors
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Request cancelled');
+      }
+      throw error;
+    } finally {
+      this.activeRequests.delete(reqId);
+    }
+  }
+
   // Method to abort all active requests  
   abortAllRequests(): void {
     console.log('API Client: Aborting all active requests');

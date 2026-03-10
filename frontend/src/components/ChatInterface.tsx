@@ -78,6 +78,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [rlmEnabled, setRlmEnabled] = useState(false);
   // OpenClaw Gateway control panel
   const [showOpenClawPanel, setShowOpenClawPanel] = useState(false);
+  // OpenClaw mode toggle — routes messages through OpenClaw agent
+  const [openclawEnabled, setOpenclawEnabled] = useState(false);
   // Large paste confirmation modal state
   const [pendingPaste, setPendingPaste] = useState<{
     text: string;
@@ -771,8 +773,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   // Custom message handler with API key error handling
   const handleSendMessage = async (request: SendMessageRequest) => {
     try {
-      console.log('ChatInterface: Sending message:', request);
-      await sendMessage(conversationId, request);
+      console.log('ChatInterface: Sending message:', request, 'openClaw:', openclawEnabled);
+      await sendMessage(conversationId, request, undefined, openclawEnabled);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
       console.log('ChatInterface: Error caught:', errorMessage);
@@ -1457,17 +1459,27 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   </Button>
                 )}
 
-                {/* OpenClaw Gateway Control */}
+                {/* OpenClaw Agent Toggle + Settings */}
                 <Button
                   type="button"
-                  onClick={() => setShowOpenClawPanel(true)}
+                  onClick={() => setOpenclawEnabled(!openclawEnabled)}
                   variant="ghost"
                   size="sm"
-                  title="OpenClaw Control — manage your AI agent gateway"
-                  className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs hover:bg-orange-500/10"
+                  title={openclawEnabled
+                    ? "OpenClaw Agent ON — messages routed through AI agent (click to disable, right-click for settings)"
+                    : "Enable OpenClaw Agent — route messages through AI agent gateway (right-click for settings)"
+                  }
+                  onContextMenu={(e) => { e.preventDefault(); setShowOpenClawPanel(true); }}
+                  className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs transition-all ${
+                    openclawEnabled
+                      ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm shadow-orange-500/30'
+                      : 'hover:bg-orange-500/10'
+                  }`}
                 >
                   <span className="text-base">🦞</span>
-                  <span className="text-muted-foreground hidden sm:inline">Claw</span>
+                  <span className={`hidden sm:inline ${openclawEnabled ? 'text-white font-medium' : 'text-muted-foreground'}`}>
+                    {openclawEnabled ? 'Claw ON' : 'Claw'}
+                  </span>
                 </Button>
 
                 {/* RAG Unified Button - only show if documents exist */}

@@ -29,7 +29,7 @@ const thinkingContentRefs: Record<string, string> = {};
 interface ConversationsContextType {
   conversations: ConversationsState;
   getConversation: (conversationId: string) => ConversationState;
-  sendMessage: (conversationId: string, request: SendMessageRequest, onComplete?: (response: string) => void) => Promise<void>;
+  sendMessage: (conversationId: string, request: SendMessageRequest, onComplete?: (response: string) => void, useOpenClaw?: boolean) => Promise<void>;
   clearConversation: (conversationId: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   stopStreaming: (conversationId: string) => void;
@@ -242,7 +242,8 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
   const sendMessage = useCallback(async (
     conversationId: string,
     request: SendMessageRequest,
-    onComplete?: (response: string) => void
+    onComplete?: (response: string) => void,
+    useOpenClaw?: boolean
   ) => {
     const requestId = `${conversationId}-${Date.now()}`;
     setActiveRequests(prev => new Map(prev.set(requestId, conversationId)));
@@ -311,7 +312,10 @@ export const ConversationsProvider: React.FC<ConversationsProviderProps> = ({ ch
     }));
 
     try {
-      await apiClient.sendMessage(request, (chunk: ChatResponse) => {
+      const sendFn = useOpenClaw
+        ? apiClient.sendOpenClawMessage.bind(apiClient)
+        : apiClient.sendMessage.bind(apiClient);
+      await sendFn(request, (chunk: ChatResponse) => {
         // DEBUG: Log every chunk received
         console.log(`[ConversationsContext] Chunk received:`, {
           done: chunk.done,

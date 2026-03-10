@@ -192,6 +192,116 @@ async def openclaw_stream(request: OpenClawSendRequest):
 
 
 # =============================================================================
+# Chat via OpenClaw (same SSE format as /api/chat/send)
+# =============================================================================
+
+class OpenClawChatRequest(BaseModel):
+    """Chat request compatible with main chat format"""
+    message: str
+    session_key: str = "multech:webchat"
+    conversation_id: Optional[str] = None
+
+
+@openclaw_router.post("/chat")
+async def openclaw_chat(request: OpenClawChatRequest):
+    """
+    Send message through OpenClaw agent and stream in ChatResponse SSE format.
+    This endpoint mimics /api/chat/send output so the main chat UI can use it.
+    """
+    client = _get_client()
+
+    if not client.is_available:
+        raise HTTPException(status_code=503, detail="OpenClaw not configured")
+
+    import time
+    start_time = time.time()
+
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps({'streaming_ready': True})}\n\n"
+
+            full_content = ""
+            last_heartbeat = time.time()
+
+            async for event in client.stream_agent_response(
+                message=request.message,
+                session_key=request.session_key,
+                deliver=False,
+                channel="none",
+            ):
+                evt_type = event.get("type", "")
+                evt_data = event.get("data", "")
+
+                if evt_type == "content":
+                    full_content += evt_data
+                    chunk = {
+                        "content": evt_data,
+                        "done": False,
+                    }
+                    if not full_content.strip():
+                        chunk["first_content"] = True
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+                elif evt_type == "thinking":
+                    yield f"data: {json.dumps({'content': '', 'done': False, 'meta': {'thinking': evt_data, 'reasoning': True}}, ensure_ascii=False)}\n\n"
+
+                elif evt_type == "status":
+                    yield f"data: {json.dumps({'content': '', 'done': False, 'stage_message': evt_data}, ensure_ascii=False)}\n\n"
+
+                elif evt_type == "done":
+                    elapsed = time.time() - start_time
+                    final = {
+                        "content": "",
+                        "done": True,
+                        "meta": {
+                            "provider": "openclaw",
+                            "model": "openclaw-agent",
+                            "tokens_in": 0,
+                            "tokens_out": len(full_content.split()),
+                            "estimated_cost": 0,
+                        },
+                    }
+                    yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
+                    return
+
+                elif evt_type == "error":
+                    yield f"data: {json.dumps({'error': str(evt_data), 'done': True}, ensure_ascii=False)}\n\n"
+                    return
+
+                # Heartbeats every 10s
+                now = time.time()
+                if now - last_heartbeat > 10:
+                    yield f"data: {json.dumps({'heartbeat': 'ping', 'ping': True})}\n\n"
+                    last_heartbeat = now
+
+            # If stream ends without explicit done
+            if full_content:
+                final = {
+                    "content": "",
+                    "done": True,
+                    "meta": {
+                        "provider": "openclaw",
+                        "model": "openclaw-agent",
+                    },
+                }
+                yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            logger.error(f"OpenClaw chat error: {e}")
+            yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# =============================================================================
 # Wake Agent
 # =============================================================================
 
