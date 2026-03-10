@@ -25,6 +25,17 @@ export interface OpenClawStatus {
     healthy: boolean;
     error?: string;
   };
+  gateway_process: {
+    status: 'stopped' | 'starting' | 'running' | 'error' | 'not_installed';
+    method: string;
+    port: number;
+    pid: number | null;
+    uptime_seconds: number;
+    error: string | null;
+    cli_path: string | null;
+    restart_count: number;
+    log_lines: number;
+  };
 }
 
 export interface OpenClawSendRequest {
@@ -181,6 +192,52 @@ export const openclawService = {
    */
   async getSkills(): Promise<any> {
     const resp = await fetch(`${API_BASE}/skills`, { headers: getAuthHeaders() });
+    return resp.json();
+  },
+
+  // =========================================================================
+  // Gateway Process Management
+  // =========================================================================
+
+  async getGatewayStatus(): Promise<any> {
+    const resp = await fetch(`${API_BASE}/gateway`, { headers: getAuthHeaders() });
+    return resp.json();
+  },
+
+  async startGateway(): Promise<any> {
+    const resp = await fetch(`${API_BASE}/gateway/start`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return resp.json();
+  },
+
+  async stopGateway(): Promise<any> {
+    const resp = await fetch(`${API_BASE}/gateway/stop`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return resp.json();
+  },
+
+  async restartGateway(): Promise<any> {
+    const resp = await fetch(`${API_BASE}/gateway/restart`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return resp.json();
+  },
+
+  async reconnectWs(): Promise<any> {
+    const resp = await fetch(`${API_BASE}/reconnect`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return resp.json();
+  },
+
+  async getGatewayLogs(lastN = 50): Promise<{ logs: string[] }> {
+    const resp = await fetch(`${API_BASE}/gateway/logs?last=${lastN}`, { headers: getAuthHeaders() });
     return resp.json();
   },
 };

@@ -246,7 +246,16 @@ async def lifespan(app: FastAPI):
         except Exception as rlm_err:
             logger.warning(f"[RLM] Failed to initialize RLM service: {rlm_err}")
         
-        # Initialize OpenClaw Gateway client (if configured)
+        # Initialize OpenClaw Gateway — auto-start process if CLI available
+        gateway_manager = None
+        try:
+            from openclaw_gateway_manager import init_gateway_manager
+            gateway_manager = await init_gateway_manager()
+            logger.info(f"[OpenClaw] Gateway manager: {gateway_manager.get_status()['status']}")
+        except Exception as gw_err:
+            logger.warning(f"[OpenClaw] Gateway manager failed: {gw_err}")
+        
+        # Initialize OpenClaw Gateway client (connects to running gateway)
         try:
             from openclaw_client import init_openclaw_client
             openclaw = await init_openclaw_client()
@@ -259,9 +268,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize: {e}")
         raise
-    
-    # Shutdown (if needed)
-    logger.info("Application shutdown")
+    finally:
+        # Shutdown — stop managed gateway process
+        try:
+            from openclaw_gateway_manager import get_gateway_manager
+            gw = get_gateway_manager()
+            await gw.shutdown()
+        except Exception:
+            pass
+        logger.info("Application shutdown")
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(

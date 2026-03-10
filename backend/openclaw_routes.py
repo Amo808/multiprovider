@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from openclaw_client import get_openclaw_client, OpenClawClient
+from openclaw_gateway_manager import get_gateway_manager
 
 logger = logging.getLogger("openclaw_routes")
 
@@ -56,6 +57,7 @@ class OpenClawWakeRequest(BaseModel):
 class OpenClawConfigPatch(BaseModel):
     """Patch OpenClaw configuration"""
     patch: Dict[str, Any]
+    base_hash: Optional[str] = None
 
 
 class OpenClawSkillInstall(BaseModel):
@@ -83,9 +85,12 @@ def _get_client() -> OpenClawClient:
 
 @openclaw_router.get("/status")
 async def openclaw_status():
-    """Get OpenClaw Gateway connection status"""
+    """Get OpenClaw Gateway connection status + managed process info"""
     client = _get_client()
     health = await client.get_health()
+    
+    mgr = get_gateway_manager()
+    gw_status = mgr.get_status()
     
     return {
         "configured": client.is_available,
@@ -94,12 +99,24 @@ async def openclaw_status():
         "ws_connected": client._ws_connected,
         "hooks_configured": bool(client.config.hooks_token),
         "health": health,
+        "gateway_process": gw_status,
     }
 
 
 # =============================================================================
 # Send Message to Agent
 # =============================================================================
+
+@openclaw_router.post("/reconnect")
+async def openclaw_reconnect():
+    """Force reconnect WebSocket to Gateway"""
+    client = _get_client()
+    try:
+        ok = await client.reconnect_ws()
+        return {"ok": ok, "ws_connected": client._ws_connected}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 
 @openclaw_router.post("/send")
 async def openclaw_send(request: OpenClawSendRequest):
@@ -218,13 +235,13 @@ async def openclaw_patch_config(request: OpenClawConfigPatch):
     - Set model: {"agents": {"defaults": {"model": "anthropic/claude-sonnet-4-20250514"}}}
     """
     client = _get_client()
-    result = await client.patch_config(request.patch)
+    result = await client.patch_config(request.patch, base_hash=request.base_hash)
     
     if not result.get("ok"):
-        raise HTTPException(
-            status_code=503, 
-            detail=result.get("error", "Cannot patch config")
-        )
+        err = result.get("error", "Cannot patch config")
+        if isinstance(err, dict):
+            err = err.get("message") or err.get("detail") or json.dumps(err)
+        raise HTTPException(status_code=503, detail=str(err))
     
     return result
 
@@ -286,3 +303,62 @@ async def openclaw_custom_hook(hook_name: str, request: OpenClawHookRequest):
         raise HTTPException(status_code=503, detail="OpenClaw not configured")
     
     return await client.send_custom_hook(hook_name, request.payload)
+
+
+# =============================================================================
+# Gateway Process Management (auto-start / stop / restart)
+# =============================================================================
+
+@openclaw_router.get("/gateway")
+async def openclaw_gateway_status():
+    """Get managed gateway process status"""
+    mgr = get_gateway_manager()
+    return mgr.get_status()
+
+
+@openclaw_router.post("/gateway/start")
+async def openclaw_gateway_start():
+    """Start the OpenClaw Gateway subprocess"""
+    mgr = get_gateway_manager()
+    result = await mgr.start()
+    
+    # After gateway starts, re-init the client to connect
+    if result.get("ok"):
+        try:
+            from openclaw_client import init_openclaw_client
+            await init_openclaw_client()
+        except Exception:
+            pass
+    
+    return result
+
+
+@openclaw_router.post("/gateway/stop")
+async def openclaw_gateway_stop():
+    """Stop the OpenClaw Gateway subprocess"""
+    mgr = get_gateway_manager()
+    return await mgr.stop()
+
+
+@openclaw_router.post("/gateway/restart")
+async def openclaw_gateway_restart():
+    """Restart the OpenClaw Gateway"""
+    mgr = get_gateway_manager()
+    result = await mgr.restart()
+    
+    # Re-init client after restart
+    if result.get("ok"):
+        try:
+            from openclaw_client import init_openclaw_client
+            await init_openclaw_client()
+        except Exception:
+            pass
+    
+    return result
+
+
+@openclaw_router.get("/gateway/logs")
+async def openclaw_gateway_logs(last: int = 50):
+    """Get gateway subprocess logs"""
+    mgr = get_gateway_manager()
+    return {"logs": mgr.get_logs(last_n=last)}
