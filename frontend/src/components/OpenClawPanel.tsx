@@ -513,9 +513,10 @@ function AgentChatTab({ isConnected }: { isConnected: boolean }) {
             return updated;
           });
         } else if (event.type === 'error') {
-          const errMsg = typeof event.data === 'string'
-            ? event.data
-            : (event.data?.message || event.data?.detail || event.data?.error || JSON.stringify(event.data));
+          const errData = event.data as any;
+          const errMsg = typeof errData === 'string'
+            ? errData
+            : (errData?.message || errData?.detail || errData?.error || JSON.stringify(errData));
           setMessages(prev => {
             const updated = [...prev];
             updated[updated.length - 1] = { ...updated[updated.length - 1], role: 'system', content: `❌ ${errMsg}` };
@@ -769,6 +770,8 @@ function ConfigField({ label, hint, children }: {
 
 function ConfigTab({ isConnected }: { isConnected: boolean }) {
   const [config, setConfig] = useState<any>(null);
+  const [configHash, setConfigHash] = useState<string>('');
+  const [configPath, setConfigPath] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -779,7 +782,12 @@ function ConfigTab({ isConnected }: { isConnected: boolean }) {
     setLoading(true);
     try {
       const data = await openclawService.getConfig();
-      setConfig(data);
+      // Extract actual config from WS response: payload.config > payload.parsed > payload
+      const payload = data?.payload || data;
+      const actualConfig = payload?.config || payload?.parsed || payload;
+      setConfig(actualConfig);
+      setConfigHash(payload?.hash || '');
+      setConfigPath(payload?.path || '');
     } catch (e: any) {
       setConfig(null);
     }
@@ -907,10 +915,14 @@ function ConfigTab({ isConnected }: { isConnected: boolean }) {
         <div className="space-y-3">
           {config && (
             <div>
-              <label className="text-xs text-muted-foreground">Current Config</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Current Config</label>
+                {configPath && <span className="text-[10px] text-muted-foreground/50 font-mono">{configPath}</span>}
+              </div>
               <pre className="text-xs bg-muted rounded-lg p-3 max-h-64 overflow-auto border mt-1 select-all">
                 {JSON.stringify(config, null, 2)}
               </pre>
+              {configHash && <p className="text-[10px] text-muted-foreground/40 mt-1">Hash: {configHash.slice(0, 16)}...</p>}
             </div>
           )}
           <div>
@@ -1026,26 +1038,35 @@ function ConfigTab({ isConnected }: { isConnected: boolean }) {
                         <><ToggleLeft size={16} /> Off</>}
                     </button>
                   </div>
-                  {ch.botToken && (
-                    <div className="mt-1.5">
-                      <span className="text-[11px] text-muted-foreground">Bot Token: </span>
-                      <span className="text-[11px] font-mono">
-                        {ch.botToken.slice(0, 8)}{'•'.repeat(12)}
-                      </span>
-                    </div>
-                  )}
-                  {ch.dmPolicy && (
-                    <div className="mt-0.5">
-                      <span className="text-[11px] text-muted-foreground">DM Policy: </span>
-                      <span className="text-[11px]">{ch.dmPolicy}</span>
-                    </div>
-                  )}
-                  {ch.streaming && (
-                    <div className="mt-0.5">
-                      <span className="text-[11px] text-muted-foreground">Streaming: </span>
-                      <span className="text-[11px]">{ch.streaming}</span>
-                    </div>
-                  )}
+                  <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
+                    {ch.botToken && (
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground">Bot Token: </span>
+                        <span className="font-mono">{ch.botToken === '__OPENCLAW_REDACTED__' ? '(redacted)' : `${ch.botToken.slice(0, 8)}${'•'.repeat(12)}`}</span>
+                      </div>
+                    )}
+                    {ch.dmPolicy && (
+                      <div><span className="text-muted-foreground">DM Policy: </span>{ch.dmPolicy}</div>
+                    )}
+                    {ch.groupPolicy && (
+                      <div><span className="text-muted-foreground">Group Policy: </span>{ch.groupPolicy}</div>
+                    )}
+                    {ch.streaming && (
+                      <div><span className="text-muted-foreground">Streaming: </span>{ch.streaming}</div>
+                    )}
+                    {ch.groups && (
+                      <div>
+                        <span className="text-muted-foreground">Require Mention: </span>
+                        {ch.groups?.['*']?.requireMention ? 'yes (groups)' : 'no'}
+                      </div>
+                    )}
+                    {ch.allowFrom && (
+                      <div><span className="text-muted-foreground">Allow From: </span>{Array.isArray(ch.allowFrom) ? ch.allowFrom.join(', ') : String(ch.allowFrom)}</div>
+                    )}
+                    {ch.groupAllowFrom && (
+                      <div><span className="text-muted-foreground">Group Allow: </span>{Array.isArray(ch.groupAllowFrom) ? ch.groupAllowFrom.join(', ') : String(ch.groupAllowFrom)}</div>
+                    )}
+                  </div>
                 </div>
               ))
             )}
@@ -1061,11 +1082,36 @@ function ConfigTab({ isConnected }: { isConnected: boolean }) {
                 <span className="text-xs">
                   Mode: <span className="font-mono bg-muted rounded px-1">{gateway.auth.mode || 'none'}</span>
                   {gateway.auth.token && (
-                    <span className="ml-2 text-muted-foreground">Token: {gateway.auth.token.slice(0, 8)}{'•'.repeat(8)}</span>
+                    <span className="ml-2 text-muted-foreground">Token: {gateway.auth.token.slice(0, 16)}{'•'.repeat(6)}</span>
                   )}
                 </span>
               </ConfigField>
             )}
+            {gateway.bind && (
+              <ConfigField label="Bind">
+                <span className="text-sm bg-muted rounded px-2 py-1 border inline-block font-mono">{gateway.bind}</span>
+              </ConfigField>
+            )}
+          </ConfigSection>
+
+          {/* API Keys (from env) */}
+          <ConfigSection title="API Keys (env)" icon={<Eye size={14} />}>
+            <p className="text-[11px] text-muted-foreground mt-2">
+              API keys are loaded from <span className="font-mono">~/.openclaw/.env</span> and set in the environment.
+              They are not stored in the config file.
+            </p>
+            <div className="mt-2 space-y-1.5">
+              {['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'DEEPSEEK_API_KEY'].map(key => (
+                <div key={key} className="flex items-center justify-between text-xs py-1 px-2 bg-muted/30 rounded">
+                  <span className="font-mono text-muted-foreground">{key}</span>
+                  <span className="text-muted-foreground/50">~/.openclaw/.env</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground/60 mt-2">
+              Edit <span className="font-mono">~/.openclaw/.env</span> to add/change keys.
+              Restart gateway after changes.
+            </p>
           </ConfigSection>
 
           {/* Commands */}
