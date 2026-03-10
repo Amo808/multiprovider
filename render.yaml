@@ -40,6 +40,13 @@ services:
         value: "1"
       - key: VITE_DEV_MODE
         value: "1"
+      # OpenClaw Gateway settings
+      - key: OPENCLAW_GATEWAY_TOKEN
+        value: "multech-production-gw-token-2026"
+      - key: OPENCLAW_GATEWAY_PORT
+        value: "18789"
+      - key: GEMINI_API_KEY
+        sync: false
     buildCommand: ""
     startCommand: ""
     healthCheckPath: "/health"

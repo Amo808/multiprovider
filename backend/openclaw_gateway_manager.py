@@ -132,9 +132,9 @@ class OpenClawGatewayManager:
 
         # Build command
         if method == "openclaw":
-            cmd = [cli_path, "gateway", "--port", str(self.port), "--verbose"]
+            cmd = [cli_path, "gateway", "run", "--port", str(self.port), "--verbose"]
         else:  # npx
-            cmd = [cli_path, "openclaw@latest", "gateway", "--port", str(self.port), "--verbose"]
+            cmd = [cli_path, "openclaw@latest", "gateway", "run", "--port", str(self.port), "--verbose"]
 
         logger.info(f"[GatewayMgr] Starting gateway: {' '.join(cmd)}")
         self.gateway.status = "starting"
@@ -147,7 +147,8 @@ class OpenClawGatewayManager:
             for key in [
                 "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
                 "DEEPSEEK_API_KEY", "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN",
-                "SLACK_BOT_TOKEN", "OPENCLAW_GATEWAY_TOKEN",
+                "SLACK_BOT_TOKEN", "OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_STATE_DIR",
+                "GEMINI_API_KEY",
             ]:
                 val = os.getenv(key)
                 if val:

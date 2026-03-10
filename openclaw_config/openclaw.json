@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.3.2",
+    "lastTouchedAt": "2026-03-11T00:00:00.000Z"
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-20250514",
+        "fallbacks": []
+      },
+      "models": {},
+      "maxConcurrent": 3
+    },
+    "list": [
+      {
+        "id": "main",
+        "default": true,
+        "identity": {
+          "name": "Multech",
+          "theme": "AI assistant for Multech platform",
+          "emoji": "🧠"
+        }
+      }
+    ]
+  },
+  "tools": {},
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "channels": {},
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "multech-production-gw-token-2026"
+    }
+  },
+  "skills": {
+    "entries": {}
+  }
+}
