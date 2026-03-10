@@ -19,6 +19,7 @@ Endpoints:
 import json
 import logging
 import asyncio
+import os
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -362,3 +363,53 @@ async def openclaw_gateway_logs(last: int = 50):
     """Get gateway subprocess logs"""
     mgr = get_gateway_manager()
     return {"logs": mgr.get_logs(last_n=last)}
+
+
+@openclaw_router.get("/env-keys")
+async def openclaw_env_keys():
+    """Check which API keys are configured in OpenClaw's ~/.openclaw/.env.
+    Reads the actual file (not process env) to show what the gateway uses."""
+    keys_to_check = [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GEMINI_API_KEY",
+        "TELEGRAM_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN",
+        "SLACK_BOT_TOKEN",
+    ]
+
+    # Parse ~/.openclaw/.env file (the gateway's actual env)
+    env_file = os.path.join(os.path.expanduser("~"), ".openclaw", ".env")
+    file_vars: dict[str, str] = {}
+    if os.path.isfile(env_file):
+        try:
+            with open(env_file, "r", encoding="utf-8-sig") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip('"').strip("'")
+                        file_vars[k] = v
+        except Exception:
+            pass
+
+    result = {}
+    for key in keys_to_check:
+        val = file_vars.get(key, "")
+        is_placeholder = val.lower().startswith("your_") or val == "" or val == "changeme"
+        result[key] = {
+            "set": bool(val) and not is_placeholder,
+            "length": len(val) if val else 0,
+            "prefix": val[:8] + "..." if len(val) > 12 else ("****" if val else ""),
+            "source": "openclaw .env" if val else "not set",
+        }
+
+    return {
+        "keys": result,
+        "env_file": env_file,
+        "env_file_exists": os.path.isfile(env_file),
+        "env_file_keys": list(file_vars.keys()),
+    }

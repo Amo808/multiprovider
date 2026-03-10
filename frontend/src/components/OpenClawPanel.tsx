@@ -772,6 +772,7 @@ function ConfigTab({ isConnected }: { isConnected: boolean }) {
   const [config, setConfig] = useState<any>(null);
   const [configHash, setConfigHash] = useState<string>('');
   const [configPath, setConfigPath] = useState<string>('');
+  const [envKeys, setEnvKeys] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -794,8 +795,18 @@ function ConfigTab({ isConnected }: { isConnected: boolean }) {
     setLoading(false);
   };
 
+  const fetchEnvKeys = async () => {
+    try {
+      const data = await openclawService.getEnvKeys();
+      setEnvKeys(data);
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => {
-    if (isConnected) fetchConfig();
+    if (isConnected) {
+      fetchConfig();
+      fetchEnvKeys();
+    }
   }, [isConnected]);
 
   const applyPatch = async (patch: Record<string, any>) => {
@@ -1095,23 +1106,41 @@ function ConfigTab({ isConnected }: { isConnected: boolean }) {
           </ConfigSection>
 
           {/* API Keys (from env) */}
-          <ConfigSection title="API Keys (env)" icon={<Eye size={14} />}>
-            <p className="text-[11px] text-muted-foreground mt-2">
-              API keys are loaded from <span className="font-mono">~/.openclaw/.env</span> and set in the environment.
-              They are not stored in the config file.
-            </p>
-            <div className="mt-2 space-y-1.5">
-              {['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'DEEPSEEK_API_KEY'].map(key => (
-                <div key={key} className="flex items-center justify-between text-xs py-1 px-2 bg-muted/30 rounded">
-                  <span className="font-mono text-muted-foreground">{key}</span>
-                  <span className="text-muted-foreground/50">~/.openclaw/.env</span>
+          <ConfigSection title="API Keys" icon={<Eye size={14} />} defaultOpen={true}>
+            {envKeys ? (
+              <>
+                <div className="mt-2 space-y-1">
+                  {Object.entries(envKeys.keys as Record<string, { set: boolean; length: number; prefix: string }>).map(([key, info]) => (
+                    <div key={key} className={`flex items-center justify-between text-xs py-1.5 px-2 rounded ${
+                      info.set ? 'bg-green-500/10 border border-green-500/15' : 'bg-muted/30'
+                    }`}>
+                      <span className="font-mono text-muted-foreground">{key}</span>
+                      <span className={`flex items-center gap-1 ${info.set ? 'text-green-400' : 'text-muted-foreground/40'}`}>
+                        {info.set ? (
+                          <><CheckCircle size={11} /> <span className="font-mono text-[10px]">{info.prefix}</span> <span className="text-muted-foreground/50">({info.length} chars)</span></>
+                        ) : (
+                          'not set'
+                        )}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <p className="text-[11px] text-muted-foreground/60 mt-2">
-              Edit <span className="font-mono">~/.openclaw/.env</span> to add/change keys.
-              Restart gateway after changes.
-            </p>
+                <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground/60">
+                  <span className="font-mono">{envKeys.env_file_exists ? '✓' : '✗'} {envKeys.env_file}</span>
+                  {envKeys.env_file_keys?.length > 0 && (
+                    <span>({envKeys.env_file_keys.join(', ')})</span>
+                  )}
+                  <button onClick={fetchEnvKeys} className="text-orange-400 hover:text-orange-300 ml-auto">
+                    <RefreshCw size={10} />
+                  </button>
+                </div>
+                <p className="text-[11px] text-muted-foreground/50 mt-1">
+                  Edit the .env file and restart gateway for changes to take effect.
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-2">Loading...</p>
+            )}
           </ConfigSection>
 
           {/* Commands */}

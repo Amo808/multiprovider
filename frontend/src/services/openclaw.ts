@@ -240,4 +240,14 @@ export const openclawService = {
     const resp = await fetch(`${API_BASE}/gateway/logs?last=${lastN}`, { headers: getAuthHeaders() });
     return resp.json();
   },
+
+  async getEnvKeys(): Promise<{
+    keys: Record<string, { set: boolean; length: number; prefix: string }>;
+    env_file: string;
+    env_file_exists: boolean;
+    env_file_keys: string[];
+  }> {
+    const resp = await fetch(`${API_BASE}/env-keys`, { headers: getAuthHeaders() });
+    return resp.json();
+  },
 };
