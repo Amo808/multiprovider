@@ -3,6 +3,12 @@
     "lastTouchedVersion": "2026.3.2",
     "lastTouchedAt": "2026-03-11T00:00:00.000Z"
   },
+  "env": {
+    "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+    "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+    "GEMINI_API_KEY": "${GEMINI_API_KEY}",
+    "DEEPSEEK_API_KEY": "${DEEPSEEK_API_KEY}"
+  },
   "agents": {
     "defaults": {
       "model": {

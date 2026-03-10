@@ -28,6 +28,13 @@ cat > "$OPENCLAW_HOME/openclaw.json" << ENDCONFIG
     "lastTouchedVersion": "2026.3.2",
     "lastTouchedAt": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
   },
+  "env": {
+    "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY:-}",
+    "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
+    "GEMINI_API_KEY": "${GEMINI_API_KEY:-}",
+    "DEEPSEEK_API_KEY": "${DEEPSEEK_API_KEY:-}",
+    "GOOGLE_API_KEY": "${GOOGLE_API_KEY:-}"
+  },
   "agents": {
     "defaults": {
       "model": {
@@ -89,6 +96,15 @@ fi
 } > "$OPENCLAW_HOME/.env"
 
 echo "[Startup] Created .env with available API keys"
+
+# --- 4b. Debug: Show which API keys are set (masked) ---
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+    echo "[Startup] ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:0:12}...${ANTHROPIC_API_KEY: -4} (length=${#ANTHROPIC_API_KEY})"
+else
+    echo "[Startup] WARNING: ANTHROPIC_API_KEY is NOT set! OpenClaw agent will fail."
+fi
+[ -n "$OPENAI_API_KEY" ] && echo "[Startup] OPENAI_API_KEY: set (length=${#OPENAI_API_KEY})"
+[ -n "$GEMINI_API_KEY" ] && echo "[Startup] GEMINI_API_KEY: set (length=${#GEMINI_API_KEY})"
 
 # --- 5. Set OPENCLAW_STATE_DIR so client finds the config ---
 export OPENCLAW_STATE_DIR="$OPENCLAW_HOME"
