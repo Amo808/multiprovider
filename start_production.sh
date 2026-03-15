@@ -25,7 +25,7 @@ GW_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-multech-production-gw-token-2026}"
 cat > "$OPENCLAW_HOME/openclaw.json" << ENDCONFIG
 {
   "meta": {
-    "lastTouchedVersion": "2026.3.2",
+    "lastTouchedVersion": "2026.3.8",
     "lastTouchedAt": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
   },
   "env": {
@@ -57,14 +57,31 @@ cat > "$OPENCLAW_HOME/openclaw.json" << ENDCONFIG
       }
     ]
   },
-  "tools": {},
+  "tools": {
+    "sessions": {
+      "visibility": "all"
+    }
+  },
   "commands": {
     "native": "auto",
     "nativeSkills": "auto",
     "restart": true,
     "ownerDisplay": "raw"
   },
-  "channels": {},
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "botToken": "${TELEGRAM_BOT_TOKEN:-}",
+      "groups": {
+        "*": {
+          "requireMention": true
+        }
+      },
+      "groupPolicy": "open",
+      "streaming": "partial"
+    }
+  },
   "gateway": {
     "mode": "local",
     "auth": {
@@ -93,6 +110,7 @@ fi
     [ -n "$DEEPSEEK_API_KEY" ] && echo "DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY"
     [ -n "$GOOGLE_API_KEY" ] && echo "GOOGLE_API_KEY=$GOOGLE_API_KEY"
     [ -n "$GEMINI_API_KEY" ] && echo "GEMINI_API_KEY=$GEMINI_API_KEY"
+    [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN"
 } > "$OPENCLAW_HOME/.env"
 
 echo "[Startup] Created .env with available API keys"
@@ -105,6 +123,7 @@ else
 fi
 [ -n "$OPENAI_API_KEY" ] && echo "[Startup] OPENAI_API_KEY: set (length=${#OPENAI_API_KEY})"
 [ -n "$GEMINI_API_KEY" ] && echo "[Startup] GEMINI_API_KEY: set (length=${#GEMINI_API_KEY})"
+[ -n "$TELEGRAM_BOT_TOKEN" ] && echo "[Startup] TELEGRAM_BOT_TOKEN: set (length=${#TELEGRAM_BOT_TOKEN})"
 
 # --- 5. Set OPENCLAW_STATE_DIR so client finds the config ---
 export OPENCLAW_STATE_DIR="$OPENCLAW_HOME"

@@ -47,6 +47,8 @@ services:
         value: "18789"
       - key: GEMINI_API_KEY
         sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
     buildCommand: ""
     startCommand: ""
     healthCheckPath: "/health"

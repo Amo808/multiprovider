@@ -1,7 +1,7 @@
 {
   "meta": {
-    "lastTouchedVersion": "2026.3.2",
-    "lastTouchedAt": "2026-03-11T00:00:00.000Z"
+    "lastTouchedVersion": "2026.3.8",
+    "lastTouchedAt": "2026-03-15T00:00:00.000Z"
   },
   "env": {
     "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
@@ -30,14 +30,31 @@
       }
     ]
   },
-  "tools": {},
+  "tools": {
+    "sessions": {
+      "visibility": "all"
+    }
+  },
   "commands": {
     "native": "auto",
     "nativeSkills": "auto",
     "restart": true,
     "ownerDisplay": "raw"
   },
-  "channels": {},
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "groups": {
+        "*": {
+          "requireMention": true
+        }
+      },
+      "groupPolicy": "open",
+      "streaming": "partial"
+    }
+  },
   "gateway": {
     "mode": "local",
     "auth": {
@@ -48,4 +65,5 @@
   "skills": {
     "entries": {}
   }
+}
 }
