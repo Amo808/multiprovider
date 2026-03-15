@@ -140,10 +140,13 @@ fi
 
 echo "[Startup] OpenClaw setup complete. Starting Agent Town & backend..."
 
-# --- 7. Start Agent Town in background on port 3001 ---
+# --- 7. Start Agent Town in background on port 3001 (localhost only) ---
+# IMPORTANT: Bind to 127.0.0.1 so Render doesn't detect port 3001 as the primary port.
+# Render scans for 0.0.0.0 bindings; localhost-only is invisible to its port detector.
 if command -v agent-town &> /dev/null; then
-    echo "[Startup] Starting Agent Town on port 3001..."
-    GATEWAY_URL="ws://127.0.0.1:18789/" PORT=3001 agent-town --port 3001 --gateway "ws://127.0.0.1:18789/" &
+    echo "[Startup] Starting Agent Town on 127.0.0.1:3001..."
+    HOSTNAME=127.0.0.1 HOST=127.0.0.1 GATEWAY_URL="ws://127.0.0.1:18789/" PORT=3001 \
+        agent-town --port 3001 --hostname 127.0.0.1 --gateway "ws://127.0.0.1:18789/" &
     AGENT_TOWN_PID=$!
     echo "[Startup] Agent Town started (PID $AGENT_TOWN_PID)"
 else
