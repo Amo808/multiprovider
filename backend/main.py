@@ -4765,6 +4765,14 @@ try:
 except ImportError as oc_import_err:
     logger.warning(f"[OpenClaw] Routes not available: {oc_import_err}")
 
+# Register OpenClaw Control UI proxy (/openclaw/* → gateway:18789)
+try:
+    from openclaw_ui_proxy import openclaw_ui_router
+    app.include_router(openclaw_ui_router)
+    logger.info("[OpenClaw] Control UI proxy registered at /openclaw/*")
+except ImportError as oc_ui_err:
+    logger.warning(f"[OpenClaw] Control UI proxy not available: {oc_ui_err}")
+
 # Register Agent Town reverse proxy (/town/* → localhost:3001)
 try:
     from agent_town_proxy import town_router
