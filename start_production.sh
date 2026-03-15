@@ -138,9 +138,48 @@ else
     echo "[Startup] WARNING: openclaw CLI not found and no npx"
 fi
 
-echo "[Startup] OpenClaw setup complete. Starting backend & Agent Town..."
+echo "[Startup] OpenClaw setup complete."
 
-# --- 7. Start uvicorn FIRST so Render detects port 10000 as primary ---
+# --- 7. Start OpenClaw Gateway FIRST (it only binds 127.0.0.1, invisible to Render) ---
+GW_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
+echo "[Startup] Starting OpenClaw Gateway on port $GW_PORT..."
+if command -v openclaw &> /dev/null; then
+    openclaw gateway run --port "$GW_PORT" --verbose > /tmp/openclaw_gateway.log 2>&1 &
+    GW_PID=$!
+    echo "[Startup] OpenClaw Gateway started (PID $GW_PID)"
+
+    # Wait up to 60s for gateway to become healthy
+    echo "[Startup] Waiting for gateway health on port $GW_PORT..."
+    GW_READY=false
+    for i in $(seq 1 60); do
+        if curl -sf "http://127.0.0.1:$GW_PORT/health" > /dev/null 2>&1; then
+            GW_READY=true
+            echo "[Startup] [OK] Gateway healthy after ${i}s"
+            break
+        fi
+        # Check if process died
+        if ! kill -0 "$GW_PID" 2>/dev/null; then
+            echo "[Startup] [WARN] Gateway process died (exit code: $(wait $GW_PID 2>/dev/null; echo $?))"
+            echo "[Startup] Gateway logs (last 30 lines):"
+            tail -30 /tmp/openclaw_gateway.log 2>/dev/null || true
+            # Try restarting once
+            echo "[Startup] Retrying gateway start..."
+            openclaw gateway run --port "$GW_PORT" > /tmp/openclaw_gateway.log 2>&1 &
+            GW_PID=$!
+            echo "[Startup] Gateway restarted (PID $GW_PID)"
+        fi
+        sleep 1
+    done
+    if [ "$GW_READY" = false ]; then
+        echo "[Startup] [WARN] Gateway not healthy after 60s — continuing anyway"
+        echo "[Startup] Gateway logs (last 20 lines):"
+        tail -20 /tmp/openclaw_gateway.log 2>/dev/null || true
+    fi
+else
+    echo "[Startup] [WARN] openclaw CLI not found, gateway will not be started"
+fi
+
+# --- 8. Start uvicorn (Render detects port 10000 as primary) ---
 # CRITICAL: Render auto-detects the FIRST port that binds to 0.0.0.0.
 # Uvicorn must bind port 10000 before Agent Town binds port 3001.
 echo "[Startup] Starting uvicorn on port ${PORT:-10000}..."
@@ -154,22 +193,21 @@ echo "[Startup] Uvicorn started (PID $UVICORN_PID)"
 # Wait for uvicorn to bind the port before starting Agent Town
 sleep 3
 
-# --- 8. Start Agent Town in background on port 3001 ---
+# --- 9. Start Agent Town in background on port 3001 ---
 # Agent Town always binds 0.0.0.0 but Render already locked onto port 10000.
-# NEXT_PUBLIC_GATEWAY_TOKEN lets Agent Town auto-connect to the gateway.
 if command -v agent-town &> /dev/null; then
     echo "[Startup] Starting Agent Town on port 3001..."
-    GATEWAY_URL="ws://127.0.0.1:18789/" \
+    GATEWAY_URL="ws://127.0.0.1:$GW_PORT/" \
     NEXT_PUBLIC_GATEWAY_TOKEN="$GW_TOKEN" \
-    NEXT_PUBLIC_GATEWAY_URL="ws://127.0.0.1:18789/" \
+    NEXT_PUBLIC_GATEWAY_URL="ws://127.0.0.1:$GW_PORT/" \
     CSP_CONNECT_SRC="wss://multeck.onrender.com ws://multeck.onrender.com" \
     PORT=3001 \
-        agent-town --port 3001 --gateway "ws://127.0.0.1:18789/" &
+        agent-town --port 3001 --gateway "ws://127.0.0.1:$GW_PORT/" &
     AGENT_TOWN_PID=$!
     echo "[Startup] Agent Town started (PID $AGENT_TOWN_PID)"
 else
     echo "[Startup] Agent Town not installed, skipping"
 fi
 
-# --- 9. Wait for main process (uvicorn) ---
+# --- 10. Wait for main process (uvicorn) ---
 wait $UVICORN_PID

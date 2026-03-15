@@ -1048,7 +1048,7 @@ def get_openclaw_client() -> OpenClawClient:
 
 async def init_openclaw_client() -> OpenClawClient:
     """Initialize and start the OpenClaw client.
-    Also checks if gateway manager reports a running process."""
+    Retries connection to gateway if it's still starting up."""
     client = get_openclaw_client()
     
     # Check if gateway manager has a running process
@@ -1065,7 +1065,13 @@ async def init_openclaw_client() -> OpenClawClient:
             pass
     
     if should_connect:
-        await client.start()
+        # Retry up to 5 times with 3s delay — gateway may still be starting
+        for attempt in range(1, 6):
+            ok = await client.start()
+            if ok:
+                break
+            logger.info(f"[OpenClaw] Connection attempt {attempt}/5 failed, retrying in 3s...")
+            await asyncio.sleep(3)
     else:
         logger.info("[OpenClaw] No gateway available — OpenClaw integration disabled")
     return client

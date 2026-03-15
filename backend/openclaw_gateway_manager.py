@@ -55,6 +55,7 @@ class OpenClawGatewayManager:
         self._health_task: Optional[asyncio.Task] = None
         self._restart_count = 0
         self._max_restarts = 3
+        self._starting = False  # Prevent double-spawn
 
     # =========================================================================
     # CLI Discovery
@@ -97,9 +98,21 @@ class OpenClawGatewayManager:
 
     async def start(self) -> Dict[str, Any]:
         """Start the OpenClaw Gateway subprocess"""
-        if self.gateway.status == "running" and self.gateway.process:
+        # Guard: prevent double-spawn if already starting or running
+        if self._starting:
+            logger.info("[GatewayMgr] Gateway start already in progress, skipping")
+            return {"ok": True, "status": "starting", "message": "Start already in progress"}
+        if self.gateway.status in ("running", "starting") and self.gateway.process:
             if self.gateway.process.poll() is None:
                 return {"ok": True, "status": "already_running", "pid": self.gateway.pid}
+        self._starting = True
+        try:
+            return await self._do_start()
+        finally:
+            self._starting = False
+
+    async def _do_start(self) -> Dict[str, Any]:
+        """Internal start logic"""
 
         # --- Check if gateway is already running externally BEFORE spawning ---
         external = await self._check_external_gateway()
@@ -397,8 +410,8 @@ class OpenClawGatewayManager:
                 if len(self.gateway.logs) > self.gateway.max_log_lines:
                     self.gateway.logs = self.gateway.logs[-self.gateway.max_log_lines:]
 
-                # Log to our logger too
-                logger.debug(f"[Gateway] {line}")
+                # Log to our logger at INFO so gateway output is visible in Render logs
+                logger.info(f"[Gateway] {line}")
 
         except asyncio.CancelledError:
             pass
