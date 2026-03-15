@@ -105,9 +105,8 @@ def _rewrite_paths(content: bytes, content_type: str) -> bytes:
         text = text.replace("'/api/", "'/town/api/")
 
         # Static asset directories (Phaser sprites, tiles, images)
-        for asset_dir in ["/images/", "/sprites/", "/tiles/", "/audio/", "/fonts/", "/sounds/"]:
-            text = text.replace(f'"{asset_dir}', f'"/town{asset_dir}')
-            text = text.replace(f"'{asset_dir}", f"'/town{asset_dir}")
+        # These are proxied at root level (/ui/*, /characters/*, /game/*)
+        # so no rewriting needed — they work from both /town/ and root paths
 
         # /favicon paths
         text = text.replace('"/favicon', '"/town/favicon')
@@ -193,6 +192,48 @@ async def proxy_next_assets(request: Request, path: str):
 async def proxy_town_next_assets(request: Request, path: str):
     """Proxy /town/_next/* → Agent Town /_next/*"""
     return await proxy_next_assets(request, path)
+
+
+# =============================================================================
+# Agent Town static assets: /ui/*, /characters/*, /town/favicon.ico
+# These are served from Agent Town's /public/ directory.
+# We proxy them directly so Phaser and the UI can load them.
+# =============================================================================
+
+@town_router.api_route("/ui/{path:path}", methods=["GET"])
+async def proxy_ui_assets(request: Request, path: str):
+    """Proxy /ui/* → Agent Town /ui/* (icons, UI elements)"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/ui/{path}", request)
+
+
+@town_router.api_route("/characters/{path:path}", methods=["GET"])
+async def proxy_character_assets(request: Request, path: str):
+    """Proxy /characters/* → Agent Town /characters/* (Phaser character sprites)"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/characters/{path}", request)
+
+
+@town_router.api_route("/game/{path:path}", methods=["GET"])
+async def proxy_game_assets(request: Request, path: str):
+    """Proxy /game/* → Agent Town /game/* (game maps, tilesets)"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/game/{path}", request)
+
+
+@town_router.api_route("/town/ui/{path:path}", methods=["GET"])
+async def proxy_town_ui_assets(request: Request, path: str):
+    """Proxy /town/ui/* → Agent Town /ui/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/ui/{path}", request)
+
+
+@town_router.api_route("/town/characters/{path:path}", methods=["GET"])
+async def proxy_town_character_assets(request: Request, path: str):
+    """Proxy /town/characters/* → Agent Town /characters/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/characters/{path}", request)
+
+
+@town_router.api_route("/town/game/{path:path}", methods=["GET"])
+async def proxy_town_game_assets(request: Request, path: str):
+    """Proxy /town/game/* → Agent Town /game/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/game/{path}", request)
 
 
 # =============================================================================
