@@ -4,17 +4,19 @@ Agent Town Reverse Proxy
 Proxies /town/* requests to the Agent Town Node.js server running on localhost:3001.
 Handles both HTTP and WebSocket connections.
 
-Agent Town is a pixel-art AI agent office interface that connects
-to OpenClaw Gateway for agent visualization and interaction.
+Since Agent Town (Next.js) has no basePath support, we:
+1. Proxy /town/* → localhost:3001/* with HTML/JS path rewriting
+2. Also proxy /_next/* → localhost:3001/_next/* directly (no conflict with Vite frontend)
+3. Proxy /town/api/gateway WebSocket for OpenClaw connection
 """
 
 import asyncio
 import logging
-from typing import Optional
+import re
 
 import aiohttp
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import Response
 
 logger = logging.getLogger("agent_town_proxy")
 
@@ -25,27 +27,21 @@ town_router = APIRouter(tags=["agent-town"])
 
 
 # =============================================================================
-# HTTP Reverse Proxy: /town/* → localhost:3001/*
+# Helper: proxy any HTTP request to Agent Town
 # =============================================================================
 
-@town_router.api_route("/town/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-async def proxy_town(request: Request, path: str):
-    """Proxy HTTP requests to Agent Town server"""
-    target_url = f"{AGENT_TOWN_URL}/{path}"
-    
-    # Forward query string
+async def _proxy_http(target_url: str, request: Request, rewrite_content: bool = False):
+    """Generic HTTP reverse proxy to Agent Town"""
     if request.url.query:
         target_url += f"?{request.url.query}"
 
-    # Build headers (skip hop-by-hop headers)
-    skip_headers = {"host", "connection", "transfer-encoding", "keep-alive"}
+    skip_headers = {"host", "connection", "transfer-encoding", "keep-alive", "upgrade"}
     headers = {
         k: v for k, v in request.headers.items()
         if k.lower() not in skip_headers
     }
     headers["host"] = "127.0.0.1:3001"
 
-    # Read body for non-GET requests
     body = None
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         body = await request.body()
@@ -60,7 +56,6 @@ async def proxy_town(request: Request, path: str):
                 data=body,
                 allow_redirects=False,
             ) as resp:
-                # Forward response headers (skip hop-by-hop)
                 resp_headers = {}
                 for k, v in resp.headers.items():
                     kl = k.lower()
@@ -69,32 +64,10 @@ async def proxy_town(request: Request, path: str):
 
                 content = await resp.read()
                 content_type = resp.content_type or ""
-                
-                # For HTML responses, rewrite asset paths from / to /town/
-                if "text/html" in content_type:
-                    html = content.decode("utf-8", errors="replace")
-                    # Rewrite /_next/ → /town/_next/ for all assets
-                    html = html.replace('src="/_next/', 'src="/town/_next/')
-                    html = html.replace('href="/_next/', 'href="/town/_next/')
-                    html = html.replace('"/_next/', '"/town/_next/')
-                    # Rewrite /api/ → /town/api/ for API calls
-                    html = html.replace('"\/api\/', '"\/town\/api\/')
-                    html = html.replace('"/api/', '"/town/api/')
-                    # Rewrite /favicon → /town/favicon
-                    html = html.replace('href="/favicon', 'href="/town/favicon')
-                    content = html.encode("utf-8")
-                
-                # For JS responses, rewrite asset paths
-                if "javascript" in content_type:
-                    js = content.decode("utf-8", errors="replace")
-                    # Common Next.js patterns
-                    js = js.replace('"/_next/', '"/town/_next/')
-                    js = js.replace("'/_next/", "'/town/_next/")
-                    js = js.replace('"/api/gateway"', '"/town/api/gateway"')
-                    js = js.replace("'/api/gateway'", "'/town/api/gateway'")
-                    js = js.replace('"/api/', '"/town/api/')
-                    content = js.encode("utf-8")
-                
+
+                if rewrite_content:
+                    content = _rewrite_paths(content, content_type)
+
                 return Response(
                     content=content,
                     status_code=resp.status,
@@ -102,83 +75,78 @@ async def proxy_town(request: Request, path: str):
                     media_type=resp.content_type,
                 )
     except aiohttp.ClientError as e:
-        logger.warning(f"[AgentTown] Proxy error for /{path}: {e}")
-        return Response(
-            content=f"Agent Town unavailable: {e}",
-            status_code=502,
-            media_type="text/plain",
-        )
+        logger.warning(f"[AgentTown] Proxy error: {e}")
+        return Response(content=f"Agent Town unavailable: {e}", status_code=502, media_type="text/plain")
 
 
-# Root /town → redirect or serve index
+def _rewrite_paths(content: bytes, content_type: str) -> bytes:
+    """
+    Rewrite asset/API paths in HTML/JS/CSS responses.
+    /_next/  → /town/_next/  (for assets loaded via Next.js)
+    /api/    → /town/api/    (for API/WS calls)
+    /images/ → /town/images/ (Phaser game assets)
+    """
+    if not content:
+        return content
+
+    if "text/html" in content_type or "javascript" in content_type or "text/css" in content_type:
+        text = content.decode("utf-8", errors="replace")
+
+        # /_next/ paths (JS chunks, CSS, static assets)
+        text = text.replace('"/_next/', '"/town/_next/')
+        text = text.replace("'/_next/", "'/town/_next/")
+        text = text.replace('(/_next/', '(/town/_next/')
+        text = text.replace('`/_next/', '`/town/_next/')
+
+        # /api/ paths (WebSocket gateway, API calls)
+        text = text.replace('"/api/gateway"', '"/town/api/gateway"')
+        text = text.replace("'/api/gateway'", "'/town/api/gateway'")
+        text = text.replace('"/api/', '"/town/api/')
+        text = text.replace("'/api/", "'/town/api/")
+
+        # Static asset directories (Phaser sprites, tiles, images)
+        for asset_dir in ["/images/", "/sprites/", "/tiles/", "/audio/", "/fonts/", "/sounds/"]:
+            text = text.replace(f'"{asset_dir}', f'"/town{asset_dir}')
+            text = text.replace(f"'{asset_dir}", f"'/town{asset_dir}")
+
+        # /favicon paths
+        text = text.replace('"/favicon', '"/town/favicon')
+
+        # Escaped slashes in JSON (common in Next.js inline data)
+        text = text.replace('"\\u002f_next\\u002f', '"\\u002ftown\\u002f_next\\u002f')
+        text = text.replace('\"\\/api\\/', '\"\\/town\\/api\\/')
+        text = text.replace('\"\\/\\_next\\/', '\"\\/town\\/_next\\/')
+
+        content = text.encode("utf-8")
+
+    return content
+
+
+# =============================================================================
+# Main routes: /town and /town/*
+# =============================================================================
+
 @town_router.get("/town")
 async def proxy_town_root(request: Request):
-    """Proxy root /town request"""
-    return await proxy_town(request, "")
+    """Proxy root /town → Agent Town index"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/", request, rewrite_content=True)
+
+
+@town_router.api_route("/town/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def proxy_town(request: Request, path: str):
+    """Proxy /town/* → Agent Town, rewriting HTML/JS paths"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/{path}", request, rewrite_content=True)
 
 
 # =============================================================================
-# WebSocket Proxy: /town/api/gateway → localhost:3001/api/gateway
+# /_next/* → Agent Town's Next.js assets (direct, no /town/ prefix needed)
+# This is safe because Multech frontend uses Vite (/assets/), not Next.js.
+# Next.js chunk loaders use absolute /_next/ paths that can't all be rewritten.
 # =============================================================================
 
-@town_router.websocket("/town/api/gateway")
-async def proxy_town_ws(ws: WebSocket):
-    """Proxy WebSocket connection to Agent Town's gateway proxy"""
-    await ws.accept()
-    
-    target_ws_url = f"{AGENT_TOWN_WS}/api/gateway"
-    
-    try:
-        timeout = aiohttp.ClientTimeout(total=None)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.ws_connect(target_ws_url) as upstream:
-                
-                async def client_to_upstream():
-                    """Forward messages from browser → Agent Town"""
-                    try:
-                        while True:
-                            data = await ws.receive_text()
-                            await upstream.send_str(data)
-                    except WebSocketDisconnect:
-                        await upstream.close()
-                    except Exception:
-                        pass
-                
-                async def upstream_to_client():
-                    """Forward messages from Agent Town → browser"""
-                    try:
-                        async for msg in upstream:
-                            if msg.type == aiohttp.WSMsgType.TEXT:
-                                await ws.send_text(msg.data)
-                            elif msg.type == aiohttp.WSMsgType.BINARY:
-                                await ws.send_bytes(msg.data)
-                            elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
-                                break
-                    except Exception:
-                        pass
-                
-                # Run both directions concurrently
-                await asyncio.gather(
-                    client_to_upstream(),
-                    upstream_to_client(),
-                    return_exceptions=True,
-                )
-    except Exception as e:
-        logger.warning(f"[AgentTown] WebSocket proxy error: {e}")
-        try:
-            await ws.close(code=1011, reason="Agent Town unavailable")
-        except Exception:
-            pass
-
-
-# =============================================================================
-# Next.js internal routes: /_next/* → localhost:3001/_next/*
-# These are needed for Agent Town's static assets (JS, CSS, images)
-# =============================================================================
-
-@town_router.api_route("/town/_next/{path:path}", methods=["GET"])
-async def proxy_town_next_assets(request: Request, path: str):
-    """Proxy Next.js static assets"""
+@town_router.api_route("/_next/{path:path}", methods=["GET"])
+async def proxy_next_assets(request: Request, path: str):
+    """Proxy /_next/* directly to Agent Town for chunk loading"""
     target_url = f"{AGENT_TOWN_URL}/_next/{path}"
     if request.url.query:
         target_url += f"?{request.url.query}"
@@ -193,22 +161,20 @@ async def proxy_town_next_assets(request: Request, path: str):
                     kl = k.lower()
                     if kl not in ("transfer-encoding", "connection", "content-encoding", "content-length"):
                         resp_headers[k] = v
-                
+
                 content_type = resp.content_type or ""
-                
-                # Rewrite JS chunks to use /town/ prefix for internal routes
+
+                # Rewrite JS chunks for /api/ paths
                 if "javascript" in content_type:
-                    js = content.decode("utf-8", errors="replace")
-                    js = js.replace('"/_next/', '"/town/_next/')
-                    js = js.replace("'/_next/", "'/town/_next/")
-                    js = js.replace('"/api/gateway"', '"/town/api/gateway"')
-                    js = js.replace("'/api/gateway'", "'/town/api/gateway'")
-                    js = js.replace('"/api/', '"/town/api/')
-                    content = js.encode("utf-8")
-                
-                # Cache static assets
+                    text = content.decode("utf-8", errors="replace")
+                    text = text.replace('"/api/gateway"', '"/town/api/gateway"')
+                    text = text.replace("'/api/gateway'", "'/town/api/gateway'")
+                    text = text.replace('"/api/', '"/town/api/')
+                    content = text.encode("utf-8")
+
                 if "/static/" in path:
                     resp_headers["Cache-Control"] = "public, max-age=31536000, immutable"
+
                 return Response(
                     content=content,
                     status_code=resp.status,
@@ -217,3 +183,70 @@ async def proxy_town_next_assets(request: Request, path: str):
                 )
     except aiohttp.ClientError as e:
         return Response(content=f"Asset unavailable: {e}", status_code=502, media_type="text/plain")
+
+
+# =============================================================================
+# /town/_next/* → also proxy (for rewritten paths from HTML)
+# =============================================================================
+
+@town_router.api_route("/town/_next/{path:path}", methods=["GET"])
+async def proxy_town_next_assets(request: Request, path: str):
+    """Proxy /town/_next/* → Agent Town /_next/*"""
+    return await proxy_next_assets(request, path)
+
+
+# =============================================================================
+# WebSocket: /town/api/gateway → Agent Town WS proxy → OpenClaw gateway
+# =============================================================================
+
+@town_router.websocket("/town/api/gateway")
+async def proxy_town_ws(ws: WebSocket):
+    """Proxy WebSocket to Agent Town's gateway proxy"""
+    await ws.accept()
+    target_ws_url = f"{AGENT_TOWN_WS}/api/gateway"
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=None)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.ws_connect(target_ws_url) as upstream:
+
+                async def client_to_upstream():
+                    try:
+                        while True:
+                            data = await ws.receive_text()
+                            await upstream.send_str(data)
+                    except WebSocketDisconnect:
+                        await upstream.close()
+                    except Exception:
+                        pass
+
+                async def upstream_to_client():
+                    try:
+                        async for msg in upstream:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                await ws.send_text(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.BINARY:
+                                await ws.send_bytes(msg.data)
+                            elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
+                                break
+                    except Exception:
+                        pass
+
+                await asyncio.gather(
+                    client_to_upstream(),
+                    upstream_to_client(),
+                    return_exceptions=True,
+                )
+    except Exception as e:
+        logger.warning(f"[AgentTown] WS proxy error: {e}")
+        try:
+            await ws.close(code=1011, reason="Agent Town unavailable")
+        except Exception:
+            pass
+
+
+# Also handle /api/gateway WebSocket at root (Agent Town client may use this)
+@town_router.websocket("/api/gateway")
+async def proxy_root_ws(ws: WebSocket):
+    """Proxy root /api/gateway WebSocket — fallback for Agent Town client code"""
+    await proxy_town_ws(ws)
