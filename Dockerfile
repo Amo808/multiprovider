@@ -26,6 +26,9 @@ RUN curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-li
 # Install OpenClaw CLI globally (avoids npx download on every restart)
 RUN npm install -g openclaw@latest && openclaw --version || echo "openclaw installed"
 
+# Install Agent Town globally (pixel-art AI agent office interface)
+RUN npm install -g @geezerrrr/agent-town@latest && echo "agent-town installed"
+
 # Set working directory
 WORKDIR /app
 

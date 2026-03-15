@@ -138,9 +138,19 @@ else
     echo "[Startup] WARNING: openclaw CLI not found and no npx"
 fi
 
-echo "[Startup] OpenClaw setup complete. Starting backend..."
+echo "[Startup] OpenClaw setup complete. Starting Agent Town & backend..."
 
-# --- 7. Start uvicorn ---
+# --- 7. Start Agent Town in background on port 3001 ---
+if command -v agent-town &> /dev/null; then
+    echo "[Startup] Starting Agent Town on port 3001..."
+    GATEWAY_URL="ws://127.0.0.1:18789/" PORT=3001 agent-town --port 3001 --gateway "ws://127.0.0.1:18789/" &
+    AGENT_TOWN_PID=$!
+    echo "[Startup] Agent Town started (PID $AGENT_TOWN_PID)"
+else
+    echo "[Startup] Agent Town not installed, skipping"
+fi
+
+# --- 8. Start uvicorn ---
 exec uvicorn backend.main:app \
     --host 0.0.0.0 \
     --port "${PORT:-10000}" \

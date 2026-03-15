@@ -4765,6 +4765,14 @@ try:
 except ImportError as oc_import_err:
     logger.warning(f"[OpenClaw] Routes not available: {oc_import_err}")
 
+# Register Agent Town reverse proxy (/town/* → localhost:3001)
+try:
+    from agent_town_proxy import town_router
+    app.include_router(town_router)
+    logger.info("[AgentTown] Proxy registered at /town/*")
+except ImportError as at_import_err:
+    logger.warning(f"[AgentTown] Proxy not available: {at_import_err}")
+
 # Serve static files (frontend) at root - AFTER API router registration
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
