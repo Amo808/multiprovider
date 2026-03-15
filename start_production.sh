@@ -156,9 +156,13 @@ sleep 3
 
 # --- 8. Start Agent Town in background on port 3001 ---
 # Agent Town always binds 0.0.0.0 but Render already locked onto port 10000.
+# NEXT_PUBLIC_GATEWAY_TOKEN lets Agent Town auto-connect to the gateway.
 if command -v agent-town &> /dev/null; then
     echo "[Startup] Starting Agent Town on port 3001..."
-    GATEWAY_URL="ws://127.0.0.1:18789/" PORT=3001 \
+    GATEWAY_URL="ws://127.0.0.1:18789/" \
+    NEXT_PUBLIC_GATEWAY_TOKEN="$GW_TOKEN" \
+    NEXT_PUBLIC_GATEWAY_URL="ws://127.0.0.1:18789/" \
+    PORT=3001 \
         agent-town --port 3001 --gateway "ws://127.0.0.1:18789/" &
     AGENT_TOWN_PID=$!
     echo "[Startup] Agent Town started (PID $AGENT_TOWN_PID)"

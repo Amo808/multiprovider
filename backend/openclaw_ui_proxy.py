@@ -122,6 +122,22 @@ async def proxy_openclaw_path(request: Request, path: str):
 
 
 # =============================================================================
+# OpenClaw UI assets: /openclaw/assets/* → gateway /assets/*
+# =============================================================================
+
+@openclaw_ui_router.api_route("/openclaw/assets/{path:path}", methods=["GET"])
+async def proxy_openclaw_assets(request: Request, path: str):
+    """Proxy OpenClaw UI Vite assets"""
+    return await _proxy_http(f"{GATEWAY_URL}/assets/{path}", request)
+
+
+@openclaw_ui_router.api_route("/openclaw/favicon.svg", methods=["GET"])
+async def proxy_openclaw_favicon(request: Request):
+    """Proxy OpenClaw UI favicon"""
+    return await _proxy_http(f"{GATEWAY_URL}/favicon.svg", request)
+
+
+# =============================================================================
 # WebSocket: /openclaw/ws → Gateway WebSocket
 # =============================================================================
 

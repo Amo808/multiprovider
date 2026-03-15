@@ -236,6 +236,45 @@ async def proxy_town_game_assets(request: Request, path: str):
     return await _proxy_http(f"{AGENT_TOWN_URL}/game/{path}", request)
 
 
+# Sprites (Phaser sprite sheets)
+@town_router.api_route("/sprites/{path:path}", methods=["GET"])
+async def proxy_sprites_assets(request: Request, path: str):
+    """Proxy /sprites/* → Agent Town /sprites/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/sprites/{path}", request)
+
+
+@town_router.api_route("/town/sprites/{path:path}", methods=["GET"])
+async def proxy_town_sprites_assets(request: Request, path: str):
+    """Proxy /town/sprites/* → Agent Town /sprites/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/sprites/{path}", request)
+
+
+# Maps (Tiled JSON maps)
+@town_router.api_route("/maps/{path:path}", methods=["GET"])
+async def proxy_maps_assets(request: Request, path: str):
+    """Proxy /maps/* → Agent Town /maps/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/maps/{path}", request)
+
+
+@town_router.api_route("/town/maps/{path:path}", methods=["GET"])
+async def proxy_town_maps_assets(request: Request, path: str):
+    """Proxy /town/maps/* → Agent Town /maps/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/maps/{path}", request)
+
+
+# Audio (background music)
+@town_router.api_route("/audio/{path:path}", methods=["GET"])
+async def proxy_audio_assets(request: Request, path: str):
+    """Proxy /audio/* → Agent Town /audio/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/audio/{path}", request)
+
+
+@town_router.api_route("/town/audio/{path:path}", methods=["GET"])
+async def proxy_town_audio_assets(request: Request, path: str):
+    """Proxy /town/audio/* → Agent Town /audio/*"""
+    return await _proxy_http(f"{AGENT_TOWN_URL}/audio/{path}", request)
+
+
 # =============================================================================
 # WebSocket: /town/api/gateway → Agent Town WS proxy → OpenClaw gateway
 # =============================================================================
