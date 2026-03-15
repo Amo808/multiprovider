@@ -68,6 +68,21 @@ async def _proxy_http(target_url: str, request: Request, rewrite_content: bool =
                 if rewrite_content:
                     content = _rewrite_paths(content, content_type)
 
+                    # Override CSP to allow wss:// connections to our domain
+                    if "text/html" in content_type:
+                        resp_headers.pop("Content-Security-Policy", None)
+                        resp_headers.pop("content-security-policy", None)
+                        resp_headers["Content-Security-Policy"] = (
+                            "default-src 'self'; "
+                            "script-src 'self' 'unsafe-eval' 'unsafe-inline'; "
+                            "style-src 'self' 'unsafe-inline'; "
+                            "img-src 'self' data: blob:; "
+                            "font-src 'self'; "
+                            "connect-src 'self' wss://multeck.onrender.com ws://multeck.onrender.com wss://localhost:* ws://localhost:* wss://127.0.0.1:* ws://127.0.0.1:*; "
+                            "media-src 'self'; "
+                            "frame-ancestors 'none'"
+                        )
+
                 return Response(
                     content=content,
                     status_code=resp.status,
@@ -110,6 +125,15 @@ def _rewrite_paths(content: bytes, content_type: str) -> bytes:
 
         # /favicon paths
         text = text.replace('"/favicon', '"/town/favicon')
+
+        # Gateway WebSocket URL: browser can't reach 127.0.0.1:18789
+        # Rewrite to our WS proxy endpoint that the browser CAN reach
+        text = text.replace('"ws://127.0.0.1:18789"', '"wss://multeck.onrender.com/api/gateway"')
+        text = text.replace("'ws://127.0.0.1:18789'", "'wss://multeck.onrender.com/api/gateway'")
+        text = text.replace('"ws://127.0.0.1:18789/', '"wss://multeck.onrender.com/api/gateway')
+        text = text.replace('"ws://localhost:18789"', '"wss://multeck.onrender.com/api/gateway"')
+        text = text.replace("'ws://localhost:18789'", "'wss://multeck.onrender.com/api/gateway'")
+        text = text.replace('"ws://localhost:3000/api/gateway"', '"wss://multeck.onrender.com/api/gateway"')
 
         # Escaped slashes in JSON (common in Next.js inline data)
         text = text.replace('"\\u002f_next\\u002f', '"\\u002ftown\\u002f_next\\u002f')
@@ -163,12 +187,18 @@ async def proxy_next_assets(request: Request, path: str):
 
                 content_type = resp.content_type or ""
 
-                # Rewrite JS chunks for /api/ paths
+                # Rewrite JS chunks for /api/ paths and gateway URLs
                 if "javascript" in content_type:
                     text = content.decode("utf-8", errors="replace")
                     text = text.replace('"/api/gateway"', '"/town/api/gateway"')
                     text = text.replace("'/api/gateway'", "'/town/api/gateway'")
                     text = text.replace('"/api/', '"/town/api/')
+                    # Gateway WS URL rewrite for browser
+                    text = text.replace('"ws://127.0.0.1:18789"', '"wss://multeck.onrender.com/api/gateway"')
+                    text = text.replace("'ws://127.0.0.1:18789'", "'wss://multeck.onrender.com/api/gateway'")
+                    text = text.replace('"ws://127.0.0.1:18789/', '"wss://multeck.onrender.com/api/gateway')
+                    text = text.replace('"ws://localhost:18789"', '"wss://multeck.onrender.com/api/gateway"')
+                    text = text.replace('"ws://localhost:3000/api/gateway"', '"wss://multeck.onrender.com/api/gateway"')
                     content = text.encode("utf-8")
 
                 if "/static/" in path:

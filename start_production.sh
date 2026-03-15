@@ -162,6 +162,7 @@ if command -v agent-town &> /dev/null; then
     GATEWAY_URL="ws://127.0.0.1:18789/" \
     NEXT_PUBLIC_GATEWAY_TOKEN="$GW_TOKEN" \
     NEXT_PUBLIC_GATEWAY_URL="ws://127.0.0.1:18789/" \
+    CSP_CONNECT_SRC="wss://multeck.onrender.com ws://multeck.onrender.com" \
     PORT=3001 \
         agent-town --port 3001 --gateway "ws://127.0.0.1:18789/" &
     AGENT_TOWN_PID=$!
