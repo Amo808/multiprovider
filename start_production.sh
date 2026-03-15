@@ -138,23 +138,33 @@ else
     echo "[Startup] WARNING: openclaw CLI not found and no npx"
 fi
 
-echo "[Startup] OpenClaw setup complete. Starting Agent Town & backend..."
+echo "[Startup] OpenClaw setup complete. Starting backend & Agent Town..."
 
-# --- 7. Start Agent Town in background on port 3001 (localhost only) ---
-# IMPORTANT: Bind to 127.0.0.1 so Render doesn't detect port 3001 as the primary port.
-# Render scans for 0.0.0.0 bindings; localhost-only is invisible to its port detector.
+# --- 7. Start uvicorn FIRST so Render detects port 10000 as primary ---
+# CRITICAL: Render auto-detects the FIRST port that binds to 0.0.0.0.
+# Uvicorn must bind port 10000 before Agent Town binds port 3001.
+echo "[Startup] Starting uvicorn on port ${PORT:-10000}..."
+uvicorn backend.main:app \
+    --host 0.0.0.0 \
+    --port "${PORT:-10000}" \
+    --timeout-keep-alive 600 &
+UVICORN_PID=$!
+echo "[Startup] Uvicorn started (PID $UVICORN_PID)"
+
+# Wait for uvicorn to bind the port before starting Agent Town
+sleep 3
+
+# --- 8. Start Agent Town in background on port 3001 ---
+# Agent Town always binds 0.0.0.0 but Render already locked onto port 10000.
 if command -v agent-town &> /dev/null; then
-    echo "[Startup] Starting Agent Town on 127.0.0.1:3001..."
-    HOSTNAME=127.0.0.1 HOST=127.0.0.1 GATEWAY_URL="ws://127.0.0.1:18789/" PORT=3001 \
-        agent-town --port 3001 --hostname 127.0.0.1 --gateway "ws://127.0.0.1:18789/" &
+    echo "[Startup] Starting Agent Town on port 3001..."
+    GATEWAY_URL="ws://127.0.0.1:18789/" PORT=3001 \
+        agent-town --port 3001 --gateway "ws://127.0.0.1:18789/" &
     AGENT_TOWN_PID=$!
     echo "[Startup] Agent Town started (PID $AGENT_TOWN_PID)"
 else
     echo "[Startup] Agent Town not installed, skipping"
 fi
 
-# --- 8. Start uvicorn ---
-exec uvicorn backend.main:app \
-    --host 0.0.0.0 \
-    --port "${PORT:-10000}" \
-    --timeout-keep-alive 600
+# --- 9. Wait for main process (uvicorn) ---
+wait $UVICORN_PID
