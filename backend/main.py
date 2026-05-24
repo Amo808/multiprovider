@@ -247,21 +247,25 @@ async def lifespan(app: FastAPI):
             logger.warning(f"[RLM] Failed to initialize RLM service: {rlm_err}")
         
         # Initialize OpenClaw Gateway — auto-start process if CLI available
+        # Set DISABLE_OPENCLAW=1 to skip (saves ~200MB RAM and 10s startup on staging/test envs)
         gateway_manager = None
-        try:
-            from openclaw_gateway_manager import init_gateway_manager
-            gateway_manager = await init_gateway_manager()
-            logger.info(f"[OpenClaw] Gateway manager: {gateway_manager.get_status()['status']}")
-        except Exception as gw_err:
-            logger.warning(f"[OpenClaw] Gateway manager failed: {gw_err}")
-        
-        # Initialize OpenClaw Gateway client (connects to running gateway)
-        try:
-            from openclaw_client import init_openclaw_client
-            openclaw = await init_openclaw_client()
-            logger.info(f"[OpenClaw] Client initialized (available: {openclaw.is_available}, ws: {openclaw._ws_connected})")
-        except Exception as oc_err:
-            logger.warning(f"[OpenClaw] Failed to initialize: {oc_err}")
+        if os.getenv("DISABLE_OPENCLAW", "0") == "1":
+            logger.info("[OpenClaw] Skipped (DISABLE_OPENCLAW=1)")
+        else:
+            try:
+                from openclaw_gateway_manager import init_gateway_manager
+                gateway_manager = await init_gateway_manager()
+                logger.info(f"[OpenClaw] Gateway manager: {gateway_manager.get_status()['status']}")
+            except Exception as gw_err:
+                logger.warning(f"[OpenClaw] Gateway manager failed: {gw_err}")
+
+            # Initialize OpenClaw Gateway client (connects to running gateway)
+            try:
+                from openclaw_client import init_openclaw_client
+                openclaw = await init_openclaw_client()
+                logger.info(f"[OpenClaw] Client initialized (available: {openclaw.is_available}, ws: {openclaw._ws_connected})")
+            except Exception as oc_err:
+                logger.warning(f"[OpenClaw] Failed to initialize: {oc_err}")
         
         yield  # Application runs here
         
@@ -269,13 +273,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize: {e}")
         raise
     finally:
-        # Shutdown — stop managed gateway process
-        try:
-            from openclaw_gateway_manager import get_gateway_manager
-            gw = get_gateway_manager()
-            await gw.shutdown()
-        except Exception:
-            pass
+        # Shutdown — stop managed gateway process (no-op when OpenClaw was disabled)
+        if os.getenv("DISABLE_OPENCLAW", "0") != "1":
+            try:
+                from openclaw_gateway_manager import get_gateway_manager
+                gw = get_gateway_manager()
+                await gw.shutdown()
+            except Exception:
+                pass
         logger.info("Application shutdown")
 
 # Initialize FastAPI app with lifespan

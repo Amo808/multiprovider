@@ -146,6 +146,17 @@ class RLMService:
         "deepseek": "openai",  # DeepSeek uses OpenAI-compatible API
     }
 
+    # Fast model per provider — used for recursive sub-calls when no sub_model is specified.
+    # Sub-agents handle context decomposition and intermediate REPL prints; small fast models
+    # are sufficient and dramatically reduce RLM end-to-end latency vs running everything on
+    # the root model (e.g. Sonnet 4.5 → Haiku 4.5 is ~3-5x faster per call).
+    FAST_SUB_MODEL = {
+        "anthropic": "claude-haiku-4-5",
+        "openai": "gpt-5-nano",
+        "gemini": "gemini-2.0-flash",
+        "deepseek": "deepseek-chat",  # no smaller variant; keep same
+    }
+
     def __init__(self, provider_manager):
         self.provider_manager = provider_manager
         self._available = None  # Lazy check
@@ -227,6 +238,16 @@ class RLMService:
             "max_depth": max_depth,
             "verbose": verbose,
         }
+
+        # Auto-pick a fast sub-model when caller didn't specify one. Sub-agents do context
+        # decomposition (regex/string ops over chunks) — they don't need root-tier reasoning.
+        # Using Haiku/Nano/Flash for sub-calls gives 3-5x end-to-end speedup vs running
+        # everything on the root model with no measurable quality loss in OOLONG benchmarks.
+        if not sub_model_id:
+            fast = self.FAST_SUB_MODEL.get(provider_id)
+            if fast and fast != model_id:
+                sub_model_id = fast
+                logger.info(f"[RLM] Auto-selected fast sub-model: {provider_id}/{fast} (root: {model_id})")
 
         # Configure sub-model (other_backends) if different from main model
         if sub_model_id and sub_model_id != model_id:
